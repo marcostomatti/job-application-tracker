@@ -62,6 +62,28 @@ set exists and changes nothing. The loaded set is not made the default; you choo
 `bun run lint:migrations` rejects any pack in `seeds/vanilla/` with a weight or an apply
 threshold set, and `seed:pack` refuses such a file too.
 
+## The HTTP service
+
+`bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
+`GET /health`. It reads `DATABASE_URL` from `.env`, so run `bun run db:up` and
+`bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
+
+```sh
+bun run setApiKey --burn-after-reading   # once: writes API_KEY into .env
+bun run serve
+curl -s localhost:3000/health
+curl -s -H "Authorization: Bearer $API_KEY" localhost:3000/api/positions
+```
+
+**It will not start without an `API_KEY`.** The package that runs the service listens on
+**every network interface** and has no setting for a host, so a service with no key would hand
+every route, writes included, to any machine on the network. With a key set, `/api` answers 401
+to a missing or wrong bearer token. `/health` is not behind the key and says only `ok` or `error`.
+
+The rate limit is 1,000 requests a minute, ten times the package default, so a board that loads
+several routes at once does not trip it. When a built web app exists in `src/web/dist`, the same
+process serves it, so the app and the API share one origin and no CORS setting is needed.
+
 ## The MCP server
 
 `bun run mcp` starts the MCP server, which offers 46 tools for recording, scoring and reading

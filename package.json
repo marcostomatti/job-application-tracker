@@ -20,6 +20,7 @@
     "db:migrate": "drizzle-kit migrate",
     "seed:pack": "bun src/seeds/load-pack.ts",
     "setApiKey": "bun src/auth/set-api-key.ts",
-    "mcp": "bun src/mcp/server.ts"
+    "mcp": "bun src/mcp/server.ts",
+    "serve": "bun src/http/server.ts"
   }
 }
