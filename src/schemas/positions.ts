@@ -92,11 +92,12 @@ export type PositionPatch = z.infer<typeof PositionPatchSchema>
 const booleanOrText = z.union([z.boolean(), z.enum(['true', 'false']).transform((value) => value === 'true')])
 
 /**
- * Which set-aside positions a search returns. Hiding them is the default because the
- * set-aside bucket is read on its own and a search for leads should not re-offer what the
- * user already passed on; the board asks for `include` because it still draws them.
+ * Which positions of one kind a search returns, for the two flags that take a row out of the
+ * default view: set-aside and client-hidden. Hiding them is the default because a search for
+ * leads should not re-offer what the user already passed on or hid; the board asks for
+ * `include` because it still draws set-aside cards, and `only` reads just that bucket.
  */
-export const SET_ASIDE_FILTERS = ['exclude', 'include', 'only'] as const
+export const VISIBILITY_FILTERS = ['exclude', 'include', 'only'] as const
 
 /**
  * What a board or grid asks of the position list: the filters, then the page. Built on
@@ -112,7 +113,8 @@ export const PositionQuerySchema = PaginationSchema.extend({
   phaseId: IdSchema.optional(),
   criteriaSetId: IdSchema.optional(),
   recommendApply: booleanOrText.optional(),
-  setAside: z.enum(SET_ASIDE_FILTERS).default('exclude'),
+  setAside: z.enum(VISIBILITY_FILTERS).default('exclude'),
+  clientHidden: z.enum(VISIBILITY_FILTERS).default('exclude'),
 })
 
 export type PositionQuery = z.infer<typeof PositionQuerySchema>

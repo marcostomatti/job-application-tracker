@@ -65,32 +65,31 @@ async function addOne(db: DrizzleClient, input: PositionInput): Promise<Position
   return added
 }
 
+/** How many rows the tie-break tests seed: enough that storage order and id order part ways. */
+const TIED_ROWS = 10
+
 /**
- * Writes three stage events that share one instant, as events written in one transaction do,
- * and returns the stage of the one with the highest id, which is the latest by the tie-break.
+ * Writes `TIED_ROWS` stage events that share one instant, as events written in one
+ * transaction do, each under its own stage, and returns the id of the stage of the last one,
+ * which has the highest event id and so is the latest by the tie-break.
  *
- * The ids are written out of order and the planner is held to a scan in physical order,
- * because the index on (position, time, id) would hand back the highest id by itself and hide
- * a missing tie-break. Without an explicit `id desc`, this order returns another event.
+ * A latest-event read asks for one row, so unlike a page it cannot be bound wider to force the
+ * ordering. And the index on (position, time, id) hands back the highest id on its own, which
+ * would hide a missing `id desc`. So the session is held to a sequential scan, where only the
+ * ORDER BY clause decides among ten equal timestamps. Turning the two scan types off cannot
+ * make a correct query fail; it only makes a query without the tie-break visible.
  */
 async function writeTiedStageEvents(db: DrizzleClient, positionId: number): Promise<number> {
-  const stages = await addRegistryRows(db, 'stage', [
-    { key: 'tie-a', label: 'Stage of the middle id' },
-    { key: 'tie-b', label: 'Stage of the highest id' },
-    { key: 'tie-c', label: 'Stage of the lowest id' },
-  ])
+  const stages = await addRegistryRows(
+    db,
+    'stage',
+    Array.from({ length: TIED_ROWS }, (_, index) => ({ key: `tie-${index}`, label: `Tied stage ${index}` })),
+  )
   const at = new Date('2026-02-01T09:00:00Z')
   await db.execute(sql`set enable_indexscan = off`)
   await db.execute(sql`set enable_bitmapscan = off`)
-  await db
-    .insert(positionStageEvent)
-    .overridingSystemValue()
-    .values([
-      { id: 200, positionId, stageId: idOf(stages, 0), occurredAt: at },
-      { id: 300, positionId, stageId: idOf(stages, 1), occurredAt: at },
-      { id: 100, positionId, stageId: idOf(stages, 2), occurredAt: at },
-    ])
-  return idOf(stages, 1)
+  await db.insert(positionStageEvent).values(stages.map((row) => ({ positionId, stageId: row.id, occurredAt: at })))
+  return idOf(stages, TIED_ROWS - 1)
 }
 
 async function thrownBulk(attempt: () => Promise<unknown>): Promise<BulkItemError> {
@@ -442,16 +441,17 @@ describe('getPosition', () => {
   })
 
   test('breaks a same-timestamp tie by id', async () => {
-    // Arrange / Act
+    // Arrange / Act: ten events share one instant, so only the id can say which is latest
     const { detail, expected } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
       const expected = await writeTiedStageEvents(db, id)
       return { detail: await getPosition(db, id), expected }
     })
 
-    // Assert
-    expect(detail.latestStage?.event.id).toBe(300)
+    // Assert: the highest id wins. Without the tie-break the single row asked for is whichever
+    // the scan meets first, which is the lowest id, so this fails for a structural reason.
     expect(detail.latestStage?.stage?.id).toBe(expected)
+    expect(detail.latestStage?.stage?.label).toBe(`Tied stage ${TIED_ROWS - 1}`)
   })
 
   test('renders the stage, phase and references that were archived after they were stored', async () => {
@@ -666,7 +666,7 @@ describe('searchPositions', () => {
 
     // Assert: the board and the modal must not disagree about where a card sits
     expect(row?.stage?.id).toBe(detail.latestStage?.stage?.id as number)
-    expect(row?.stage?.label).toBe('Stage of the highest id')
+    expect(row?.stage?.label).toBe(`Tied stage ${TIED_ROWS - 1}`)
   })
 
   test('filters on recommend-apply against the set asked for, using that set\'s latest score', async () => {
@@ -741,11 +741,71 @@ describe('searchPositions', () => {
       }
     })
 
-    // Assert: same day falls back to the later id, and the pages tile without overlap
+    // Assert: the same day falls back to the later id, and the pages tile without overlap
     const titles = (rows: typeof first) => rows.map((row) => row.position.roleTitle)
     expect(titles(first)).toEqual(['C', 'B'])
     expect(titles(second)).toEqual(['D', 'A'])
     expect(third).toEqual([])
+  })
+
+  test('takes the highest ids when many positions share a sort key and a page is bound', async () => {
+    // Arrange / Act: ten positions seen on one day, ids ascending in the order written
+    const { written, firstPage, secondPage } = await withMigratedScratchDatabase(async (db) => {
+      const written = await addPositions(
+        db,
+        Array.from({ length: TIED_ROWS }, (_, index) => role('Acme', `Role ${index}`, { seenAt: '2026-03-01' })),
+      )
+      return {
+        written,
+        firstPage: await searchPositions(db, queryOf({ limit: 3 })),
+        secondPage: await searchPositions(db, queryOf({ limit: 3, offset: 3 })),
+      }
+    })
+
+    // Assert: with identical dates only the id orders them, so a page of three is forced to
+    // be the three highest ids; without the tie-break it is the first three the scan meets,
+    // which are the lowest. The next page continues downwards with no gap and no overlap.
+    const ids = written.map((row) => row.id)
+    expect(firstPage.map((row) => row.position.id)).toEqual(ids.slice(-3).reverse())
+    expect(secondPage.map((row) => row.position.id)).toEqual(ids.slice(-6, -3).reverse())
+  })
+
+  test('hides a client-hidden position by default, and returns it when asked', async () => {
+    // Arrange / Act
+    const { byDefault, included, only } = await withMigratedScratchDatabase(async (db) => {
+      await addPositions(db, [role('Acme', 'Shown'), role('Acme', 'Hidden', { clientHidden: true })])
+      return {
+        byDefault: await searchPositions(db, queryOf()),
+        included: await searchPositions(db, queryOf({ clientHidden: 'include' })),
+        only: await searchPositions(db, queryOf({ clientHidden: 'only' })),
+      }
+    })
+
+    // Assert
+    expect(byDefault.map((row) => row.position.roleTitle)).toEqual(['Shown'])
+    expect(included.map((row) => row.position.roleTitle).sort()).toEqual(['Hidden', 'Shown'])
+    expect(only.map((row) => row.position.roleTitle)).toEqual(['Hidden'])
+  })
+
+  test('applies the set-aside and client-hidden filters independently', async () => {
+    // Arrange / Act: one position that is both, which each filter must be able to bring back alone
+    const { neither, setAsideOnly, hiddenOnly, both } = await withMigratedScratchDatabase(async (db) => {
+      const { id } = await addOne(db, role('Acme', 'Both', { clientHidden: true }))
+      const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      await db.insert(positionDisposition).values({ positionId: id, kind: 'set_aside', setAsideReasonId: reasonId })
+      return {
+        neither: await searchPositions(db, queryOf()),
+        setAsideOnly: await searchPositions(db, queryOf({ setAside: 'include' })),
+        hiddenOnly: await searchPositions(db, queryOf({ clientHidden: 'include' })),
+        both: await searchPositions(db, queryOf({ setAside: 'include', clientHidden: 'include' })),
+      }
+    })
+
+    // Assert: it takes both flags to hide it by default, and both opt-ins to see it
+    expect(neither).toEqual([])
+    expect(setAsideOnly).toEqual([])
+    expect(hiddenOnly).toEqual([])
+    expect(both).toHaveLength(1)
   })
 })
 
@@ -764,9 +824,11 @@ describe('the position query schema', () => {
     expect(PositionQuerySchema.safeParse({ setAside: 'maybe' }).success).toBe(false)
   })
 
-  test('defaults to hiding set-aside positions', () => {
+  test('defaults to hiding set-aside and client-hidden positions', () => {
     // Assert
     expect(PositionQuerySchema.parse({}).setAside).toBe('exclude')
+    expect(PositionQuerySchema.parse({}).clientHidden).toBe('exclude')
+    expect(PositionQuerySchema.safeParse({ clientHidden: 'maybe' }).success).toBe(false)
   })
 })
 

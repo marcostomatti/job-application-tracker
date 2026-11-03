@@ -384,6 +384,8 @@ function conditionsOf(query: PositionQuery): SQL[] {
   if (query.recommendApply !== undefined) conditions.push(eq(positionScore.recommendApply, query.recommendApply))
   if (query.setAside === 'exclude') conditions.push(sql`not ${isSetAside()}`)
   if (query.setAside === 'only') conditions.push(isSetAside())
+  if (query.clientHidden === 'exclude') conditions.push(eq(position.clientHidden, false))
+  if (query.clientHidden === 'only') conditions.push(eq(position.clientHidden, true))
   return conditions
 }
 
@@ -391,9 +393,13 @@ function conditionsOf(query: PositionQuery): SQL[] {
  * The positions a board or grid draws, newest seen first with id as the tie-break so pages
  * tile without overlap. One query: the latest stage event and the latest score are found per
  * row by a correlated subquery over the indexed key, so a page costs one round trip however
- * many rows it holds. Set-aside positions are left out unless `query.setAside` says
- * otherwise, and a position with no score under the set matches neither answer to
- * `recommendApply`.
+ * many rows it holds.
+ *
+ * Defaults, which a reader should not have to infer from the schema: set-aside positions and
+ * client-hidden positions are both left out unless `query.setAside` / `query.clientHidden`
+ * says `include` (everything) or `only` (just those). A position with no score under the
+ * criteria set matches neither answer to `recommendApply`. There is no total: a page shorter
+ * than `limit` is the end of the list.
  */
 export async function searchPositions(db: Db, query: PositionQuery): Promise<PositionListRow[]> {
   const rows = await db
