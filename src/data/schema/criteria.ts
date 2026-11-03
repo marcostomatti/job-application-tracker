@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
+import { ConflictError } from '../../errors.ts'
 import type { DrizzleClient } from '../client.ts'
 import { layer } from './registries.ts'
 
@@ -112,13 +113,13 @@ const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'
  * class so a retried bulk insert can treat it as a no-op, which it cannot do if
  * the error is indistinguishable from a real failure.
  */
-export class CriteriaSetConflictError extends Error {
+export class CriteriaSetConflictError extends ConflictError {
   constructor(
     readonly setName: string,
     readonly version: number,
     options?: ErrorOptions,
   ) {
-    super(`A criteria set named "${setName}" at version ${version} already exists.`, options)
+    super('criteria set', `"${setName}" at version ${version}`, options)
     this.name = 'CriteriaSetConflictError'
   }
 }

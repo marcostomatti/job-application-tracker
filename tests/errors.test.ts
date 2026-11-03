@@ -23,6 +23,10 @@ describe('statusFor', () => {
     expect(statusFor(new CriteriaSetConflictError('acme', 1))).toBe(409)
   })
 
+  test('CriteriaSetConflictError is a ConflictError', () => {
+    expect(new CriteriaSetConflictError('acme', 1)).toBeInstanceOf(ConflictError)
+  })
+
   test('statusFor sends an unknown error to 500', () => {
     expect(statusFor(new Error('connect ECONNREFUSED 127.0.0.1:5439'))).toBe(500)
   })

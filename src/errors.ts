@@ -1,7 +1,5 @@
 import { ZodError } from 'zod'
 
-import { CriteriaSetConflictError } from './data/schema/criteria.ts'
-
 const HTTP_STATUS = {
   badRequest: 400,
   notFound: 404,
@@ -25,8 +23,9 @@ export class ConflictError extends Error {
   constructor(
     readonly field: string,
     readonly key: string,
+    options?: ErrorOptions,
   ) {
-    super(`${field} ${key} already exists`)
+    super(`${field} ${key} already exists`, options)
     this.name = 'ConflictError'
   }
 }
@@ -56,13 +55,7 @@ export class BulkItemError extends Error {
 /** Maps an error to the HTTP status both surfaces send. Anything unrecognised is a 500. */
 export function statusFor(error: unknown): number {
   if (error instanceof NotFoundError) return HTTP_STATUS.notFound
-  if (
-    error instanceof ConflictError ||
-    error instanceof ArchivedError ||
-    error instanceof CriteriaSetConflictError
-  ) {
-    return HTTP_STATUS.conflict
-  }
+  if (error instanceof ConflictError || error instanceof ArchivedError) return HTTP_STATUS.conflict
   if (error instanceof BulkItemError || error instanceof ZodError) return HTTP_STATUS.badRequest
   return HTTP_STATUS.internal
 }
