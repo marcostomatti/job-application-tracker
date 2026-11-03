@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises'
+import { readdir, rm, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 import { createDependency } from '@open-tomato/service-express'
@@ -9,12 +9,19 @@ import { readBackupSettings } from '../data/repositories/config.ts'
 import type { Db } from '../data/repositories/db.ts'
 import type { BackupSettings } from '../schemas/config.ts'
 import { BackupDumpError, createBunSpawner, runDump, type Spawner } from './dump.ts'
-import { isBackupFileName, parseBackupTime, planRetention, type BackupFile } from './retention.ts'
+import { isBackupFileName, isPartialFileName, parseBackupTime, planRetention, type BackupFile } from './retention.ts'
 
 /** Where dumps go: `backups/` at the repository root, which `.gitignore` excludes. */
-const DEFAULT_BACKUP_DIR = resolve(import.meta.dir, '../../backups')
+export const DEFAULT_BACKUP_DIR = resolve(import.meta.dir, '../../backups')
 
 const DAY_MS = 86_400_000
+
+/**
+ * How long a partial dump must have gone unwritten before it is swept. A dump in flight is
+ * stopped after ten minutes, so a partial untouched for an hour belongs to a process that died.
+ * The wait is what keeps a sweep from removing the file another process is writing right now.
+ */
+const STALE_PARTIAL_MS = 3_600_000
 
 /**
  * How often the schedule asks whether a backup is due: hourly. The interval itself is in days
@@ -51,6 +58,9 @@ export type BackupOptions = {
 
 export type BackupScheduleOptions = BackupOptions & { readonly timers?: BackupTimers }
 
+/** What a service passes to run the schedule beside it: the options but for the database, and the directory is optional. */
+export type BackupWiring = Omit<BackupScheduleOptions, 'db' | 'outDir'> & { readonly outDir?: string }
+
 export type BackupResult = { readonly path: string; readonly dropped: number }
 
 let cachedLogger: BackupLog | undefined
@@ -79,12 +89,16 @@ function describeError(error: unknown): string {
   return error instanceof Error ? `unexpected ${error.name}` : 'unexpected failure'
 }
 
-async function listBackups(outDir: string): Promise<BackupFile[]> {
-  const names = await readdir(outDir).catch((error: NodeJS.ErrnoException) => {
+/** The directory's entries, or none when it does not exist yet. */
+async function entriesOf(outDir: string): Promise<string[]> {
+  return readdir(outDir).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return []
     throw error
   })
-  return names.filter(isBackupFileName).map((name) => ({ name }))
+}
+
+async function listBackups(outDir: string): Promise<BackupFile[]> {
+  return (await entriesOf(outDir)).filter(isBackupFileName).map((name) => ({ name }))
 }
 
 /** Whether the newest backup is at least `intervalDays` old, or there is none. */
@@ -110,6 +124,36 @@ async function removeDropped(outDir: string, drop: readonly BackupFile[], log: B
   return removals.reduce<number>((total, removed) => total + removed, 0)
 }
 
+/**
+ * Removes partial dumps left by a process that died mid-dump. They are personal data in the
+ * directory this feature manages, and nothing else would ever remove them. Only a stale one
+ * goes (see `STALE_PARTIAL_MS`); one that cannot be removed is logged and skipped.
+ */
+async function sweepStalePartials(outDir: string, now: Date, log: BackupLog): Promise<void> {
+  let names: string[]
+  try {
+    names = (await entriesOf(outDir)).filter(isPartialFileName)
+  } catch (error: unknown) {
+    log.warn({ reason: describeError(error) }, 'the backup directory could not be read for stale partials')
+    return
+  }
+  const swept = await Promise.all(
+    names.map(async (name) => {
+      try {
+        const { mtimeMs } = await stat(join(outDir, name))
+        if (now.getTime() - mtimeMs < STALE_PARTIAL_MS) return 0
+        await rm(join(outDir, name), { force: true })
+        return 1
+      } catch (error: unknown) {
+        log.warn({ file: name, reason: describeError(error) }, 'a stale partial backup could not be removed')
+        return 0
+      }
+    }),
+  )
+  const count = swept.reduce<number>((total, removed) => total + removed, 0)
+  if (count > 0) log.info({ count }, 'removed stale partial backups')
+}
+
 /** Dumps now, then keeps the `keep` newest backups. A failed dump removes nothing, so the last good one stays. */
 async function dumpAndPrune(opts: BackupOptions, settings: BackupSettings): Promise<BackupResult> {
   const databaseUrl = opts.databaseUrl ?? process.env.DATABASE_URL
@@ -132,13 +176,15 @@ async function dumpAndPrune(opts: BackupOptions, settings: BackupSettings): Prom
  * does not grow.
  */
 export async function runBackupOnce(opts: BackupOptions): Promise<BackupResult> {
-  return dumpAndPrune(opts, await readBackupSettings(opts.db, opts.logger ?? defaultLogger()))
+  const log = opts.logger ?? defaultLogger()
+  await sweepStalePartials(opts.outDir, (opts.now ?? (() => new Date()))(), log)
+  return dumpAndPrune(opts, await readBackupSettings(opts.db, log))
 }
 
 /**
  * Starts the backup schedule. With `enabled: false` stored it returns at once with no timer.
  *
- * Otherwise it checks whether a backup is due before it returns, and then hourly: a backup
+ * Otherwise it first sweeps stale partial dumps, then checks whether a backup is due before it returns, and then hourly: a backup
  * is due when none exists or the newest is at least `intervalDays` old. Every check reads
  * the settings again, so turning backups off, or changing `keep` or the interval, applies at
  * the next check without a restart. Checks run one after another, never overlapping.
@@ -176,6 +222,8 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
     return chain
   }
 
+  await sweepStalePartials(opts.outDir, now(), log)
+  // An hourly poll and not one interval of `intervalDays`: see CHECK_EVERY_MS for why.
   const handle = timers.setInterval(() => void enqueue(), CHECK_EVERY_MS)
   await enqueue(settings)
   return {
@@ -189,8 +237,9 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
 
 /**
  * The schedule as a chassis dependency, started and stopped with the service that owns it.
- * Nothing mounts it yet; `startService` adds it to its `dependencies` when the service is to
- * back itself up.
+ * `startService` does not use it: a dependency starts before the server listens, and the
+ * schedule's first check can run a dump, which must not delay serving. `startService` starts
+ * the schedule itself, after the server is up and without awaiting it.
  */
 export function createBackupDependency(opts: BackupScheduleOptions): ReturnType<typeof createDependency> {
   let running: { stop(): Promise<void> } | undefined

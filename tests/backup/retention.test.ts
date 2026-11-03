@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   backupFileName,
   isBackupFileName,
+  isPartialFileName,
   parseBackupTime,
   planRetention,
   type BackupFile,
@@ -51,6 +52,22 @@ describe('planRetention', () => {
     expect(plan.drop).toEqual([])
   })
 
+  test('does not count a partial dump as a backup, whatever its name sorts as', () => {
+    // Arrange: the partial's name sorts after the newest real dump
+    const files = named(OLDEST, NEWEST, `${NEWEST}.partial`, 'tracker-20261030T000000Z.dump.partial')
+
+    // Act
+    const plan = planRetention(files, 1)
+
+    // Assert: it is in neither list, so it is neither kept as "the newest" nor deleted here
+    expect(plan.keep.map((file) => file.name)).toEqual([NEWEST])
+    expect(plan.drop.map((file) => file.name)).toEqual([OLDEST])
+  })
+
+  test('a directory of partials alone has no backup to keep', () => {
+    expect(planRetention(named(`${NEWEST}.partial`), 1)).toEqual({ keep: [], drop: [] })
+  })
+
   test('does not reorder or change the list it was given', () => {
     const files = Object.freeze(named(OLDEST, NEWEST))
 
@@ -78,6 +95,13 @@ describe('backup file names', () => {
     expect(isBackupFileName(`${NEWEST}.partial`)).toBe(false)
     expect(isBackupFileName('notes.txt')).toBe(false)
     expect(isBackupFileName('../tracker-20261029T235959Z.dump')).toBe(false)
+  })
+
+  test('recognises a partial dump by its whole name', () => {
+    expect(isPartialFileName(`${NEWEST}.partial`)).toBe(true)
+    expect(isPartialFileName(NEWEST)).toBe(false)
+    expect(isPartialFileName('notes.partial')).toBe(false)
+    expect(isPartialFileName(`x${NEWEST}.partial`)).toBe(false)
   })
 
   test('give their time back', () => {

@@ -1,7 +1,7 @@
 import { chmod, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { backupFileName } from './retention.ts'
+import { backupFileName, partialFileName } from './retention.ts'
 
 /** What to run: a binary, its arguments, and the variables to give it besides `PATH`. */
 export type SpawnRequest = {
@@ -139,7 +139,7 @@ export async function runDump(opts: RunDumpOptions): Promise<string> {
   }
   const secrets = secretsIn(opts.databaseUrl, env)
   const finalPath = join(opts.outDir, backupFileName(opts.now))
-  const partialPath = `${finalPath}.partial`
+  const partialPath = partialFileName(finalPath)
 
   await mkdir(opts.outDir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
   const result = await runBinary(opts, env, partialPath, secrets)

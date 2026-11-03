@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -192,6 +192,68 @@ describe('startBackupSchedule', () => {
       expect(text).toContain('connect failed')
       expect(text).not.toContain('s3cret')
       expect(text).not.toContain(URL_UNDER_TEST)
+    })
+  })
+})
+
+/** A partial dump on disk whose last write was `ageMs` before `NOW`. */
+async function seedPartial(name: string, ageMs: number): Promise<void> {
+  const path = join(outDir, name)
+  await writeFile(path, 'half a dump')
+  const modified = new Date(NOW.getTime() - ageMs)
+  await utimes(path, modified, modified)
+}
+
+const HOUR_MS = 3_600_000
+const STALE_PARTIAL = 'tracker-20261020T000000Z.dump.partial'
+const FRESH_PARTIAL = 'tracker-20261103T090000Z.dump.partial'
+
+describe('stale partial dumps', () => {
+  test('are removed when the schedule starts, and a recent one, which may be a dump in flight, is left', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+      await seedPartial(FRESH_PARTIAL, 60_000)
+      await seedDumps('tracker-20261103T080000Z.dump')
+      await writeFile(join(outDir, 'notes.partial'), 'not mine')
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toEqual([])
+      expect(await listing()).toEqual(['notes.partial', 'tracker-20261103T080000Z.dump', FRESH_PARTIAL])
+    })
+  })
+
+  test('are removed by a one-off backup too', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+
+      await runBackupOnce({ db, outDir, spawn: recordingSpawner([]), databaseUrl: URL_UNDER_TEST, now: () => NOW, logger: silent })
+
+      expect(await listing()).toEqual([NEW_DUMP])
+    })
+  })
+
+  test('are not removed when backups are off, because nothing is managing the directory then', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { enabled: false })
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+      const { started } = start(db)
+
+      await (await started).stop()
+
+      expect(await listing()).toEqual([STALE_PARTIAL])
+    })
+  })
+
+  test('do not stand in for a backup: a directory with only a partial is still due a dump', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(FRESH_PARTIAL, 60_000)
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toHaveLength(1)
     })
   })
 })

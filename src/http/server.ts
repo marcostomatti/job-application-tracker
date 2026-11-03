@@ -8,6 +8,7 @@ import express from 'express'
 
 import { GENERATED_KEY_LENGTH } from '../auth/api-key.ts'
 import { requireApiKey } from '../auth/middleware.ts'
+import { DEFAULT_BACKUP_DIR, startBackupSchedule, type BackupWiring } from '../backup/schedule.ts'
 import { closeDb, getDb } from '../data/client.ts'
 import { mountRoutes } from './routes/index.ts'
 
@@ -32,6 +33,12 @@ export interface StartOptions {
   readonly port?: number
   /** The directory holding the built web app. Defaults to `src/web/dist`; nothing is served when it does not exist. */
   readonly webDist?: string
+  /**
+   * Starts the backup schedule with these options. Left unset, the schedule runs in the default
+   * `backups/` directory, except under `NODE_ENV=test`, where nothing is started so no test ever
+   * spawns a dump. A test of the wiring passes its own, with a stand-in for `pg_dump`.
+   */
+  readonly backup?: BackupWiring
 }
 
 /** Thrown before anything is opened when no API key is configured. Its message carries no key. */
@@ -108,6 +115,32 @@ function postgresDependency(db: ReturnType<typeof getDb>): ReturnType<typeof cre
 }
 
 /**
+ * The backup options to start the schedule with, or `undefined` for none. A caller's own win;
+ * otherwise the defaults, except under `NODE_ENV=test`.
+ */
+export function backupOptionsFor(env: NodeJS.ProcessEnv, requested: BackupWiring | undefined): BackupWiring | undefined {
+  if (requested !== undefined) return requested
+  return env.NODE_ENV === 'test' ? undefined : {}
+}
+
+type BackupHandle = { stop(): Promise<void> }
+
+/**
+ * Starts the schedule and returns at once with the promise for its handle. It is not awaited
+ * by the caller: the schedule's first check can run a full dump, and a cold start a fortnight
+ * after the last backup must not hold the service back behind it. A schedule that cannot
+ * start is logged by error name only, and the service runs without it.
+ */
+function startBackups(db: ReturnType<typeof getDb>, wiring: BackupWiring | undefined): Promise<BackupHandle | undefined> {
+  if (wiring === undefined) return Promise.resolve(undefined)
+  return startBackupSchedule({ ...wiring, db, outDir: wiring.outDir ?? DEFAULT_BACKUP_DIR }).catch((error: unknown) => {
+    const log = wiring.logger ?? createLogger('backup')
+    log.error({ reason: error instanceof Error ? error.name : 'unknown' }, 'the backup schedule did not start')
+    return undefined
+  })
+}
+
+/**
  * Starts the internal HTTP service: the chassis (health, body parser, rate limit, error
  * handler), the API key on `/api`, the 23 routes, and the web bundle when one exists.
  *
@@ -121,7 +154,7 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
   const webDist = opts.webDist ?? DEFAULT_WEB_DIST
   const db = getDb()
 
-  return createService({
+  const service = await createService({
     serviceId: 'job-application-tracker',
     port,
     rateLimit: RATE_LIMIT,
@@ -142,6 +175,16 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
       }
     },
   })
+  // Started once the server is listening, and not awaited (see `startBackups`).
+  const backups = startBackups(db, backupOptionsFor(process.env, opts.backup))
+  return {
+    ...service,
+    // The schedule stops first, while the pool it reads settings from is still open.
+    stop: async () => {
+      await (await backups)?.stop()
+      await service.stop()
+    },
+  }
 }
 
 if (import.meta.main) {

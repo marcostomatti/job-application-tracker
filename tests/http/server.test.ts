@@ -11,9 +11,11 @@ import { join } from 'node:path'
 import type { ServiceHandle } from '@open-tomato/service-express'
 
 import { generateApiKey } from '../../src/auth/api-key.ts'
+import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
+import type { BackupTimers } from '../../src/backup/schedule.ts'
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
-import { startService } from '../../src/http/server.ts'
+import { backupOptionsFor, startService } from '../../src/http/server.ts'
 
 /** A key made up for these tests; it matches nothing real. */
 const TEST_KEY = 'test-key-for-the-server-entry'
@@ -330,6 +332,85 @@ describe('startService', () => {
       expect(page.status).toBe(200)
       expect(await page.text()).toContain('<title>tracker</title>')
       expect(api.status).toBe(401)
+    })
+  })
+
+  describe('the backup schedule', () => {
+    const silent = { info: () => {}, warn: () => {}, error: () => {} }
+    let backupDir: string | undefined
+
+    afterEach(async () => {
+      if (backupDir) await rm(backupDir, { recursive: true, force: true })
+      backupDir = undefined
+    })
+
+    /** Waits, up to a few seconds, for a condition a background task will bring about. */
+    async function until(condition: () => boolean): Promise<void> {
+      const deadline = Date.now() + 5_000
+      while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(condition()).toBe(true)
+    }
+
+    test('is not started under NODE_ENV=test unless a test passes its own', () => {
+      const own = { outDir: '/somewhere' }
+
+      expect(backupOptionsFor({ NODE_ENV: 'test' }, undefined)).toBeUndefined()
+      expect(backupOptionsFor({ NODE_ENV: 'production' }, undefined)).toEqual({})
+      expect(backupOptionsFor({}, undefined)).toEqual({})
+      expect(backupOptionsFor({ NODE_ENV: 'test' }, own)).toBe(own)
+    })
+
+    test('does not hold the service back while a due dump runs, and stop() clears its timer', async () => {
+      // Arrange: a stand-in whose dump does not finish until the test says so
+      backupDir = await mkdtemp(join(tmpdir(), 'service-backups-'))
+      const calls: SpawnRequest[] = []
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const spawn: Spawner = async (request) => {
+        calls.push(request)
+        await gate
+        const target = request.args.find((arg) => arg.startsWith('--file='))?.slice('--file='.length) ?? ''
+        await writeFile(target, 'a dump')
+        return { exitCode: 0, signal: null, stderr: '' }
+      }
+      const cleared: unknown[] = []
+      const timers: BackupTimers = { setInterval: () => 'timer', clearInterval: (handle) => void cleared.push(handle) }
+      const databaseUrl = 'postgres://backup_user:s3cret@db.example.test:5433/tracker_db'
+
+      try {
+        // Act: startService resolves although the first check is waiting on the gate
+        const { origin } = await start({ backup: { outDir: backupDir, spawn, timers, databaseUrl, logger: silent } })
+        await until(() => calls.length === 1)
+        const health = await fetch(`${origin}/health`)
+
+        // Assert: the dump is still in flight and the service already answers
+        expect(health.status).toBe(200)
+        expect(cleared).toEqual([])
+      } finally {
+        release()
+      }
+      await stopRunning()
+      expect(cleared).toEqual(['timer'])
+    })
+
+    test('a schedule that cannot start is logged by name and does not stop the service', async () => {
+      const logged: string[] = []
+      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+      const timers: BackupTimers = {
+        setInterval: () => {
+          throw new TypeError('timer refused for postgres://u:leaky@h/d')
+        },
+        clearInterval: () => {},
+      }
+
+      const { origin } = await start({ backup: { outDir: tmpdir(), timers, logger } })
+      const health = await fetch(`${origin}/health`)
+
+      expect(health.status).toBe(200)
+      await until(() => logged.length > 0)
+      expect(logged.join('\n')).not.toContain('leaky')
     })
   })
 })

@@ -38,8 +38,24 @@ export function isBackupFileName(name: string): boolean {
   return parseBackupTime(name) !== null
 }
 
+const PARTIAL_SUFFIX = '.partial'
+
+/** The name a dump is written under until it is complete: its final name plus `.partial`. */
+export function partialFileName(finalName: string): string {
+  return `${finalName}${PARTIAL_SUFFIX}`
+}
+
+/** Whether a directory entry is a half-written dump, which is no backup and may only ever be swept. */
+export function isPartialFileName(name: string): boolean {
+  return name.endsWith(PARTIAL_SUFFIX) && isBackupFileName(name.slice(0, -PARTIAL_SUFFIX.length))
+}
+
 /**
  * Which backups stay and which go: the `keep` newest stay, found by name, and the rest go.
+ *
+ * A partial dump (`isPartialFileName`) is in neither list. It is not a backup, so it must not
+ * be kept as the newest one, which would make an abandoned file stand in for a dump that does
+ * not exist, and it is not retention's to delete: stale ones are swept separately.
  *
  * A `keep` that is not a positive whole number drops nothing. Zero would mean no backups at
  * all, which a retention setting must not be able to say by accident (`enabled: false` is the
@@ -47,7 +63,9 @@ export function isBackupFileName(name: string): boolean {
  * on but the safe one. The list passed in is not changed.
  */
 export function planRetention(files: readonly BackupFile[], keep: number): RetentionPlan {
-  const newestFirst = [...files].sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0))
+  const newestFirst = files
+    .filter((file) => !isPartialFileName(file.name))
+    .sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0))
   if (!Number.isInteger(keep) || keep < 1) return { keep: newestFirst, drop: [] }
   return { keep: newestFirst.slice(0, keep), drop: newestFirst.slice(keep) }
 }

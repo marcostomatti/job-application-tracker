@@ -79,13 +79,30 @@ The settings live in `app_config` under `backup`, and the defaults apply until y
 `{ "enabled": false }` turns the schedule off. `bun run backup` is a request, so it dumps even
 when the schedule is off, and it still prunes to `keep`.
 
-`src/backup/schedule.ts` also exports `startBackupSchedule` and `createBackupDependency`, which
-check hourly whether the newest dump is `intervalDays` old and dump if so. Nothing starts them
-yet: `bun run serve` does not make backups.
+`bun run serve` runs the schedule too: once the server is listening it starts a check, and then
+checks hourly, whether the newest dump is `intervalDays` old, and dumps if so. The first check
+runs on its own, so a dump that is due at start never delays a request. Nothing is scheduled
+under `NODE_ENV=test`. Changing `keep`, `intervalDays` or `enabled` applies at the next hourly
+check, with no restart. A dump that fails is logged (the reason from `pg_dump`, with the URL and
+password removed) and the service carries on. A dump half-written when a process dies is a
+`*.partial` file; the next start removes those that have sat untouched for an hour.
 
-The binary is `pg_dump`, or the path in `PG_DUMP_BIN`. **Its major version must be at least the
-server's**: the Docker database is Postgres 16, and a `pg_dump` 14 refuses it with
-`aborting because of server version mismatch`. Point `PG_DUMP_BIN` at a 16 or newer binary.
+### If `pg_dump` says "aborting because of server version mismatch"
+
+The binary is `pg_dump`, or the path in `PG_DUMP_BIN`, and its major version must be **at least
+the server's**. The Docker database is Postgres 16, so a `pg_dump` 14 (a common Homebrew or
+distro default) refuses it. The fix that needs nothing installed is the database container's own
+`pg_dump` 16, which `scripts/pg_dump-docker.sh` runs for you:
+
+```sh
+bun run db:up
+PG_DUMP_BIN=scripts/pg_dump-docker.sh bun run backup
+```
+
+For `bun run serve` put `PG_DUMP_BIN=scripts/pg_dump-docker.sh` in `.env` and start it from the
+clone's root, where that relative path resolves. The script needs the container from `db:up`
+running, and takes the user, password and database from `DATABASE_URL` as usual.
+
 The connection is given to `pg_dump` through its `PG*` environment variables, so the password
 is in no command line, and an error from `pg_dump` is shown with the URL and password removed.
 Restore with `pg_restore --dbname <url> backups/<file>`.
