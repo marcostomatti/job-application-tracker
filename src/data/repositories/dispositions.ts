@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, type InferSelectModel } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, sql, type InferSelectModel } from 'drizzle-orm'
 
 import { NotFoundError } from '../../errors.ts'
 import { PAGE_LIMIT_MAX } from '../../schemas/common.ts'
@@ -8,7 +8,7 @@ import { position } from '../schema/positions.ts'
 import { phase as phaseTable, setAsideReason, stage as stageTable } from '../schema/registries.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
-import { searchPositions, type PositionListRow } from './positions.ts'
+import { SET_ASIDE_KIND, searchPositions, type PositionListRow } from './positions.ts'
 import { assertNotArchived, type RegistryRowOf } from './registries.ts'
 
 export type StageEvent = InferSelectModel<typeof positionStageEvent>
@@ -28,10 +28,11 @@ export type SetAsideGroup = {
 }
 
 /**
- * The internal discriminators of the two dispositions. `kind` is the one column the table's
- * CHECK lists and the code branches on, so naming its values here is not the user's vocabulary.
+ * The internal discriminator of a disposition that records the other side's rejection. `kind`
+ * is the one column the table's CHECK lists and the code branches on, so naming its values is
+ * not the user's vocabulary. The set-aside value is shared with the position search, which
+ * counts it, and is imported from there so the two cannot drift.
  */
-const SET_ASIDE_KIND = 'set_aside'
 const REJECTED_KIND = 'rejected'
 
 /**
@@ -40,7 +41,7 @@ const REJECTED_KIND = 'rejected'
  * required columns are named where the row is built, and `kind` is set by the function that
  * owns it: each disposition names its own reason column and never the other.
  */
-const STAGE_EVENT_OPTIONAL_COLUMNS = ['occurredAt', 'note'] as const satisfies readonly (keyof StageEventInput)[]
+const STAGE_EVENT_OPTIONAL_COLUMNS = ['note'] as const satisfies readonly (keyof StageEventInput)[]
 const DISPOSITION_OPTIONAL_COLUMNS = ['note'] as const satisfies readonly (keyof SetAsideInput & keyof RecordRejectionInput)[]
 
 async function assertPositionExists(db: Db, positionId: number): Promise<void> {
@@ -66,10 +67,23 @@ async function lockPosition(db: Db, positionId: number): Promise<void> {
   if (!found) throw new NotFoundError('position', positionId)
 }
 
+/**
+ * Writes the event, dated by the caller or else by the wall clock at this statement. The
+ * column's own default is `now()`, which is the instant the transaction began, and both
+ * writers take the position's lock after that: a transaction that began early but won the
+ * lock late would be dated before the one it follows, and the events would read in the
+ * opposite order from the one the lock established. `clock_timestamp()` runs when the insert
+ * does, after any lock wait, so the dates follow the serialisation.
+ */
 async function insertStageEvent(db: Db, input: StageEventInput): Promise<StageEvent> {
   const [written] = await db
     .insert(positionStageEvent)
-    .values({ positionId: input.positionId, stageId: input.stageId, ...pickDefined(input, STAGE_EVENT_OPTIONAL_COLUMNS) })
+    .values({
+      positionId: input.positionId,
+      stageId: input.stageId,
+      occurredAt: input.occurredAt ?? sql`clock_timestamp()`,
+      ...pickDefined(input, STAGE_EVENT_OPTIONAL_COLUMNS),
+    })
     .returning()
   if (!written) throw new Error('The stage event insert returned no row.')
   return written
@@ -179,6 +193,12 @@ async function findShortlistStageId(db: Db): Promise<number | null> {
  *
  * The check and the write run under the position's row lock, so an application filed by
  * another transaction between them cannot be moved back to the shortlist.
+ *
+ * With `recommendApply` false it returns null without reading the position, so an unknown
+ * position is reported only when the call would have moved it. That is not an inconsistency
+ * with `currentStage` and `isApplied`, which raise for a missing position: here the null is
+ * an answer about the input (there is nothing to do, whatever state the position is in), not a
+ * claim about the position, so it need not verify the row and does not pay a read to do so.
  */
 export async function moveIfRecommended(
   db: Db,
@@ -245,7 +265,7 @@ async function readSetAsidePositions(db: Db): Promise<PositionListRow[]> {
   }
 }
 
-type SetAsideReasonOf = { readonly reasonId: number; readonly reasonLabel: string }
+export type SetAsideReasonOf = { readonly reasonId: number; readonly reasonLabel: string }
 
 /**
  * The reason each position was most recently set aside for, by position id: dispositions
@@ -267,6 +287,31 @@ async function readLatestSetAsideReasons(db: Db): Promise<Map<number, SetAsideRe
 }
 
 /**
+ * Groups rows under the reason each position was last set aside for. A position appears once
+ * in its group even if `rows` lists it twice: the rows come from offset paging, which is not
+ * a snapshot, so a position touched between two pages can be read on both, and the same role
+ * twice in one list would be wrong where skipping one under a concurrent write is not. A row
+ * with no reason, which cannot happen for a row that is set aside, is left out.
+ */
+export function groupBySetAsideReason(
+  rows: readonly PositionListRow[],
+  reasons: ReadonlyMap<number, SetAsideReasonOf>,
+): SetAsideGroup[] {
+  const seen = new Set<number>()
+  const groups = new Map<number, { reasonLabel: string; positions: PositionListRow[] }>()
+  for (const row of rows) {
+    const reason = reasons.get(row.position.id)
+    if (reason === undefined || seen.has(row.position.id)) continue
+    seen.add(row.position.id)
+    const group = groups.get(reason.reasonId) ?? { reasonLabel: reason.reasonLabel, positions: [] }
+    groups.set(reason.reasonId, { ...group, positions: [...group.positions, row] })
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([reasonId, group]) => ({ reasonId, ...group }))
+}
+
+/**
  * The set-aside positions grouped by why (§11.1 group 7). A position is in the group of its
  * latest set-aside reason, once. A later rejection does not remove it: the grouping exists so
  * the user can see why they passed on leads and refine a gate or a weight from it, and their
@@ -283,15 +328,5 @@ async function readLatestSetAsideReasons(db: Db): Promise<Map<number, SetAsideRe
  */
 export async function listSetAside(db: Db): Promise<SetAsideGroup[]> {
   const rows = await readSetAsidePositions(db)
-  const reasons = await readLatestSetAsideReasons(db)
-  const groups = new Map<number, { reasonLabel: string; positions: PositionListRow[] }>()
-  for (const row of rows) {
-    const reason = reasons.get(row.position.id)
-    if (reason === undefined) continue
-    const group = groups.get(reason.reasonId) ?? { reasonLabel: reason.reasonLabel, positions: [] }
-    groups.set(reason.reasonId, { ...group, positions: [...group.positions, row] })
-  }
-  return [...groups.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([reasonId, group]) => ({ reasonId, ...group }))
+  return groupBySetAsideReason(rows, await readLatestSetAsideReasons(db))
 }

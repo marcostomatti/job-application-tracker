@@ -90,7 +90,7 @@ export type PositionListRow = {
 }
 
 /** The internal discriminator of a disposition that sets a lead aside. */
-const SET_ASIDE_KIND = 'set_aside'
+export const SET_ASIDE_KIND = 'set_aside'
 
 /** The constraint names in `0002_positions.sql`, which Postgres reports on a duplicate. */
 const KEY_CONSTRAINT = 'position_position_key_unique'

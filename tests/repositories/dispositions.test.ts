@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { asc, count, eq, sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
 import type { DrizzleClient } from '../../src/data/client.ts'
@@ -7,13 +8,14 @@ import * as repositoryModule from '../../src/data/repositories/dispositions.ts'
 import {
   appendStageEvent,
   currentStage,
+  groupBySetAsideReason,
   isApplied,
   listSetAside,
   moveIfRecommended,
   recordRejection,
   setAside,
 } from '../../src/data/repositories/dispositions.ts'
-import { addPositions, type Position } from '../../src/data/repositories/positions.ts'
+import { addPositions, searchPositions, type Position } from '../../src/data/repositories/positions.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
 import { positionDisposition, positionStageEvent } from '../../src/data/schema/dispositions.ts'
 import { ArchivedError, NotFoundError, statusFor } from '../../src/errors.ts'
@@ -24,6 +26,7 @@ import {
   StageEventInputSchema,
 } from '../../src/schemas/dispositions.ts'
 import type { RegistryRowInputOf } from '../../src/schemas/registries.ts'
+import { PositionQuerySchema } from '../../src/schemas/positions.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
@@ -563,6 +566,23 @@ describe('listSetAside', () => {
   })
 })
 
+describe('groupBySetAsideReason', () => {
+  test('lists a position once when paging read it on two pages', async () => {
+    // Arrange / Act: the same row twice, as offset paging can return it after a concurrent touch
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const reason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      await setAside(db, { positionId: target.id, setAsideReasonId: reason })
+      const rows = await searchPositions(db, PositionQuerySchema.parse({ setAside: 'only' }))
+      return groupBySetAsideReason([...rows, ...rows], new Map([[target.id, { reasonId: reason, reasonLabel: 'Too far' }]]))
+    })
+
+    // Assert
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.positions).toHaveLength(1)
+  })
+})
+
 describe('moveIfRecommended', () => {
   test('appends an event in the shortlist phase when a score recommends applying', async () => {
     // Arrange / Act
@@ -734,6 +754,36 @@ describe('moveIfRecommended', () => {
     expect(moved?.stageId).toBe(inFirst)
   })
 
+  test('breaks a tie between two shortlist phases of equal sort by phase id, ahead of the stage sort', async () => {
+    // Arrange / Act: the older phase's stage sorts later, so only the phase id puts it first;
+    // rewriting the older phase row moves it to the end of the table under a sequential scan
+    const { moved, olderPhaseStageId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const older = await addPhase(db, 'older', { isShortlist: true, sort: 7 })
+      const newer = await addPhase(db, 'newer', { isShortlist: true, sort: 7 })
+      const olderPhaseStageId = await addStage(db, 'in-older', { phaseId: older, sort: 9 })
+      await addStage(db, 'in-newer', { phaseId: newer, sort: 1 })
+      await db.execute(sql`update phase set label = 'Renamed' where id = ${older}`)
+      await db.execute(sql`set enable_indexscan = off`)
+      await db.execute(sql`set enable_bitmapscan = off`)
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), olderPhaseStageId }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(olderPhaseStageId)
+  })
+
+  test('says nothing about an unknown position when the score does not recommend applying', async () => {
+    // Arrange / Act: the null is an answer about the input, so no read of the position is made
+    const moved = await withMigratedScratchDatabase(async (db) => {
+      await shortlistWithOneStage(db)
+      return moveIfRecommended(db, { positionId: 999_999, recommendApply: false })
+    })
+
+    // Assert
+    expect(moved).toBeNull()
+  })
+
   test('refuses an unknown position even when nothing would be written', async () => {
     // Arrange / Act
     const error = await withMigratedScratchDatabase(async (db) => {
@@ -819,6 +869,40 @@ describe('the position lock', () => {
 
     // Assert
     expect(notes).toEqual(['first', 'second'])
+  })
+})
+
+describe('the date of an event written after a lock wait', () => {
+  test('a transaction that began first but took the lock last is dated after the one it follows', async () => {
+    // Arrange / Act: A begins, then R begins, takes the lock, files a shortlist event and commits;
+    // only then does A take the lock and file its application. Dated at BEGIN, A's event would
+    // precede R's and the position would read as shortlisted again.
+    const { applied, stage } = await withMigratedScratchDatabase(async (db, scratch) => {
+      const target = await addPosition(db)
+      await shortlistWithOneStage(db)
+      const filed = await addStage(db, 'filed', { isApplied: true })
+      return withSecondConnections(scratch, async (writer) => {
+        const rescore = drizzle(writer)
+        const begun = Promise.withResolvers<void>()
+        const release = Promise.withResolvers<void>()
+        const application = db.transaction(async (tx) => {
+          await tx.execute(sql`select 1`)
+          begun.resolve()
+          await release.promise
+          await appendStageEvent(tx, { positionId: target.id, stageId: filed })
+        })
+        await begun.promise
+        await Bun.sleep(50)
+        await moveIfRecommended(rescore, { positionId: target.id, recommendApply: true })
+        release.resolve()
+        await application
+        return { applied: await isApplied(db, target.id), stage: await currentStage(db, target.id) }
+      })
+    })
+
+    // Assert
+    expect(stage?.stage.label).toBe('Stage filed')
+    expect(applied).toBe(true)
   })
 })
 
