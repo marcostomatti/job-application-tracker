@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Detour, Rating } from '../../src/entities/scoring.ts'
 import { effectiveCoverage } from '../../src/scoring/effective-coverage.ts'
-import { DetourSchema, RatingSchema } from '../../src/schemas/scoring.ts'
+import { DetourSchema, PenaltySchema, RatingSchema } from '../../src/schemas/scoring.ts'
 
 const rating = (coverage: number | null): Rating => ({
   requirementKey: 'req',
@@ -71,6 +71,14 @@ describe('scoring schema bounds', () => {
     expect(DetourSchema.safeParse({ ...validDetour, coverage: -0.1 }).success).toBe(false)
     expect(DetourSchema.safeParse({ ...validDetour, discount: -0.1 }).success).toBe(false)
     expect(DetourSchema.safeParse({ ...validDetour, discount: 1.2 }).success).toBe(false)
+  })
+
+  test('rejects a penalty amount above 0 and accepts 0 and negative amounts', () => {
+    const validPenalty = { kindKey: 'penalty', amount: -0.25 }
+
+    expect(PenaltySchema.safeParse({ ...validPenalty, amount: 0.25 }).success).toBe(false)
+    expect(PenaltySchema.safeParse({ ...validPenalty, amount: 0 }).success).toBe(true)
+    expect(PenaltySchema.safeParse({ ...validPenalty, amount: -0.25 }).success).toBe(true)
   })
 
   test('accepts a null coverage as not rated', () => {

@@ -27,6 +27,6 @@ export const DetourSchema = z.object({
 
 export const PenaltySchema = z.object({
   kindKey: z.string(),
-  // A signed adjustment to the normalised score: a penalty of -0.25 takes a quarter off.
-  amount: z.number(),
+  // A signed adjustment to the normalised score, never positive: -0.25 takes a quarter off.
+  amount: z.number().max(0),
 })
