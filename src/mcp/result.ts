@@ -34,19 +34,44 @@ function isKnownError(error: unknown): error is Error {
   )
 }
 
+/** The two fields a caller is shown for an error, and nothing else. */
+export interface ErrorDescription {
+  readonly name: string
+  readonly message: string
+}
+
 /**
- * Turns anything a tool threw into an error result, built field by field from `name` and
- * `message` and nothing else. It never serialises the error, and never reads `cause`, because
- * `cause` holds the driver fault, and a driver fault's message is the failed SQL statement.
+ * What a caller is told about an error, built field by field from `name` and `message` and
+ * nothing else. This is the one place the wording is decided, so a surface that wraps it in its
+ * own envelope (the MCP content block here, `{ success: false, error }` over HTTP) shows the
+ * same text for the same failure. It never serialises the error and never reads `cause` except
+ * as described next, because `cause` holds the driver fault, and a driver fault's message is the
+ * failed SQL statement.
+ *
+ * A `BulkItemError` says which item failed, and adds why when its cause is itself a known class,
+ * because those messages are built from fields the caller supplied. An unknown cause adds
+ * nothing, so the leak property holds.
  *
  * An error outside the known classes could be anything, a connection string included, so it
- * becomes the same flat `internal error` with no name and no message of its own.
+ * becomes the same flat `internal error` with no name and no message of its own. A `ZodError`
+ * is flat here only because this is called from the MCP handler, where the SDK has already
+ * parsed the input. A surface that parses with the schema itself must treat a `ZodError` as
+ * caller input before it reaches this function.
  */
+export function describeError(error: unknown): ErrorDescription {
+  if (!isKnownError(error)) return INTERNAL_ERROR
+  const { name, message } = error
+  if (error instanceof BulkItemError && isKnownError(error.cause)) {
+    return { name, message: `${message}: ${error.cause.message}` }
+  }
+  return { name, message }
+}
+
+/** Turns anything a tool threw into an error result carrying `describeError`'s text. */
 export function errorResult(error: unknown): CallToolResult {
-  const { name, message } = isKnownError(error) ? error : INTERNAL_ERROR
   return {
     isError: true,
-    content: [{ type: 'text', text: JSON.stringify({ error: { name, message } }) }],
+    content: [{ type: 'text', text: JSON.stringify({ error: describeError(error) }) }],
   }
 }
 

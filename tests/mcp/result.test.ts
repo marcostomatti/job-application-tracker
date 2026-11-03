@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { CriteriaSetConflictError } from '../../src/data/schema/criteria.ts'
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
-import { errorResult, okResult, unwrapSingleItem } from '../../src/mcp/result.ts'
+import { describeError, errorResult, okResult, unwrapSingleItem } from '../../src/mcp/result.ts'
 
 /** What a Postgres driver fault looks like: the failed statement and the constraint it names. */
 function driverFault(): Error {
@@ -80,12 +80,38 @@ describe('errorResult', () => {
     })
   })
 
-  test('errorResult names a BulkItemError with its index and nothing of its cause', () => {
+  test('errorResult adds the cause message to a BulkItemError whose cause is a known class', () => {
     const result = errorResult(new BulkItemError(2, new NotFoundError('route', 9)))
 
     expect(JSON.parse(textOf(result))).toEqual({
-      error: { name: 'BulkItemError', message: 'bulk item 2 failed' },
+      error: { name: 'BulkItemError', message: 'bulk item 2 failed: route 9 does not exist' },
     })
+  })
+
+  test('errorResult adds the message of a ConflictError cause, and nothing of its own cause', () => {
+    const conflict = new ConflictError('phase key', 'p1', { cause: driverFault() })
+
+    const text = JSON.stringify(errorResult(new BulkItemError(0, conflict)))
+
+    expect(text).toContain('bulk item 0 failed: phase key p1 already exists')
+    expect(text).not.toContain('insert into')
+  })
+
+  test('errorResult keeps the bare message of a BulkItemError whose cause is unknown', () => {
+    const result = errorResult(new BulkItemError(3, driverFault()))
+
+    expect(JSON.parse(textOf(result))).toEqual({
+      error: { name: 'BulkItemError', message: 'bulk item 3 failed' },
+    })
+    expect(JSON.stringify(result)).not.toContain('insert into')
+    expect(JSON.stringify(result)).not.toContain('positions_position_key_unique')
+  })
+
+  test('errorResult keeps the bare message when the cause is not an error at all', () => {
+    const result = errorResult(new BulkItemError(1, 'postgres://user:secret@/db'))
+
+    expect(JSON.stringify(result)).not.toContain('secret')
+    expect(JSON.parse(textOf(result)).error.message).toBe('bulk item 1 failed')
   })
 
   test('errorResult leaks neither the SQL nor the constraint name of a ConflictError cause', () => {
@@ -150,6 +176,24 @@ describe('errorResult', () => {
 
     expect(text).toContain('internal error')
     expect(text).not.toContain('invalid_type')
+  })
+})
+
+describe('describeError', () => {
+  test('describeError returns the same name and message errorResult puts in its envelope', () => {
+    const error = new BulkItemError(4, new ArchivedError('route', 3))
+
+    const described = describeError(error)
+
+    expect(described).toEqual({ name: 'BulkItemError', message: 'bulk item 4 failed: route 3 is archived' })
+    expect(JSON.parse(textOf(errorResult(error)))).toEqual({ error: described })
+  })
+
+  test('describeError returns the flat internal error for an unknown error', () => {
+    expect(describeError(new Error('connect ECONNREFUSED on port 5439'))).toEqual({
+      name: 'InternalError',
+      message: 'internal error',
+    })
   })
 })
 
