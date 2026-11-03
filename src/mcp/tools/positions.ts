@@ -4,9 +4,11 @@ import {
   PositionInputSchema,
   PositionQuerySchema,
   PositionRefSchema,
+  PositionUpdateBulkSchema,
   PositionUpdateInputSchema,
 } from '../../schemas/positions.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
+import { inOneTransaction } from '../bulk.ts'
 import { unwrapSingleItem } from '../result.ts'
 
 /** §11.1 group 1: recording, reading, searching and editing positions. */
@@ -72,5 +74,16 @@ export const positionTools: ToolDefinition[] = [
       'An empty patch is refused, an unknown id is a not-found error, and a title that now collides with another position at the same employer is a conflict.',
     input: PositionUpdateInputSchema,
     run: async (args, db) => updatePosition(db, args.positionId, args.patch),
+  }),
+  defineTool({
+    name: 'position_update_bulk',
+    title: 'Update several positions',
+    description:
+      'Applies a patch to each of up to 500 positions in one call, each item being { positionId, patch }, and returns the positions as stored, in the order given. ' +
+      'All or none: if any item fails (an unknown id, an archived reference, a title collision), nothing is changed and the error names the failing item by its index. ' +
+      'Prefer this to repeated position_update calls when changing many positions; each patch follows the same rules as position_update, including that an empty patch is refused.',
+    input: PositionUpdateBulkSchema,
+    run: async (args, db) =>
+      inOneTransaction(db, args.items, (tx, item) => updatePosition(tx, item.positionId, item.patch)),
   }),
 ]

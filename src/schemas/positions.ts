@@ -131,3 +131,6 @@ export const PositionUpdateInputSchema = z.strictObject({
 })
 
 export type PositionUpdateInput = z.infer<typeof PositionUpdateInputSchema>
+
+/** Up to `BULK_MAX` position updates in one call, all or none. */
+export const PositionUpdateBulkSchema = bulkOf(PositionUpdateInputSchema)

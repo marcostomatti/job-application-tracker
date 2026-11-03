@@ -20,6 +20,7 @@ describe('the positions group', () => {
       'position_get',
       'position_search',
       'position_update',
+      'position_update_bulk',
     ])
   })
 
@@ -203,5 +204,52 @@ describe('the positions group', () => {
     const outcome = await client.call('position_update', { positionId: id, patch: { applyRouteId: routeId } })
 
     expect(failureText(outcome)).toContain(`apply_route ${routeId} is archived`)
+  })
+
+  test('position_update_bulk patches several positions and returns them in the order given', async () => {
+    const client = await connectTools(positionTools, database())
+    const added = await client.call('position_add_bulk', {
+      items: ['A', 'B', 'C'].map((title) => ({ company: { name: 'Bulk Update Co' }, roleTitle: title })),
+    })
+    const ids = idsOf(added.body)
+
+    const outcome = await client.call('position_update_bulk', {
+      items: [ids[2], ids[0]].map((positionId, index) => ({ positionId, patch: { city: `City ${index}` } })),
+    })
+
+    expect(outcome.failed).toBe(false)
+    expect(outcome.body).toEqual([
+      expect.objectContaining({ id: ids[2], city: 'City 0' }),
+      expect.objectContaining({ id: ids[0], city: 'City 1' }),
+    ])
+  })
+
+  test('position_update_bulk names the failing item by index and leaves every earlier item unchanged', async () => {
+    const client = await connectTools(positionTools, database())
+    const added = await client.call('position_add', { company: { name: 'Bulk Rollback Co' }, roleTitle: 'Engineer' })
+    const id = (added.body as { id: number }).id
+
+    const outcome = await client.call('position_update_bulk', {
+      items: [
+        { positionId: id, patch: { city: 'Lisbon' } },
+        { positionId: 999_999, patch: { city: 'Nowhere' } },
+      ],
+    })
+    const after = await client.call('position_get', { positionId: id })
+
+    expect(failureText(outcome)).toContain('bulk item 1 failed: position 999999 does not exist')
+    expect(after.body).toMatchObject({ position: { id, city: null } })
+  })
+
+  test('position_update_bulk rejects an over-cap array, an empty one, a single item and an empty patch at the schema', async () => {
+    const client = await connectTools(positionTools, untouchableDb())
+    const item = { positionId: 1, patch: { city: 'Porto' } }
+
+    const over = await client.call('position_update_bulk', { items: Array.from({ length: BULK_MAX + 1 }, () => item) })
+    const empty = await client.call('position_update_bulk', { items: [] })
+    const single = await client.call('position_update_bulk', item)
+    const emptyPatch = await client.call('position_update_bulk', { items: [{ positionId: 1, patch: {} }] })
+
+    expect([over.failed, empty.failed, single.failed, emptyPatch.failed]).toEqual([true, true, true, true])
   })
 })

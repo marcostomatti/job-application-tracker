@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
+import { bulkOf, hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
 
 /** Free text Postgres can store: NUL is refused, and the required form also refuses a blank. */
 const freeText = z.string().refine(hasNoNul, NO_NUL_MESSAGE)
@@ -26,3 +26,6 @@ export const SummaryInputSchema = z.strictObject({
 })
 
 export type SummaryInput = z.infer<typeof SummaryInputSchema>
+
+/** Up to `BULK_MAX` summaries to write in one call, all or none. */
+export const SummaryBulkSchema = bulkOf(SummaryInputSchema)

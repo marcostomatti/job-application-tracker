@@ -1,6 +1,7 @@
 import { getSummary, writeSummary } from '../../data/repositories/summaries.ts'
 import { PositionRefSchema } from '../../schemas/positions.ts'
-import { SummaryInputSchema } from '../../schemas/summaries.ts'
+import { SummaryBulkSchema, SummaryInputSchema } from '../../schemas/summaries.ts'
+import { inOneTransaction } from '../bulk.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
 
 /** §11.1 group 2: the condensed, regenerable summary of a posting. */
@@ -25,5 +26,15 @@ export const summaryTools: ToolDefinition[] = [
       'The summary alone is cheaper than position_get, which returns it among everything else.',
     input: PositionRefSchema,
     run: async (args, db) => getSummary(db, args.positionId),
+  }),
+  defineTool({
+    name: 'summary_write_bulk',
+    title: 'Write several position summaries',
+    description:
+      'Writes the summaries of up to 500 positions in one call, replacing each earlier one in full, and returns them as stored, in the order given. ' +
+      'All or none: if any item fails (for example an unknown position), nothing is written and the error names the failing item by its index. ' +
+      'Prefer this to repeated summary_write calls after summarising a batch of postings.',
+    input: SummaryBulkSchema,
+    run: async (args, db) => inOneTransaction(db, args.items, (tx, item) => writeSummary(tx, item)),
   }),
 ]

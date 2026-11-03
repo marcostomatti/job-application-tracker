@@ -12,6 +12,7 @@ import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReaso
 import { positionPenalty, positionRating, positionScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
 import type { Db } from './db.ts'
+import { isItemFault } from './item-fault.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived, findRegistryRow, type RegistryName, type RegistryRowOf } from './registries.ts'
 import { findSummary, type PositionSummary } from './summaries.ts'
@@ -201,11 +202,6 @@ async function addOnePosition(db: Db, input: PositionInput): Promise<Position> {
     const suffix = values.disambiguator === '' ? '' : ` (${values.disambiguator})`
     throw asConflict(error, { role: `${values.roleTitle} at ${owner.name}${suffix}`, key: values.positionKey })
   }
-}
-
-/** The failures that are about one item, as against the database being unreachable. */
-function isItemFault(error: unknown): boolean {
-  return error instanceof ConflictError || error instanceof ArchivedError || error instanceof NotFoundError
 }
 
 /**

@@ -8,6 +8,7 @@ import { addPositions } from '../../../src/data/repositories/positions.ts'
 import { addRegistryRows } from '../../../src/data/repositories/registries.ts'
 import { positionStageEvent } from '../../../src/data/schema/dispositions.ts'
 import { scoreTools } from '../../../src/mcp/tools/scores.ts'
+import { BULK_MAX } from '../../../src/schemas/common.ts'
 import { withMigratedScratchDatabase } from '../../data/scratch-database.ts'
 import { arrangeSet } from './criteria-arrangement.ts'
 import { connectTools, failureText, idOf, untouchableDb, useSharedScratchDatabase } from './harness.ts'
@@ -54,6 +55,7 @@ describe('the scores group', () => {
       'score_best',
       'score_history',
       'score_position',
+      'score_position_bulk',
     ])
   })
 
@@ -156,6 +158,80 @@ describe('the scores group', () => {
 
     expect(outcome.failed).toBe(true)
     expect(failureText(outcome)).toContain('position 999999 does not exist')
+  })
+
+  test('score_position_bulk moves exactly those positions whose own score recommended it', async () => {
+    const outcome = await withMigratedScratchDatabase(async (db) => {
+      const stageId = await shortlist(db)
+      const recommended = await arrange(db, 'Bulk recommended')
+      const declined = await arrange(db, 'Bulk declined')
+      const alsoRecommended = await arrange(db, 'Bulk also recommended')
+      const client = await connectTools(scoreTools, db)
+      const result = await client.call('score_position_bulk', {
+        items: [covered(recommended), uncovered(declined), covered(alsoRecommended)],
+      })
+      return {
+        result,
+        stageId,
+        ids: [recommended, declined, alsoRecommended].map((arranged) => arranged.positionId),
+        events: await Promise.all([recommended, declined, alsoRecommended].map((arranged) => eventCount(db, arranged.positionId))),
+      }
+    })
+
+    const [first, second, third] = outcome.ids
+    expect(outcome.result.body).toEqual([
+      expect.objectContaining({ score: expect.objectContaining({ positionId: first, recommendApply: true }), stageEvent: expect.objectContaining({ stageId: outcome.stageId }) }),
+      expect.objectContaining({ score: expect.objectContaining({ positionId: second, recommendApply: false }), stageEvent: null }),
+      expect.objectContaining({ score: expect.objectContaining({ positionId: third, recommendApply: true }), stageEvent: expect.objectContaining({ stageId: outcome.stageId }) }),
+    ])
+    expect(outcome.events).toEqual([1, 0, 1])
+  })
+
+  test('score_position_bulk stores no score and moves no position when a later item fails, naming its index', async () => {
+    const outcome = await withMigratedScratchDatabase(async (db) => {
+      await shortlist(db)
+      const first = await arrange(db, 'Bulk atomic')
+      const client = await connectTools(scoreTools, db)
+      const result = await client.call('score_position_bulk', {
+        items: [covered(first), { ...covered(first), positionId: 999_999 }],
+      })
+      const history = await client.call('score_history', { positionId: first.positionId })
+      return { result, history, events: await eventCount(db, first.positionId) }
+    })
+
+    expect(failureText(outcome.result)).toContain('bulk item 1 failed: position 999999 does not exist')
+    expect(outcome.history.body).toEqual([])
+    expect(outcome.events).toBe(0)
+  })
+
+  test('score_position_bulk leaves an already applied position where it is while moving the others', async () => {
+    const outcome = await withMigratedScratchDatabase(async (db) => {
+      await shortlist(db)
+      const appliedId = idOf(await addRegistryRows(db, 'stage', [{ key: 'applied', label: 'Applied', isApplied: true }]))
+      const applied = await arrange(db, 'Bulk applied')
+      const fresh = await arrange(db, 'Bulk fresh')
+      await appendStageEvent(db, { positionId: applied.positionId, stageId: appliedId })
+      const client = await connectTools(scoreTools, db)
+      const result = await client.call('score_position_bulk', { items: [covered(applied), covered(fresh)] })
+      return { result, events: [await eventCount(db, applied.positionId), await eventCount(db, fresh.positionId)] }
+    })
+
+    expect(outcome.result.body).toEqual([
+      expect.objectContaining({ stageEvent: null }),
+      expect.objectContaining({ stageEvent: expect.anything() }),
+    ])
+    expect(outcome.events).toEqual([1, 1])
+  })
+
+  test('score_position_bulk rejects an over-cap array, an empty one and a single item at the schema', async () => {
+    const client = await connectTools(scoreTools, untouchableDb())
+    const item = { positionId: 1, criteriaSetId: 1, ratings: [], penalties: [] }
+
+    const over = await client.call('score_position_bulk', { items: Array.from({ length: BULK_MAX + 1 }, () => item) })
+    const empty = await client.call('score_position_bulk', { items: [] })
+    const single = await client.call('score_position_bulk', item)
+
+    expect([over.failed, empty.failed, single.failed]).toEqual([true, true, true])
   })
 
   test('score_history lists every score newest first and score_best keeps the latest per set', async () => {

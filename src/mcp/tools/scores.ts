@@ -1,13 +1,28 @@
-import { moveIfRecommended } from '../../data/repositories/dispositions.ts'
+import type { Db } from '../../data/repositories/db.ts'
+import { moveIfRecommended, type StageEvent } from '../../data/repositories/dispositions.ts'
 import { listPendingRescore, requestRescore } from '../../data/repositories/rescore.ts'
-import { getBestScores, getScoreHistory, scorePosition } from '../../data/repositories/scores.ts'
+import { getBestScores, getScoreHistory, scorePosition, type ScoreRow } from '../../data/repositories/scores.ts'
 import {
   PendingRescoreQuerySchema,
   PositionScoresQuerySchema,
   RescoreRequestInputSchema,
+  ScorePositionBulkSchema,
   ScorePositionInputSchema,
+  type ScorePositionInput,
 } from '../../schemas/scores.ts'
+import { inOneTransaction } from '../bulk.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
+
+/**
+ * One scoring pass followed by the move rule, on the database it is given (a transaction, from
+ * both callers). The one place §9.1's move fires, shared by the single and the bulk tool so the
+ * two cannot disagree about when a position moves.
+ */
+async function scoreAndMove(db: Db, input: ScorePositionInput): Promise<{ score: ScoreRow; stageEvent: StageEvent | null }> {
+  const score = await scorePosition(db, input)
+  const stageEvent = await moveIfRecommended(db, { positionId: input.positionId, recommendApply: score.recommendApply })
+  return { score, stageEvent }
+}
 
 /** §11.1 group 3: scoring positions against a criteria set, reading scores, and re-score requests. */
 export const scoreTools: ToolDefinition[] = [
@@ -21,12 +36,7 @@ export const scoreTools: ToolDefinition[] = [
       'The score and the move are one atomic step. Scoring the same position and set again on the same day replaces that score; on a later day it adds a re-score. ' +
       'A rating needs a coverage from 0 to 1, or null for not rated; a requirement you do not rate counts as not rated. Get requirement ids from criteria_requirements.',
     input: ScorePositionInputSchema,
-    run: async (args, db) =>
-      db.transaction(async (tx) => {
-        const score = await scorePosition(tx, args)
-        const stageEvent = await moveIfRecommended(tx, { positionId: args.positionId, recommendApply: score.recommendApply })
-        return { score, stageEvent }
-      }),
+    run: async (args, db) => db.transaction(async (tx) => scoreAndMove(tx, args)),
   }),
   defineTool({
     name: 'score_history',
@@ -67,5 +77,16 @@ export const scoreTools: ToolDefinition[] = [
       'An unknown request id is a not-found error.',
     input: PendingRescoreQuerySchema,
     run: async (args, db) => listPendingRescore(db, args.rescoreRequestId),
+  }),
+  defineTool({
+    name: 'score_position_bulk',
+    title: 'Score several positions',
+    description:
+      'Scores up to 500 positions in one call, each item exactly as score_position takes it, and returns [{ score, stageEvent }] in the order given. ' +
+      'Each item moves its own position to the shortlist phase when, and only when, its own score recommends applying and the position is not already applied. ' +
+      'All or none: if any item fails, no score is stored, no position moves, and the error names the failing item by its index. ' +
+      'Prefer this to repeated score_position calls when working through a re-score request from rescore_pending.',
+    input: ScorePositionBulkSchema,
+    run: async (args, db) => inOneTransaction(db, args.items, (tx, item) => scoreAndMove(tx, item)),
   }),
 ]
