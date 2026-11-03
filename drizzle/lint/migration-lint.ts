@@ -14,7 +14,8 @@ import {
 /*
  * Known limits, left unscanned on purpose: CREATE DOMAIN and CREATE POLICY
  * bodies, `UPDATE ... SET x = 'literal'` (a backfill is allowed), a view's
- * implicit alias with no AS, and CTE names. Functions, procedures, triggers
+ * implicit alias with no AS, a view column list (`CREATE VIEW "v" ("x") AS`),
+ * and CTE names. Functions, procedures, triggers
  * and DO blocks are forbidden outright instead (see `routineFindings`).
  */
 
@@ -45,6 +46,17 @@ type SplitSql = {
   /** Only the comments; everything else blanked out. Layout is kept. */
   comments: string
 }
+
+/**
+ * A Postgres dollar-quote tag: `$$`, or `$tag$` where the tag starts with a
+ * letter (any letter, so non-ASCII too) or underscore and may continue with
+ * digits. `$1$` is not a tag. This is the only copy of the class; every
+ * pattern that reads dollar quotes builds on it.
+ */
+const DOLLAR_TAG = String.raw`\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$`
+const DOLLAR_TAG_AT_START = new RegExp(`^${DOLLAR_TAG}`)
+const COMMENT_ON_OPENER = new RegExp(String.raw`\bCOMMENT\s+ON\s+[^;'$]*?\bIS\s+('|${DOLLAR_TAG})`, 'gi')
+const LITERAL = new RegExp(String.raw`'((?:[^']|'')*)'|(${DOLLAR_TAG})([\s\S]*?)\2`, 'g')
 
 const IDENTIFIER = String.raw`"[^"]+"|\w+`
 const NON_COLUMN_KEYWORDS = new Set([
@@ -112,7 +124,7 @@ function endOfQuoted(text: string, start: number, quote: string): number {
 /** The `$tag$` that opens a dollar-quoted string at `index`, if one does. */
 function dollarTagAt(text: string, index: number): string | undefined {
   if (text[index] !== '$') return undefined
-  return /^\$[A-Za-z_]*\$/.exec(text.slice(index, index + 64))?.[0]
+  return DOLLAR_TAG_AT_START.exec(text.slice(index, index + 64))?.[0]
 }
 
 /** Index just past the string literal opened at `open`: single-quoted or dollar-quoted. */
@@ -157,7 +169,7 @@ function blankStrings(code: string): string {
  */
 function withCommentOnText(code: string, comments: string): string {
   let result = comments
-  for (const match of code.matchAll(/\bCOMMENT\s+ON\s+[^;'$]*?\bIS\s+('|\$[A-Za-z_]*\$)/gi)) {
+  for (const match of code.matchAll(COMMENT_ON_OPENER)) {
     const delimiter = match[1] as string
     const open = match.index + match[0].length - delimiter.length
     const contentStart = open + delimiter.length
@@ -235,7 +247,7 @@ function vocabularyLiterals(
   isAllowed: (value: string) => boolean = isDiscriminator,
 ): Literal[] {
   const offending: Literal[] = []
-  for (const literal of text.slice(from, to).matchAll(/'((?:[^']|'')*)'|(\$[A-Za-z_]*\$)([\s\S]*?)\2/g)) {
+  for (const literal of text.slice(from, to).matchAll(LITERAL)) {
     const value = literal[1] ?? literal[3] ?? ''
     if (!isAllowed(value)) offending.push({ value, index: from + literal.index })
   }
@@ -274,7 +286,7 @@ function closedSetFindings(code: string, stringless: string, file: string): Lint
     [new RegExp(String.raw`\bADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?${literalStart}`, 'gi'), 'ADD VALUE'],
     [
       new RegExp(
-        String.raw`\bRENAME\s+VALUE\s+(?:'[^']*'|\$[A-Za-z_]*\$[^$]*\$[A-Za-z_]*\$)\s+TO\s+${literalStart}`,
+        String.raw`\bRENAME\s+VALUE\s+(?:'[^']*'|${DOLLAR_TAG}[^$]*${DOLLAR_TAG})\s+TO\s+${literalStart}`,
         'gi',
       ),
       'RENAME VALUE',

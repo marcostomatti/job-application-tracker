@@ -300,12 +300,12 @@ describe('migration lint', () => {
     expect(legit).toEqual([])
   })
 
-  test('rejects dollar-quoted vocabulary in DEFAULT, CHECK, GENERATED, ENUM, ADD/RENAME VALUE and an index, and allows structural ones', () => {
+  test('rejects dollar-quoted vocabulary (tags with digits or non-ASCII letters too) in DEFAULT, CHECK, GENERATED, ENUM, ADD/RENAME VALUE and an index, and allows structural ones', () => {
     const bad = lintMigrations(isolate('evade-dollar-literals.sql'))
     const legit = lintMigrations(isolate('structural-dollar.sql'))
 
-    expect(bad.map((finding) => finding.rule)).toEqual(Array(8).fill('vocabulary-in-check'))
-    expect(bad.map((finding) => finding.line)).toEqual([3, 4, 5, 6, 8, 9, 10, 11])
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(11).fill('vocabulary-in-check'))
+    expect(bad.map((finding) => finding.line)).toEqual([3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14])
     expect(legit).toEqual([])
   })
 
@@ -313,12 +313,12 @@ describe('migration lint', () => {
     expect(lintMigrations(isolate('dollar-comment-text.sql'))).toEqual([])
   })
 
-  test('allows interval, date_trunc, to_char, AT TIME ZONE utc, infinity, epoch, 1e-3 and true, but not look-alikes', () => {
+  test('allows interval, date_trunc, to_char, AT TIME ZONE utc, infinity, epoch, 1e-3 and true, but not look-alikes in date_trunc, to_char, AT TIME ZONE or a true-prefixed word', () => {
     const legit = lintMigrations(isolate('structural-values.sql'))
     const bad = lintMigrations(isolate('evade-lookalike-values.sql'))
 
     expect(legit).toEqual([])
-    expect(bad.map((finding) => finding.line)).toEqual([2, 3, 4])
+    expect(bad.map((finding) => finding.line)).toEqual([2, 3, 4, 5, 6, 7, 8])
   })
 
   test('rejects a TEMP or UNLOGGED table and a RENAME CONSTRAINT named after vocabulary', () => {
