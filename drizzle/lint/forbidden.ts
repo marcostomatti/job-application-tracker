@@ -158,6 +158,26 @@ export const DENIED_COLUMN_WORDS: readonly string[] = [
 ]
 
 /**
+ * Denied words that are also ordinary English, so a comment is allowed to use
+ * them in lower case: "react to a change", "plain english", "defense in
+ * depth", "a rust-coloured warning". Only the exact lower-case spelling is
+ * exempt, and only in comment text. The capitalised form ("React", "English",
+ * "Rust", "Defense") is the technology, the language or the gate name and
+ * stays caught, which leaves one listed ambiguity: a sentence that starts with
+ * one of these words is caught too, and has to be rephrased. Column, object
+ * and view-alias names never use this list.
+ */
+export const PROSE_WORDS: readonly string[] = [
+  'react',
+  'rust',
+  'java',
+  'ruby',
+  'english',
+  'defense',
+  'defence',
+]
+
+/**
  * Denied words long and specific enough that they have no innocent
  * superstring, so they are also matched anywhere inside a name. This is what
  * catches `penaltyfintech`, where there is no word boundary to split on.

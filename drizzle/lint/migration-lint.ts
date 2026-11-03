@@ -33,7 +33,8 @@ export type { LintFinding, LintOptions, LintRule } from './types'
  * Known limits, left unscanned on purpose: CREATE DOMAIN and CREATE POLICY
  * bodies, `UPDATE ... SET x = 'literal'` (a backfill is allowed), a view's
  * implicit alias with no AS, a view column list (`CREATE VIEW "v" ("x") AS`),
- * CTE names, and `SELECT ... INTO newtable`. Functions, procedures, triggers
+ * CTE names, `SELECT ... INTO newtable`, and a denied word glued into a longer
+ * word inside a comment (comments are matched on whole words only). Functions, procedures, triggers
  * and DO blocks are forbidden outright instead (see `routineFindings`).
  */
 

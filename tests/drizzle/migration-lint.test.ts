@@ -337,6 +337,17 @@ describe('migration lint', () => {
     expect(legit).toEqual([])
   })
 
+  test('allows ordinary prose that shares a word with the denied lists, but still catches the capitalised forms', () => {
+    const legit = lintMigrations(isolate('clean-prose-comments.sql'))
+    const bad = lintMigrations(isolate('evade-prose-capitalised.sql'))
+
+    // lower-case react, english, defense, defence, rust, java, ruby, and words that merely contain a denied word
+    expect(legit).toEqual([])
+    // React, English, Rust and Defense as proper nouns or gate names stay caught
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(4).fill('leaky-comment'))
+    expect(bad.map((finding) => finding.line)).toEqual([1, 1, 3, 3])
+  })
+
   test('reads a dollar sign inside an unquoted identifier as part of the name, not as a dollar quote', () => {
     const bad = lintMigrations(isolate('identifier-with-dollars.sql'))
     const legit = lintMigrations(isolate('dollars-in-identifier-clean.sql'))

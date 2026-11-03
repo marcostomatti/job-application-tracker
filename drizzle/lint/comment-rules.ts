@@ -1,5 +1,5 @@
 import type { LintFinding } from './types'
-import { deniedWord } from './words'
+import { deniedProseWord } from './words'
 
 export type CommentRun = { text: string; lineAt: number[] }
 
@@ -53,7 +53,7 @@ export function commentFindings(comments: string, file: string, companyNames: re
       })
     }
     for (const token of run.text.matchAll(/[\p{L}\p{N}_]+/gu)) {
-      const word = deniedWord(token[0])
+      const word = deniedProseWord(token[0])
       if (word) {
         findings.push({
           file,
