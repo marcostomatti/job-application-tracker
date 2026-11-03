@@ -14,6 +14,7 @@ import {
 
 import { ConflictError } from '../../errors.ts'
 import type { DrizzleClient } from '../client.ts'
+import { isUniqueViolation } from '../driver-faults.ts'
 import { layer } from './registries.ts'
 
 /**
@@ -105,7 +106,6 @@ export const detour = pgTable(
   (table) => [check('detour_discount_check', sql`${table.discount} >= 0 AND ${table.discount} <= 1`)],
 )
 
-const UNIQUE_VIOLATION = '23505'
 const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'
 
 /**
@@ -122,17 +122,6 @@ export class CriteriaSetConflictError extends ConflictError {
     super('criteria set', `"${setName}" at version ${version}`, options)
     this.name = 'CriteriaSetConflictError'
   }
-}
-
-type DriverFault = { code?: string; constraint_name?: string }
-
-/** Drizzle wraps the driver error as `cause`; accept the bare driver error too. */
-function isNameVersionConflict(error: unknown): boolean {
-  const candidates = [error, error instanceof Error ? error.cause : undefined]
-  return candidates.some((candidate) => {
-    const fault = candidate as DriverFault | null | undefined
-    return fault?.code === UNIQUE_VIOLATION && fault.constraint_name === NAME_VERSION_CONSTRAINT
-  })
 }
 
 type NewCriteriaSet = typeof criteriaSet.$inferInsert
@@ -154,7 +143,7 @@ export async function insertCriteriaSet(
     if (!created) throw new Error('The criteria set insert returned no row.')
     return created
   } catch (error) {
-    if (isNameVersionConflict(error)) {
+    if (isUniqueViolation(error, NAME_VERSION_CONSTRAINT)) {
       throw new CriteriaSetConflictError(values.name, values.version ?? 1, { cause: error })
     }
     throw error

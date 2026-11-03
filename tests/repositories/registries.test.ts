@@ -8,7 +8,7 @@ import {
   listRegistry,
   REGISTRY_TABLES,
 } from '../../src/data/repositories/registries.ts'
-import { ArchivedError, NotFoundError } from '../../src/errors.ts'
+import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import { BULK_MAX, bulkOf, IdSchema, PAGE_LIMIT_MAX, PaginationSchema } from '../../src/schemas/common.ts'
 import { REGISTRY_SCHEMAS } from '../../src/schemas/registries.ts'
 import { thrownBy } from '../data/rolled-back.ts'
@@ -230,6 +230,53 @@ describe('addRegistryRows', () => {
     // Assert
     expect(committed.map((row) => row.label)).toEqual(['Kept'])
     expect(afterRollback.map((row) => row.label)).toEqual(['Kept'])
+  })
+
+  test('reports a key the registry already holds as a conflict, not an internal error', async () => {
+    // Arrange / Act: only phase, stage and layer have a unique key column
+    const error = await withMigratedScratchDatabase(async (db) => {
+      await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }])
+      return thrownBy(() => addRegistryRows(db, 'phase', [{ key: 'p1', label: 'Another phase' }]))
+    })
+
+    // Assert: the caller is told which key collided, and the surface sends 409, not 500
+    expect(error).toBeInstanceOf(ConflictError)
+    expect((error as ConflictError).field).toBe('phase key')
+    expect((error as ConflictError).key).toBe('p1')
+    expect(statusFor(error)).toBe(409)
+    expect((error as Error).cause).toBeDefined()
+  })
+
+  test('counts the keys rather than listing them when a long bulk call conflicts', async () => {
+    // Arrange / Act: more keys than a message should list, the first of which already exists
+    const error = await withMigratedScratchDatabase(async (db) => {
+      await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }])
+      const many = Array.from({ length: 6 }, (_, index) => ({
+        key: `p${index + 1}`,
+        label: `Phase ${index + 1}`,
+      }))
+      return thrownBy(() => addRegistryRows(db, 'phase', many))
+    })
+
+    // Assert: Postgres reports the constraint and not the row, so the message says so
+    expect(error).toBeInstanceOf(ConflictError)
+    expect((error as ConflictError).key).toBe('one of the 6 values this call carried')
+  })
+
+  test('rethrows a failure that is not the key conflict, unchanged', async () => {
+    // Arrange / Act: a layer with no key and a route with no label, both of which the
+    // registry's own schema refuses, so the casts are how a test reaches the driver errors
+    // the catch block must leave alone. Layer has a unique key column; route has none.
+    const { keyed, keyless } = await withMigratedScratchDatabase(async (db) => ({
+      keyed: await thrownBy(() => addRegistryRows(db, 'layer', [{ label: 'No key' } as never])),
+      keyless: await thrownBy(() => addRegistryRows(db, 'route', [{ label: null } as never])),
+    }))
+
+    // Assert: a not-null violation is not reshaped into a conflict, with or without a key column
+    expect(keyed).toBeInstanceOf(Error)
+    expect(keyed).not.toBeInstanceOf(ConflictError)
+    expect(keyless).toBeInstanceOf(Error)
+    expect(keyless).not.toBeInstanceOf(ConflictError)
   })
 
   test('writes nothing for an empty list', async () => {

@@ -1,8 +1,9 @@
-import { and, eq, isNull, type InferInsertModel, type InferSelectModel } from 'drizzle-orm'
+import { and, Column, eq, isNull, type InferInsertModel, type InferSelectModel } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 
-import { ArchivedError, NotFoundError } from '../../errors.ts'
+import { ArchivedError, ConflictError, NotFoundError } from '../../errors.ts'
 import type { RegistryRowInputOf, RegistrySchemaName } from '../../schemas/registries.ts'
+import { isUniqueViolation } from '../driver-faults.ts'
 import {
   applyRoute,
   artefactKind,
@@ -98,6 +99,37 @@ function tableFor(name: RegistryName): QueryTable {
   return REGISTRY_TABLES[name] as QueryTable
 }
 
+/**
+ * The unique key column of one registry, read off the table definition so no constraint
+ * name is assembled from a string. Three of the twelve have one — `phase`, `stage` and
+ * `layer` — and the other nine have no column that can collide, so they get undefined.
+ */
+type KeyConstraint = { readonly property: string; readonly constraint: string }
+
+function keyConstraintOf(name: RegistryName): KeyConstraint | undefined {
+  for (const [property, column] of Object.entries(REGISTRY_TABLES[name])) {
+    const unique = column instanceof Column && column.isUnique ? column.uniqueName : undefined
+    if (unique) return { property, constraint: unique }
+  }
+  return undefined
+}
+
+/**
+ * The key value a conflict names. Postgres reports the constraint and not the row, so one
+ * row names its key exactly, a handful name all of them, and a long bulk call says how
+ * many it carried — a message listing 500 keys helps nobody, and naming one of them as
+ * the offender would be a guess the driver's answer does not support.
+ */
+const KEYS_NAMED_IN_A_CONFLICT = 5
+
+function conflictingKeys(rows: readonly Readonly<Record<string, unknown>>[], property: string): string {
+  const keys = [
+    ...new Set(rows.map((row) => row[property]).filter((value): value is string => typeof value === 'string')),
+  ]
+  if (keys.length <= KEYS_NAMED_IN_A_CONFLICT) return keys.join(', ')
+  return `one of the ${keys.length} values this call carried`
+}
+
 /** The order a pick-list reads in: the user's `sort` where the registry has one, then id. */
 function orderOf(name: RegistryName): PgColumn[] {
   const table = REGISTRY_TABLES[name]
@@ -164,6 +196,11 @@ async function assertReferencesUsable(
  * Adds rows to one registry and returns them as stored. The rows have already been
  * validated against that registry's schema by the surface, which is why this takes the
  * schema's own input type and does not parse again.
+ *
+ * A key the registry already holds becomes a `ConflictError`, which the surfaces send as
+ * 409: it is something the caller can fix in one edit, and left unmapped the driver's
+ * fault would fall through `statusFor` as an internal error, carrying the whole failed
+ * query in its message. Every other failure is rethrown unchanged.
  */
 export async function addRegistryRows<N extends RegistryName>(
   db: Db,
@@ -171,12 +208,23 @@ export async function addRegistryRows<N extends RegistryName>(
   rows: readonly RegistryRowInputOf<N>[],
 ): Promise<RegistryRowOf<N>[]> {
   if (rows.length === 0) return []
-  await assertReferencesUsable(db, name, rows as readonly Readonly<Record<string, unknown>>[])
-  const created = await db
-    .insert(tableFor(name))
-    .values([...rows] as QueryTableInsert[])
-    .returning()
-  return created as RegistryRowOf<N>[]
+  const given = rows as readonly Readonly<Record<string, unknown>>[]
+  await assertReferencesUsable(db, name, given)
+  try {
+    const created = await db
+      .insert(tableFor(name))
+      .values([...rows] as QueryTableInsert[])
+      .returning()
+    return created as RegistryRowOf<N>[]
+  } catch (error) {
+    const key = keyConstraintOf(name)
+    if (key && isUniqueViolation(error, key.constraint)) {
+      throw new ConflictError(`${name} ${key.property}`, conflictingKeys(given, key.property), {
+        cause: error,
+      })
+    }
+    throw error
+  }
 }
 
 /**
