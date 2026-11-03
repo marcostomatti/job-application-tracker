@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { booleanOrText, hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
+import { booleanOrText, bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
 
 /**
  * Trimmed and non-empty: a blank name or note says nothing and would only hide a mistake. It
@@ -115,3 +115,19 @@ export const PositionQuerySchema = PaginationSchema.extend({
 })
 
 export type PositionQuery = z.infer<typeof PositionQuerySchema>
+
+/** One position, named by id: what a read of a single position, or of its summary, takes. */
+export const PositionRefSchema = z.strictObject({ positionId: IdSchema })
+
+export type PositionRef = z.infer<typeof PositionRefSchema>
+
+/** Up to `BULK_MAX` positions to record in one call, all or none. */
+export const PositionBulkSchema = bulkOf(PositionInputSchema)
+
+/** A patch and the position it applies to. The patch is a field of its own so the id is never mistaken for a column. */
+export const PositionUpdateInputSchema = z.strictObject({
+  positionId: IdSchema,
+  patch: PositionPatchSchema,
+})
+
+export type PositionUpdateInput = z.infer<typeof PositionUpdateInputSchema>

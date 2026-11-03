@@ -78,3 +78,9 @@ export function jsonHasNoNul(value: unknown): boolean {
 }
 
 export const NO_NUL_MESSAGE = 'must not contain a NUL character'
+
+/**
+ * The input of a tool that takes none. Strict, so a caller that sends an argument the tool does
+ * not read is told, instead of believing the argument took effect.
+ */
+export const EmptyInputSchema = z.strictObject({})

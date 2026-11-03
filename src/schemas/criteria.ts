@@ -60,3 +60,21 @@ export const CriteriaSetQuerySchema = z.strictObject({
 })
 
 export type CriteriaSetQuery = z.infer<typeof CriteriaSetQuerySchema>
+
+/** The criteria set whose requirements a read returns. */
+export const CriteriaRequirementsQuerySchema = z.strictObject({ criteriaSetId: IdSchema })
+
+export type CriteriaRequirementsQuery = z.infer<typeof CriteriaRequirementsQuerySchema>
+
+/** A patch and the requirement it applies to; the patch is a field of its own so the id is never mistaken for a column. */
+export const RequirementUpdateInputSchema = z.strictObject({
+  requirementId: IdSchema,
+  patch: RequirementPatchSchema,
+})
+
+export type RequirementUpdateInput = z.infer<typeof RequirementUpdateInputSchema>
+
+/** The criteria set to make the default. */
+export const CriteriaSetDefaultInputSchema = z.strictObject({ criteriaSetId: IdSchema })
+
+export type CriteriaSetDefaultInput = z.infer<typeof CriteriaSetDefaultInputSchema>

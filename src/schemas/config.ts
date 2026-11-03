@@ -37,3 +37,8 @@ export const BackupSettingsPatchSchema = BackupSettingsSchema.partial().refine(
 )
 
 export type BackupSettingsPatch = z.infer<typeof BackupSettingsPatchSchema>
+
+/** The mode to switch the app to. */
+export const CriteriaModeInputSchema = z.strictObject({ mode: CriteriaModeSchema })
+
+export type CriteriaModeInput = z.infer<typeof CriteriaModeInputSchema>
