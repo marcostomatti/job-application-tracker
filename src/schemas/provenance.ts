@@ -55,3 +55,15 @@ export const SearchRunInputSchema = z.strictObject({
 export type SearchRunInput = z.infer<typeof SearchRunInputSchema>
 
 export const SearchRunBulkSchema = bulkOf(SearchRunInputSchema)
+
+/**
+ * Tying an existing touch to a position. Both ids are required: the touch is named, not
+ * described, and only its `position_id` changes. No date or route is accepted, because a touch
+ * keeps the date and the door it was recorded with.
+ */
+export const OriginAttachInputSchema = z.strictObject({
+  originId: IdSchema,
+  positionId: IdSchema,
+})
+
+export type OriginAttachInput = z.infer<typeof OriginAttachInputSchema>

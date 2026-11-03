@@ -11,6 +11,7 @@ import { addText, listTexts, updateText } from '../../src/data/repositories/text
 import { textAsset } from '../../src/data/schema/texts.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import { NewTextBulkSchema, NewTextSchema, TextQuerySchema, TextUpdateSchema } from '../../src/schemas/texts.ts'
+import { waitUntilABackendWaitsOnALock } from '../data/lock-wait.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
@@ -24,17 +25,6 @@ function idOf(rows: readonly { readonly id: number }[], index = 0): number {
 
 async function addTextType(db: DrizzleClient, label: string): Promise<number> {
   return idOf(await addRegistryRows(db, 'text_type', [{ label }]))
-}
-
-/** Polls until some backend is blocked on a lock, which is the moment the other transaction may commit. */
-async function waitUntilABackendWaitsOnALock(observer: postgres.Sql): Promise<void> {
-  const deadline = Date.now() + 5000
-  while (Date.now() < deadline) {
-    const [row] = await observer`select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`
-    if ((row?.waiting ?? 0) > 0) return
-    await Bun.sleep(20)
-  }
-  throw new Error('no backend ever waited on a lock')
 }
 
 describe('the unique index on (label, version)', () => {

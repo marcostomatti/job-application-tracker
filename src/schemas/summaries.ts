@@ -29,3 +29,15 @@ export type SummaryInput = z.infer<typeof SummaryInputSchema>
 
 /** Up to `BULK_MAX` summaries to write in one call, all or none. */
 export const SummaryBulkSchema = bulkOf(SummaryInputSchema)
+
+/**
+ * The question "has this posting changed since its summary was written?": the position, and the
+ * hash of the posting text as it reads now. The hash must name something, as it must when a
+ * summary is written, so an empty one cannot match a stored value by accident.
+ */
+export const PostingChangedQuerySchema = z.strictObject({
+  positionId: IdSchema,
+  sourceHash: requiredText,
+})
+
+export type PostingChangedQuery = z.infer<typeof PostingChangedQuerySchema>
