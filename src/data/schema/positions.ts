@@ -12,19 +12,32 @@ import {
 
 import { applyRoute, artefactKind, seniority, workFormat } from './registries.ts'
 
+/** Latin letters followed by combining marks in the Combining Diacritical Marks block. */
+const LATIN_DIACRITICS = /(\p{Script=Latin})[\u0300-\u036f]+/gu
+
 /**
- * The key a company is matched on: decomposed (NFKD), accents dropped, lowercased, and each
- * run of characters that are not letters or digits collapsed to one space. Letters and digits
- * are matched as Unicode classes, so a name in any script keeps its content. Two spellings of
- * one employer land on the same string, which `company.name_norm` is unique on.
+ * The key a company is matched on, so two spellings of one employer share it.
+ *
+ * Steps: decompose (NFKD, which also folds full-width and half-width forms); drop the
+ * diacritics that follow a Latin letter, so "Cafe" with an accent matches "Cafe" without;
+ * lowercase; collapse each run of characters that are not letters, digits or combining
+ * marks to one space; trim; recompose (NFC). Marks after a non-Latin letter are kept,
+ * because there they change the letter: a voiced kana and its plain form, or a Devanagari
+ * vowel sign, are different names and must stay different keys.
+ *
+ * A name with no letters or digits at all (only punctuation) would normalise to the empty
+ * string, and every such name would then collide. It falls back to the trimmed, lowercased
+ * input, so each stays distinct. A blank input still yields the empty string.
  */
 export function normaliseName(value: string): string {
-  return value
+  const folded = value
     .normalize('NFKD')
-    .replace(/\p{M}+/gu, '')
+    .replace(LATIN_DIACRITICS, '$1')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
     .trim()
+    .normalize('NFC')
+  return folded === '' ? value.trim().toLowerCase() : folded
 }
 
 /**

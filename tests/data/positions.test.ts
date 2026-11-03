@@ -10,11 +10,31 @@ import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 
-/** Words that would make a column a place to keep a secret. `key` matches as a whole word only. */
-const CREDENTIAL_WORDS = ['password', 'passwd', 'passphrase', 'secret', 'token', 'credential', 'credentials', 'key']
+/** Fragments that would make a column a place to keep a secret. */
+const CREDENTIAL_FRAGMENTS = [
+  'password',
+  'passwd',
+  'pwd',
+  'passphrase',
+  'secret',
+  'token',
+  'credential',
+  'apikey',
+  'accesskey',
+  'privatekey',
+  'bearer',
+  'cookie',
+]
 
+/**
+ * Fragments are matched inside the name with underscores removed, so `api_key`, `apikey` and
+ * `ApiKey` are all caught. A bare `key` is matched as a whole word only, because it sits
+ * inside harmless words.
+ */
 function isCredentialColumn(columnName: string): boolean {
-  return columnName.split('_').some((part) => CREDENTIAL_WORDS.includes(part))
+  const lowered = columnName.toLowerCase()
+  const joined = lowered.replaceAll('_', '')
+  return CREDENTIAL_FRAGMENTS.some((fragment) => joined.includes(fragment)) || lowered.split('_').includes('key')
 }
 
 async function insertCompany(tx: Tx, name: string) {
@@ -44,6 +64,28 @@ describe('companies, positions, summaries and artefacts', () => {
     expect(normaliseName('  Café   Müller & Söhne!! ')).toBe('cafe muller sohne')
     expect(normaliseName('ＡＢＣ　Ｌｔｄ')).toBe('abc ltd')
     expect(normaliseName('株式会社 テスト')).toBe('株式会社 テスト')
+  })
+
+  test('normaliseName keeps marks that change a non-Latin letter', () => {
+    // Arrange / Act / Assert: a voiced kana and its plain form are different employers
+    expect(normaliseName('バンク')).not.toBe(normaliseName('ハンク'))
+    expect(normaliseName('バンク')).toBe('バンク')
+    // Half-width forms still fold onto the full-width name
+    expect(normaliseName('ﾊﾞﾝｸ')).toBe(normaliseName('バンク'))
+    // Devanagari vowel signs and the virama carry the word
+    expect(normaliseName('हिन्दी')).toBe('हिन्दी')
+    expect(normaliseName('हिन्दी')).not.toBe(normaliseName('हनद'))
+    // Cyrillic and Greek marks are not Latin diacritics either
+    expect(normaliseName('й')).not.toBe(normaliseName('и'))
+    expect(normaliseName('ά')).not.toBe(normaliseName('α'))
+  })
+
+  test('normaliseName keeps punctuation-only names apart', () => {
+    // Arrange / Act / Assert: nothing alphanumeric survives, so the raw text is the key
+    expect(normaliseName('&')).toBe('&')
+    expect(normaliseName('!!!')).toBe('!!!')
+    expect(normaliseName('&')).not.toBe(normaliseName('!!!'))
+    expect(normaliseName('  &  ')).toBe('&')
   })
 
   test('company name_norm is unique', async () => {
@@ -126,8 +168,10 @@ describe('companies, positions, summaries and artefacts', () => {
     expect(columns).toContain('locator')
     expect(columns).toContain('access_note')
     expect(columns.filter(isCredentialColumn)).toEqual([])
-    expect(['api_key', 'access_token', 'db_password', 'client_secret'].every(isCredentialColumn)).toBe(true)
-    expect(isCredentialColumn('artefact_kind_id')).toBe(false)
+    const spellings = ['api_key', 'apikey', 'accesskey', 'pwd', 'bearer', 'session_cookie', 'db_password', 'client_secret']
+    expect(spellings.every(isCredentialColumn)).toBe(true)
+    const harmless = ['id', 'artefact_kind_id', 'label', 'locator', 'access_note', 'created_at', 'monkey_count']
+    expect(harmless.some(isCredentialColumn)).toBe(false)
   })
 
   test('the migration passes the lint', () => {

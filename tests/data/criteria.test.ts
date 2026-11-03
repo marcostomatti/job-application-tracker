@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 
 import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb, getDb } from '../../src/data/client.ts'
@@ -269,6 +269,12 @@ describe('the default criteria set', () => {
   test('at most one active criteria set can be the default', async () => {
     // Arrange / Act
     const { second, plain, archivedPair } = await rolledBack(async (tx, name) => {
+      // Clear any committed active default first, inside this rolled-back transaction, so the
+      // test does not depend on what other tasks' data holds
+      await tx
+        .update(criteriaSet)
+        .set({ archivedAt: new Date() })
+        .where(and(eq(criteriaSet.isDefault, true), isNull(criteriaSet.archivedAt)))
       await tx.insert(criteriaSet).values({ name, version: 1, isDefault: true })
       const second = await thrownInSavepoint(tx, (inner) =>
         inner.insert(criteriaSet).values({ name, version: 2, isDefault: true }),
