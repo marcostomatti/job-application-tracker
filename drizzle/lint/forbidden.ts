@@ -4,7 +4,7 @@
  */
 
 /**
- * The only string literals a CHECK constraint may contain: the members of the
+ * The only string literals a CHECK constraint or an enum type may contain: the members of the
  * internal discriminators the code defines, plus the boolean digits.
  * Anything else is vocabulary, and vocabulary belongs in a registry row.
  */
@@ -97,20 +97,29 @@ export const DENIED_COLUMN_WORDS: readonly string[] = [
   'usa',
 ]
 
-/** The twelve registry tables. A migration must never INSERT into one. */
-export const REGISTRY_TABLES: readonly string[] = [
-  'phase',
-  'stage',
-  'layer',
-  'route',
-  'set_aside_reason',
-  'rejection_reason',
-  'penalty_kind',
-  'text_type',
-  'artefact_kind',
-  'work_format',
-  'seniority',
-  'apply_route',
+/**
+ * Denied words long and specific enough that they have no innocent
+ * superstring, so they are also matched anywhere inside a name. This is what
+ * catches `penaltyfintech`, where there is no word boundary to split on.
+ * Short words such as "java", "rust" or "usa" stay whole-word only, because
+ * "trust" and "usage" are fine column names.
+ */
+export const DENIED_SUBSTRINGS: readonly string[] = [
+  'fintech',
+  'acme',
+  'healthtech',
+  'edtech',
+  'insurtech',
+  'proptech',
+  'blockchain',
+  'ecommerce',
+  'typescript',
+  'javascript',
+  'swedish',
+  'icelandic',
+  'portuguese',
+  'norwegian',
+  'schengen',
 ]
 
 /**

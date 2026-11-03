@@ -14,3 +14,7 @@ CREATE TABLE "stage" (
   "is_terminal" integer NOT NULL DEFAULT 0 CHECK (is_terminal IN (0,1)),
   "archived_at" timestamptz
 );
+--> statement-breakpoint
+CREATE TYPE "public"."kind" AS ENUM('gate', 'soft');
+--> statement-breakpoint
+ALTER TYPE "public"."kind" ADD VALUE IF NOT EXISTS 'flat';
