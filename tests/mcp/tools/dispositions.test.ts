@@ -46,6 +46,9 @@ describe('the dispositions group', () => {
 
     expect(names.filter((name) => /stage_(update|delete|remove)/.test(name))).toEqual([])
     expect(names.filter((name) => /stage/.test(name)).sort()).toEqual(['stage_append', 'stage_append_bulk', 'stage_current'])
+    // A mutating tool under another name (event_delete, say) would pass the check above, so no
+    // tool of the three modules may name an edit at all, except the one that writes a text version.
+    expect(names.filter((name) => /(update|delete|remove|edit)/.test(name) && name !== 'text_update')).toEqual([])
   })
 
   test('no tool sets annotations, which are left for the author to decide', () => {
@@ -233,6 +236,39 @@ describe('the dispositions group', () => {
     expect(idsIn(distance)).toEqual([near, far].sort())
     expect(idsIn(pay)).toEqual([cheap])
     expect(groups.flatMap((group) => group.positions).map((row) => row.position.id)).not.toContain(kept)
+  })
+
+  test('set_aside_list lists groups in reason order, however the positions were set aside', async () => {
+    const client = await connectTools(dispositionTools, database())
+    const first = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Ordered: first reason' }]))
+    const second = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Ordered: second reason' }]))
+    const underSecond = await newPositionId('Ordered under second')
+    const underFirst = await newPositionId('Ordered under first')
+    await client.call('position_set_aside', { positionId: underSecond, setAsideReasonId: second })
+    await client.call('position_set_aside', { positionId: underFirst, setAsideReasonId: first })
+
+    const outcome = await client.call('set_aside_list', {})
+
+    const reasonIds = (outcome.body as Array<{ reasonId: number }>).map((group) => group.reasonId)
+    expect(reasonIds.indexOf(first)).toBeGreaterThanOrEqual(0)
+    expect(reasonIds.indexOf(first)).toBeLessThan(reasonIds.indexOf(second))
+    expect(reasonIds).toEqual([...reasonIds].sort((left, right) => left - right))
+  })
+
+  test('set_aside_list keeps a position in its group after the other side rejects it', async () => {
+    const client = await connectTools(dispositionTools, database())
+    const reasonId = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Rejected later: reason' }]))
+    const rejectionReasonId = idOf(await addRegistryRows(database(), 'rejection_reason', [{ label: 'Rejected later: theirs' }]))
+    const positionId = await newPositionId('Set aside then rejected')
+    await client.call('position_set_aside', { positionId, setAsideReasonId: reasonId })
+    await client.call('position_reject', { positionId, rejectionReasonId })
+
+    const outcome = await client.call('set_aside_list', {})
+
+    const group = (outcome.body as Array<{ reasonId: number; positions: Array<{ position: { id: number } }> }>).find(
+      (candidate) => candidate.reasonId === reasonId,
+    )
+    expect(group?.positions.map((row) => row.position.id)).toEqual([positionId])
   })
 
   test('set_aside_list still renders the label of a reason archived after it was used', async () => {

@@ -202,6 +202,22 @@ describe('the origins group', () => {
 
     expect(outcome.body).toContainEqual({ routeId: board, routeLabel: 'Counted board', positions: 2 })
     expect(outcome.body).toContainEqual({ routeId: friend, routeLabel: 'Counted friend', positions: 1 })
+    const counts = (outcome.body as Array<{ routeId: number | null; positions: number }>).map((row) => row.positions)
+    expect(counts).toEqual([...counts].sort((left, right) => right - left))
+    const routeIds = (outcome.body as Array<{ routeId: number | null }>).map((row) => row.routeId)
+    expect(routeIds.indexOf(board)).toBeLessThan(routeIds.indexOf(friend))
+  })
+
+  test('origin_first_touch ignores a future-dated touch, which origin_list still shows', async () => {
+    const client = await connectTools(provenanceTools, database())
+    const positionId = await newPositionId('Future dated')
+    await client.call('origin_record', { positionId, touchedOn: '2099-01-01', note: 'Mistyped year' })
+
+    const first = await client.call('origin_first_touch', { positionId })
+    const listed = await client.call('origin_list', { positionId })
+
+    expect(first).toEqual({ failed: false, body: null })
+    expect((listed.body as Touch[]).map((touch) => touch.note)).toEqual(['Mistyped year'])
   })
 
   test('route_counts takes no arguments and refuses one', async () => {
