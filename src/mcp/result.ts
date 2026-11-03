@@ -52,8 +52,13 @@ export interface ErrorDescription {
  * because those messages are built from fields the caller supplied. An unknown cause adds
  * nothing, so the leak property holds.
  *
+ * A known class's message is emitted verbatim, so it must never be derived from a driver fault,
+ * and that includes the free-text `message` option of `ConflictError`: pass a literal built from
+ * what the caller supplied, never `error.message` of a caught driver error.
+ *
  * An error outside the known classes could be anything, a connection string included, so it
- * becomes the same flat `internal error` with no name and no message of its own. A `ZodError`
+ * becomes the same flat constant, `InternalError` with `internal error`, which carries nothing
+ * of the thrown value: no name, no message, no cause. A `ZodError`
  * is flat here only because this is called from the MCP handler, where the SDK has already
  * parsed the input. A surface that parses with the schema itself must treat a `ZodError` as
  * caller input before it reaches this function.

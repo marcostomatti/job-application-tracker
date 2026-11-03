@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import type { Db } from '../../src/data/repositories/db.ts'
-import { ConflictError } from '../../src/errors.ts'
+import { ConflictError, NotFoundError } from '../../src/errors.ts'
 import { IdSchema } from '../../src/schemas/common.ts'
 import { defineTool, registerTools, type ToolDefinition } from '../../src/mcp/register.ts'
 
@@ -132,6 +132,42 @@ describe('registerTools', () => {
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result)).not.toContain('5439')
+    expect(result.content[0]?.text).toContain('internal error')
+  })
+
+  test('a non-async run that throws synchronously returns an isError result rather than rejecting', async () => {
+    const sync = defineTool({
+      name: 'sync-throw',
+      title: 'Sync throw',
+      description: 'Throws before returning a promise.',
+      input: z.strictObject({}),
+      run: () => {
+        throw new NotFoundError('position', 7)
+      },
+    })
+    const client = await connect([sync])
+
+    const result = await call(client, 'sync-throw', {})
+
+    expect(result.isError).toBe(true)
+    expect(result.content[0]?.text).toContain('NotFoundError')
+  })
+
+  test('annotations are passed to the SDK when a definition has them and absent otherwise', async () => {
+    const annotated = defineTool({
+      name: 'annotated',
+      title: 'Annotated',
+      description: 'Carries a read-only hint.',
+      input: z.strictObject({}),
+      annotations: { readOnlyHint: true },
+      run: async () => null,
+    })
+    const client = await connect([annotated, echo])
+
+    const { tools } = await client.listTools()
+
+    expect(tools.find((tool) => tool.name === 'annotated')?.annotations).toEqual({ readOnlyHint: true })
+    expect(tools.find((tool) => tool.name === 'echo')?.annotations).toBeUndefined()
   })
 
   test('a tool that returns a value JSON cannot hold returns an internal error rather than crashing', async () => {

@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { z, ZodType } from 'zod'
 
 import type { Db } from '../data/repositories/db.ts'
@@ -18,6 +18,12 @@ export interface ToolDefinition {
   readonly title: string
   readonly description: string
   readonly input: ZodType
+  /**
+   * The SDK's read-only and destructive hints, which a client may use to decide whether a call
+   * needs explicit approval. Optional, and sent to `registerTool` only when present. Which tools
+   * carry which hint is each tool author's call.
+   */
+  readonly annotations?: ToolAnnotations
   readonly run: (args: unknown, db: Db) => Promise<unknown>
 }
 
@@ -27,6 +33,7 @@ export interface ToolSpec<S extends ZodType> {
   readonly title: string
   readonly description: string
   readonly input: S
+  readonly annotations?: ToolAnnotations
   readonly run: (args: z.infer<S>, db: Db) => Promise<unknown>
 }
 
@@ -41,6 +48,7 @@ export function defineTool<S extends ZodType>(spec: ToolSpec<S>): ToolDefinition
     title: spec.title,
     description: spec.description,
     input: spec.input,
+    ...(spec.annotations === undefined ? {} : { annotations: spec.annotations }),
     run: (args, db) => spec.run(args as z.infer<S>, db),
   }
 }
@@ -58,7 +66,12 @@ export function registerTools(server: McpServer, db: Db, definitions: readonly T
   for (const definition of definitions) {
     server.registerTool(
       definition.name,
-      { title: definition.title, description: definition.description, inputSchema: definition.input },
+      {
+        title: definition.title,
+        description: definition.description,
+        inputSchema: definition.input,
+        ...(definition.annotations === undefined ? {} : { annotations: definition.annotations }),
+      },
       async (args: unknown): Promise<CallToolResult> => {
         try {
           return okResult(await definition.run(args, db))

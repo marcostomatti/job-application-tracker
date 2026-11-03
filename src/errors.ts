@@ -28,6 +28,11 @@ export class NotFoundError extends Error {
  * kind, such as a rating that names something outside the set it was made under, passes its own
  * `message`, because "already exists" would be false for it. `field` and `key` still say what
  * collided. `cause` keeps the driver fault and is never part of the message.
+ *
+ * A custom `message` is shown to callers verbatim: the MCP and HTTP surfaces send a conflict's
+ * message as it is, and a bulk failure repeats it. It must therefore be a literal built from
+ * what the caller supplied, and never derived from a driver fault, whose message is the failed
+ * SQL statement. The fault belongs on `cause`.
  */
 export class ConflictError extends Error {
   constructor(
