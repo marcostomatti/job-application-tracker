@@ -71,6 +71,9 @@ repository, so run `bun run db:up` and `bun run db:migrate` first. At start it p
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).
+Unset or blank means stdio, and only the exact value `http` opts in to HTTP. Any other value,
+a wrong case such as `HTTP` or a typo such as `std` included, is rejected at startup: the
+server prints the value it got and exits with code 1 instead of guessing.
 
 **stdio, the default, for Claude Desktop.** The server talks over its own standard input and
 output, so a client that starts it as a child process (Claude Desktop does) needs no port and
