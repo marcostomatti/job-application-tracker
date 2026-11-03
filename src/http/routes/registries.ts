@@ -1,4 +1,5 @@
-import { addRegistryRows, archiveRegistryRow, listRegistry } from '../../data/repositories/registries.ts'
+import { archiveRegistryRow, listRegistry } from '../../data/repositories/registries.ts'
+import { addOneRegistryRow } from '../../mcp/tools/registries.ts'
 import { RegistryAddSchema, RegistryArchiveSchema, RegistryListQuerySchema } from '../../schemas/registries.ts'
 import { route, type RouteSpec } from './spec.ts'
 
@@ -10,11 +11,7 @@ export const registryRoutes: readonly RouteSpec[] = [
   route('get', '/registries/:registry', 'registry_list', RegistryListQuerySchema, async (args, db) =>
     listRegistry(db, args.registry, args),
   ),
-  route('post', '/registries/:registry', 'registry_add', RegistryAddSchema, async (args, db) => {
-    const [created] = await addRegistryRows(db, args.registry, [args.row])
-    if (!created) throw new Error('The registry insert returned no row.')
-    return created
-  }),
+  route('post', '/registries/:registry', 'registry_add', RegistryAddSchema, async (args, db) => addOneRegistryRow(db, args)),
   route('patch', '/registries/:registry/:id', 'registry_archive', RegistryArchiveSchema, async (args, db) =>
     archiveRegistryRow(db, args.registry, args.id),
   ),

@@ -1,10 +1,7 @@
-import { readMode, setMode } from '../../data/repositories/config.ts'
 import {
   createCriteriaVersion,
-  findCriteriaSet,
   getRequirements,
   listCriteriaSets,
-  setDefaultCriteriaSet,
   updateRequirement,
 } from '../../data/repositories/criteria.ts'
 import type { Db } from '../../data/repositories/db.ts'
@@ -19,6 +16,7 @@ import {
   RequirementUpdateInputSchema,
   type RequirementUpdateInput,
 } from '../../schemas/criteria.ts'
+import { makeDefaultCriteriaSet, readCriteriaMode, writeCriteriaMode } from '../../mcp/tools/criteria.ts'
 import { route, type RouteSpec } from './spec.ts'
 
 /**
@@ -59,13 +57,9 @@ export const criteriaRoutes: readonly RouteSpec[] = [
     async (args, db, { criteriaSetId }) => updateRequirementOfSet(db, criteriaSetId, args),
     { pathOnly: { criteriaSetId: IdSchema } },
   ),
-  route('put', '/criteria-sets/:criteriaSetId/default', 'criteria_set_default', CriteriaSetDefaultInputSchema, async (args, db) => {
-    await setDefaultCriteriaSet(db, args.criteriaSetId)
-    return findCriteriaSet(db, args.criteriaSetId)
-  }),
-  route('get', '/config/mode', 'criteria_mode_get', EmptyInputSchema, async (_args, db) => ({ mode: await readMode(db) })),
-  route('put', '/config/mode', 'criteria_mode_set', CriteriaModeInputSchema, async (args, db) => {
-    await setMode(db, args.mode)
-    return { mode: args.mode }
-  }),
+  route('put', '/criteria-sets/:criteriaSetId/default', 'criteria_set_default', CriteriaSetDefaultInputSchema, async (args, db) =>
+    makeDefaultCriteriaSet(db, args.criteriaSetId),
+  ),
+  route('get', '/config/mode', 'criteria_mode_get', EmptyInputSchema, async (_args, db) => readCriteriaMode(db)),
+  route('put', '/config/mode', 'criteria_mode_set', CriteriaModeInputSchema, async (args, db) => writeCriteriaMode(db, args.mode)),
 ]

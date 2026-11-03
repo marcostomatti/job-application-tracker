@@ -1,6 +1,19 @@
 import { addRegistryRows, archiveRegistryRow, listRegistry } from '../../data/repositories/registries.ts'
 import { RegistryAddBulkSchema, RegistryAddSchema, RegistryArchiveSchema, RegistryListQuerySchema } from '../../schemas/registries.ts'
+import type { z } from 'zod'
+
+import type { Db } from '../../data/repositories/db.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
+
+/**
+ * Adds the one row of a `registry_add` call and returns it as stored. Exported so the HTTP route
+ * that mirrors the tool calls the same function.
+ */
+export async function addOneRegistryRow(db: Db, input: z.infer<typeof RegistryAddSchema>): Promise<unknown> {
+  const [created] = await addRegistryRows(db, input.registry, [input.row])
+  if (!created) throw new Error('The registry insert returned no row.')
+  return created
+}
 
 /** §11.1 group 5: the twelve pick-list registries the user's own vocabulary lives in. */
 export const registryTools: ToolDefinition[] = [
@@ -27,11 +40,7 @@ export const registryTools: ToolDefinition[] = [
       'A field the chosen registry does not have is refused. A key the registry already holds is a conflict. ' +
       'Use registry_add_bulk to add several rows to one registry in one call.',
     input: RegistryAddSchema,
-    run: async (args, db) => {
-      const [created] = await addRegistryRows(db, args.registry, [args.row])
-      if (!created) throw new Error('The registry insert returned no row.')
-      return created
-    },
+    run: async (args, db) => addOneRegistryRow(db, args),
   }),
   defineTool({
     name: 'registry_add_bulk',

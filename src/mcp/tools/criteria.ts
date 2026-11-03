@@ -1,4 +1,4 @@
-import { createCriteriaVersion, findCriteriaSet, getRequirements, listCriteriaSets, setDefaultCriteriaSet, updateRequirement } from '../../data/repositories/criteria.ts'
+import { createCriteriaVersion, findCriteriaSet, type CriteriaSetRow, getRequirements, listCriteriaSets, setDefaultCriteriaSet, updateRequirement } from '../../data/repositories/criteria.ts'
 import { readMode, setMode } from '../../data/repositories/config.ts'
 import { EmptyInputSchema } from '../../schemas/common.ts'
 import { CriteriaModeInputSchema } from '../../schemas/config.ts'
@@ -9,7 +9,32 @@ import {
   CriteriaVersionInputSchema,
   RequirementUpdateInputSchema,
 } from '../../schemas/criteria.ts'
+import type { CriteriaMode } from '../../schemas/config.ts'
+import type { Db } from '../../data/repositories/db.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
+
+/**
+ * The three compositions of this group that are more than one repository call. Each is exported
+ * so the HTTP route that mirrors the tool calls the same function, and the two cannot disagree
+ * about what the call does.
+ */
+
+/** Makes a set the default, then returns it as stored. */
+export async function makeDefaultCriteriaSet(db: Db, criteriaSetId: number): Promise<CriteriaSetRow> {
+  await setDefaultCriteriaSet(db, criteriaSetId)
+  return findCriteriaSet(db, criteriaSetId)
+}
+
+/** The criteria mode, wrapped as the `{ mode }` both surfaces answer. */
+export async function readCriteriaMode(db: Db): Promise<{ mode: CriteriaMode }> {
+  return { mode: await readMode(db) }
+}
+
+/** Sets the criteria mode and answers it as `{ mode }`. */
+export async function writeCriteriaMode(db: Db, mode: CriteriaMode): Promise<{ mode: CriteriaMode }> {
+  await setMode(db, mode)
+  return { mode }
+}
 
 /** §11.1 group 4: criteria sets, their requirements, the default set and the criteria mode. */
 export const criteriaTools: ToolDefinition[] = [
@@ -61,10 +86,7 @@ export const criteriaTools: ToolDefinition[] = [
       'Makes ONE criteria set the default and returns it. There is only one default, so the previous one stops being it. ' +
       'The default is the set whose latest score position_search shows when no criteriaSetId is given. An archived set cannot be the default, and a refused call leaves the current default in place.',
     input: CriteriaSetDefaultInputSchema,
-    run: async (args, db) => {
-      await setDefaultCriteriaSet(db, args.criteriaSetId)
-      return findCriteriaSet(db, args.criteriaSetId)
-    },
+    run: async (args, db) => makeDefaultCriteriaSet(db, args.criteriaSetId),
   }),
   defineTool({
     name: 'criteria_mode_get',
@@ -73,7 +95,7 @@ export const criteriaTools: ToolDefinition[] = [
       'Returns the criteria mode the app runs in, as { mode }: versioned (one active rubric that is revised over time) or perspective (several rubrics side by side). ' +
       'A fresh install is versioned. Takes no arguments.',
     input: EmptyInputSchema,
-    run: async (_args, db) => ({ mode: await readMode(db) }),
+    run: async (_args, db) => readCriteriaMode(db),
   }),
   defineTool({
     name: 'criteria_mode_set',
@@ -82,9 +104,6 @@ export const criteriaTools: ToolDefinition[] = [
       'Switches the app between the versioned and perspective criteria modes and returns the new { mode }. ' +
       'Changing the mode changes how scores are grouped and shown, not the scores themselves. Use criteria_mode_get to read the current one.',
     input: CriteriaModeInputSchema,
-    run: async (args, db) => {
-      await setMode(db, args.mode)
-      return { mode: args.mode }
-    },
+    run: async (args, db) => writeCriteriaMode(db, args.mode),
   }),
 ]

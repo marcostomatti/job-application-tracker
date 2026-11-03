@@ -423,22 +423,6 @@ describe('the criteria and configuration routes', () => {
     expect(refused.status).toBe(400)
     expect(errorOf(refused).message).toContain('mode')
   })
-
-  test('the routes that compose two calls answer what their tools answer', async () => {
-    const { setId } = await arrangeSet(database(), 'Parity set')
-    const asJson = async (name: string, args: unknown): Promise<unknown> => JSON.parse(JSON.stringify(await toolNamed(name).run(args, database())))
-
-    const viaRoute = await live.request('PUT', `/api/criteria-sets/${setId}/default`)
-    const viaTool = await asJson('criteria_set_default', { criteriaSetId: setId })
-    const modeRoute = await live.request('PUT', '/api/config/mode', { mode: 'versioned' })
-    const modeTool = await asJson('criteria_mode_set', { mode: 'versioned' })
-    const readRoute = await live.request('GET', '/api/config/mode')
-    const readTool = await asJson('criteria_mode_get', {})
-
-    expect(dataOf(viaRoute)).toEqual(viaTool)
-    expect(dataOf(modeRoute)).toEqual(modeTool)
-    expect(dataOf(readRoute)).toEqual(readTool)
-  })
 })
 
 describe('the registry and text routes', () => {
