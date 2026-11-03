@@ -93,7 +93,7 @@ describe('registries', () => {
 
   test('the migration passes the lint', () => {
     // Arrange
-    const migration = join(MIGRATIONS_DIR, '0001_registries.sql')
+    const migration = join(MIGRATIONS_DIR, '0000_registries.sql')
 
     // Act
     const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
