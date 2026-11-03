@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -164,7 +164,7 @@ describe('migration lint', () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'migration-lint-cwd-'))
     scratchDirs.push(root, elsewhere)
     mkdirSync(join(root, 'drizzle', 'lint'), { recursive: true })
-    for (const name of ['migration-lint.ts', 'forbidden.ts']) {
+    for (const name of readdirSync(join(FIXTURE_ROOT, 'drizzle', 'lint'))) {
       copyFileSync(join(FIXTURE_ROOT, 'drizzle', 'lint', name), join(root, 'drizzle', 'lint', name))
     }
     copyFileSync(join(FIXTURES, 'bad-check.sql'), join(root, 'drizzle', 'bad-check.sql'))
@@ -326,5 +326,80 @@ describe('migration lint', () => {
 
     expect(findings.map((finding) => finding.rule)).toEqual(Array(3).fill('named-object'))
     expect(findings.map((finding) => finding.line)).toEqual([1, 2, 3])
+  })
+
+  test('rejects a denied word in a comment, however it is written, and allows ordinary comments', () => {
+    const bad = lintMigrations(isolate('evade-comment-denied-words.sql'))
+    const legit = lintMigrations(isolate('clean-comments.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(4).fill('leaky-comment'))
+    expect(bad.map((finding) => finding.line)).toEqual([1, 1, 3, 5])
+    expect(legit).toEqual([])
+  })
+
+  test('reads a dollar sign inside an unquoted identifier as part of the name, not as a dollar quote', () => {
+    const bad = lintMigrations(isolate('identifier-with-dollars.sql'))
+    const legit = lintMigrations(isolate('dollars-in-identifier-clean.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual([
+      'named-object',
+      'named-column',
+      'vocabulary-in-check',
+      'registry-seed',
+    ])
+    expect(bad.map((finding) => finding.line)).toEqual([2, 2, 3, 4])
+    expect(legit).toEqual([])
+  })
+
+  test('fails loudly on an unterminated dollar quote, quote or block comment instead of reporting the file clean', () => {
+    for (const name of ['unterminated-dollar.sql', 'unterminated-quote.sql', 'unterminated-comment.sql']) {
+      expect(() => lintMigrations(isolate(name))).toThrow(/unterminated .* on line 1/)
+    }
+  })
+
+  test('reports an unterminated literal as a problem from lintRepo, with no findings', () => {
+    const root = mkdtempSync(join(tmpdir(), 'migration-lint-root-'))
+    scratchDirs.push(root)
+    mkdirSync(join(root, 'drizzle'))
+    copyFileSync(join(FIXTURES, 'unterminated-dollar.sql'), join(root, 'drizzle', 'unterminated-dollar.sql'))
+
+    const result = migrationLint.lintRepo(root)
+
+    expect(result.findings).toEqual([])
+    expect(result.problems).toHaveLength(1)
+    expect(result.problems[0]).toContain('unterminated-dollar.sql')
+  })
+
+  test('rejects vocabulary and denied names in CREATE TABLE ... AS SELECT, and allows an archive copy', () => {
+    const bad = lintMigrations(isolate('evade-ctas.sql'))
+    const legit = lintMigrations(isolate('clean-ctas.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check', 'named-column', 'registry-seed'])
+    expect(legit).toEqual([])
+  })
+
+  test('rejects vocabulary in an ALTER COLUMN ... USING expression, and allows a structural cast', () => {
+    const bad = lintMigrations(isolate('evade-using.sql'))
+    const legit = lintMigrations(isolate('structural-using.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check', 'vocabulary-in-check'])
+    expect(bad.map((finding) => finding.line)).toEqual([1, 2])
+    expect(bad[0]?.detail).toContain('Icelandic')
+    expect(legit).toEqual([])
+  })
+
+  test('rejects a CREATE DOMAIN named after vocabulary, and allows a clean domain', () => {
+    const bad = lintMigrations(isolate('evade-domain-name.sql'))
+    const legit = lintMigrations(isolate('clean-domain-name.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['named-object'])
+    expect(legit).toEqual([])
+  })
+
+  test('the whole repository, every migration and pack at once, lints clean', () => {
+    const result = migrationLint.lintRepo(FIXTURE_ROOT)
+
+    expect(result.problems).toEqual([])
+    expect(result.findings).toEqual([])
   })
 })

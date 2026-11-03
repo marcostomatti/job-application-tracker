@@ -31,6 +31,9 @@ export const ALLOWED_STRUCTURAL_LITERALS: readonly string[] = [
   // booleans stored as integers
   '0',
   '1',
+  // numeric bounds: a CHECK that keeps a number finite
+  'Infinity',
+  '-Infinity',
 ]
 
 /**

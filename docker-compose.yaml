@@ -1,3 +1,6 @@
+# Pinned so the volume is always job-application-tracker_tracker-data, whatever the clone's directory is called.
+name: job-application-tracker
+
 services:
   db:
     image: postgres:16

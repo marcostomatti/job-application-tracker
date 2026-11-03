@@ -57,6 +57,13 @@
       "when": 1793707352798,
       "tag": "0007_config_rescore",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793709251459,
+      "tag": "0008_finite_weights_and_amounts",
+      "breakpoints": true
     }
   ]
 }

@@ -137,6 +137,8 @@ export const positionPenalty = pgTable(
   },
   (table) => [
     unique('position_penalty_score_kind_unique').on(table.scoreId, table.penaltyKindId),
-    check('position_penalty_amount_check', sql`${table.amount} <= 0`),
+    // `<= 0` already rejects NaN (ordered above every number); `> '-Infinity'` rejects the other
+    // non-finite value, so an amount is always a finite number.
+    check('position_penalty_amount_check', sql`${table.amount} <= 0 AND ${table.amount} > '-Infinity'`),
   ],
 )

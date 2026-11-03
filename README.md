@@ -31,7 +31,8 @@ DB_PORT=5439 bun run db:up
 
 `bun run db:down` is `docker compose down`, which stops the container and **keeps the named
 volume**, so the data survives. A database that is empty from scratch also needs the volume
-removed:
+removed. `docker-compose.yaml` pins the project name, so the volume is called
+`job-application-tracker_tracker-data` whatever directory you cloned into:
 
 ```sh
 bun run db:down

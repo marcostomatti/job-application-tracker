@@ -18,3 +18,10 @@ CREATE TABLE "stage" (
 CREATE TYPE "public"."kind" AS ENUM('gate', 'soft');
 --> statement-breakpoint
 ALTER TYPE "public"."kind" ADD VALUE IF NOT EXISTS 'flat';
+--> statement-breakpoint
+CREATE TABLE "bounded" (
+  "weight" numeric,
+  "amount" numeric,
+  CONSTRAINT "bounded_weight_check" CHECK ("bounded"."weight" >= 0 AND "bounded"."weight" < 'Infinity'),
+  CONSTRAINT "bounded_amount_check" CHECK ("bounded"."amount" <= 0 AND "bounded"."amount" > '-Infinity')
+);
