@@ -34,7 +34,25 @@ export const ALLOWED_STRUCTURAL_LITERALS: readonly string[] = [
 ]
 
 /**
- * Words that must not appear in a column name (whole words once the name is
+ * Values with no vocabulary in them, allowed in a DEFAULT, a GENERATED
+ * expression, an index predicate or a view body on top of the structural
+ * literals: the empty string and the empty JSON containers. A CHECK stays
+ * strict and does not take these.
+ */
+export const EMPTY_VALUE_LITERALS: readonly string[] = ['', '{}', '[]']
+
+/**
+ * Literal shapes that cannot carry vocabulary: a number quoted as a string
+ * (Drizzle writes `numeric().default('0.5')` that way) and an ISO date or
+ * timestamp.
+ */
+export const STRUCTURAL_VALUE_PATTERNS: readonly RegExp[] = [
+  /^-?\d+(?:\.\d+)?$/,
+  /^\d{4}-\d{2}-\d{2}(?:[ T][\d:.+\-Z]+)?$/,
+]
+
+/**
+ * Words that must not appear in a column, table, index, type or constraint name (whole words once the name is
  * split on underscores; a trailing plural "s" is ignored). Industries,
  * technologies, spoken languages and jurisdictions. The first two entries are
  * the ones the old schema's audit found; the rest are the same kinds of word.

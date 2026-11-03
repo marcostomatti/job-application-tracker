@@ -5,12 +5,16 @@ import {
   ALLOWED_STRUCTURAL_LITERALS,
   DENIED_COLUMN_WORDS,
   DENIED_SUBSTRINGS,
+  EMPTY_VALUE_LITERALS,
   PLACEHOLDER_COMPANY_NAMES,
+  STRUCTURAL_VALUE_PATTERNS,
 } from './forbidden'
 
 export type LintRule =
   | 'vocabulary-in-check'
   | 'named-column'
+  | 'named-object'
+  | 'forbidden-routine'
   | 'registry-seed'
   | 'leaky-comment'
   | 'pack-carries-judgement'
@@ -182,12 +186,25 @@ const unquote = (identifier: string): string => identifier.replace(/^"|"$/g, '')
 
 type Literal = { value: string; index: number }
 
-/** Every single-quoted literal in `text[from, to)` that is not an allowed structural literal. */
-function vocabularyLiterals(text: string, from: number, to: number): Literal[] {
+const isDiscriminator = (value: string): boolean => ALLOWED_STRUCTURAL_LITERALS.includes(value)
+
+/** A discriminator, an empty value, a quoted number or a date: nothing a user would have to rename. */
+const isStructuralValue = (value: string): boolean =>
+  isDiscriminator(value) ||
+  EMPTY_VALUE_LITERALS.includes(value) ||
+  STRUCTURAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
+
+/** Every single-quoted literal in `text[from, to)` that `isAllowed` rejects. */
+function vocabularyLiterals(
+  text: string,
+  from: number,
+  to: number,
+  isAllowed: (value: string) => boolean = isDiscriminator,
+): Literal[] {
   const offending: Literal[] = []
   for (const literal of text.slice(from, to).matchAll(/'((?:[^']|'')*)'/g)) {
     const value = literal[1] as string
-    if (!ALLOWED_STRUCTURAL_LITERALS.includes(value)) offending.push({ value, index: from + literal.index })
+    if (!isAllowed(value)) offending.push({ value, index: from + literal.index })
   }
   return offending
 }
@@ -227,6 +244,131 @@ function closedSetFindings(code: string, file: string): LintFinding[] {
     const open = match.index + match[0].length - 1
     const offending = vocabularyLiterals(code, open, endOfQuoted(code, open, "'"))
     findings.push(...vocabularyFinding(file, code, 'RENAME VALUE', offending))
+  }
+  return findings
+}
+
+/** Index of the next top-level `;`, skipping quoted text, or the end of the text. */
+function endOfStatement(text: string, from: number): number {
+  let i = from
+  while (i < text.length) {
+    const char = text[i] as string
+    if (char === "'" || char === '"') i = endOfQuoted(text, i, char)
+    else if (char === ';') return i
+    else i += 1
+  }
+  return text.length
+}
+
+const DEFAULT_STOP = /^(?:NOT|NULL|CONSTRAINT|CHECK|REFERENCES|UNIQUE|PRIMARY|GENERATED|COLLATE|ON)\b/i
+
+/** Where a DEFAULT expression ends: a top-level comma, `;`, unmatched `)` or the next column-option keyword. */
+function endOfDefault(text: string, from: number): number {
+  let depth = 0
+  let i = from
+  while (i < text.length) {
+    const char = text[i] as string
+    if (char === "'" || char === '"') {
+      i = endOfQuoted(text, i, char)
+      continue
+    }
+    if (char === '(') depth += 1
+    else if (char === ')') {
+      if (depth === 0) return i
+      depth -= 1
+    } else if (depth === 0 && (char === ',' || char === ';')) return i
+    else if (depth === 0 && /\s/.test(text[i - 1] ?? '') && DEFAULT_STOP.test(text.slice(i, i + 12))) return i
+    i += 1
+  }
+  return text.length
+}
+
+type Span = { construct: string; from: number; to: number }
+
+/**
+ * Expressions that can carry a literal without being a CHECK or an enum: a
+ * column DEFAULT, a GENERATED ... AS (...) expression, and the whole of a
+ * CREATE INDEX (its WHERE predicate) or CREATE VIEW statement. Drizzle's
+ * `.default('x')` and `index().where(...)` emit exactly these.
+ * Positions are found in `stringless` (so a string cannot pass for syntax)
+ * and the literals are read from `code`; both have the same offsets.
+ */
+function expressionFindings(code: string, stringless: string, file: string): LintFinding[] {
+  const spans: Span[] = []
+  for (const match of stringless.matchAll(/\bDEFAULT\b/gi)) {
+    const from = match.index + match[0].length
+    spans.push({ construct: 'DEFAULT', from, to: endOfDefault(stringless, from) })
+  }
+  for (const match of stringless.matchAll(/\bGENERATED\s+ALWAYS\s+AS\s*\(/gi)) {
+    const open = match.index + match[0].length - 1
+    spans.push({ construct: 'GENERATED', from: open, to: closingParen(stringless, open) + 1 })
+  }
+  for (const match of stringless.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(?:MATERIALIZED\s+)?(INDEX|VIEW)\b/gi)) {
+    const construct = (match[1] as string).toUpperCase()
+    spans.push({ construct, from: match.index, to: endOfStatement(stringless, match.index) })
+  }
+  return spans.flatMap((span) =>
+    vocabularyFinding(file, code, span.construct, vocabularyLiterals(code, span.from, span.to, isStructuralValue)),
+  )
+}
+
+const QUALIFIED_NAME = String.raw`(?:${IDENTIFIER})(?:\s*\.\s*(?:${IDENTIFIER}))*`
+
+/** Patterns whose last group is an object name; `kind` is fixed, or read from group 1. */
+const OBJECT_NAME_PATTERNS: { pattern: RegExp; kind?: string }[] = [
+  {
+    pattern: new RegExp(
+      String.raw`\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(?:MATERIALIZED\s+)?(TABLE|INDEX|TYPE|VIEW|SEQUENCE|SCHEMA)\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${QUALIFIED_NAME})`,
+      'gi',
+    ),
+  },
+  { pattern: new RegExp(String.raw`\bCONSTRAINT\s+(${QUALIFIED_NAME})`, 'gi'), kind: 'constraint' },
+  { pattern: new RegExp(String.raw`\bRENAME\s+TO\s+(${QUALIFIED_NAME})`, 'gi'), kind: 'renamed object' },
+]
+
+/** A table, index, type, view, sequence, schema or constraint named after vocabulary. */
+function objectNameFindings(code: string, file: string): LintFinding[] {
+  const findings: LintFinding[] = []
+  for (const { pattern, kind } of OBJECT_NAME_PATTERNS) {
+    for (const match of code.matchAll(pattern)) {
+      const name = match[match.length - 1] as string
+      const label = kind ?? (match[1] as string).toLowerCase()
+      for (const segment of name.match(new RegExp(IDENTIFIER, 'g')) ?? []) {
+        const word = deniedWord(unquote(segment))
+        if (word) {
+          findings.push({
+            file,
+            line: lineOf(code, match.index + match[0].length - name.length),
+            rule: 'named-object',
+            detail: `${label} "${unquote(segment)}" is named after "${word}"`,
+          })
+        }
+      }
+    }
+  }
+  return findings
+}
+
+/**
+ * Functions, procedures, triggers, rules and DO blocks are forbidden, not
+ * scanned: a body is arbitrary code, so a vocabulary scan of it is always
+ * partial, and a template migration has no need of one.
+ */
+function routineFindings(code: string, file: string): LintFinding[] {
+  const findings: LintFinding[] = []
+  const forbidden: [RegExp, (match: RegExpMatchArray) => string][] = [
+    [/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+|EVENT\s+)?(FUNCTION|PROCEDURE|TRIGGER|RULE)\b/gi, (m) => `CREATE ${(m[1] as string).toUpperCase()}`],
+    [/\bDO\s+(?:LANGUAGE\s+\w+\s+)?[$']/gi, () => 'DO block'],
+  ]
+  for (const [pattern, describe] of forbidden) {
+    for (const match of code.matchAll(pattern)) {
+      findings.push({
+        file,
+        line: lineOf(code, match.index),
+        rule: 'forbidden-routine',
+        detail: `${describe(match)} is forbidden in a migration; a body is arbitrary code the lint cannot read`,
+      })
+    }
   }
   return findings
 }
@@ -400,6 +542,9 @@ export function lintMigrations(dir: string, options: LintOptions = {}): LintFind
     const stringless = blankStrings(split.code)
     return [
       ...closedSetFindings(split.code, file),
+      ...expressionFindings(split.code, stringless, file),
+      ...objectNameFindings(stringless, file),
+      ...routineFindings(stringless, file),
       ...columnFindings(stringless, file),
       ...seedFindings(stringless, file),
       ...commentFindings(comments, file, companyNames),

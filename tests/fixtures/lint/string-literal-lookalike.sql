@@ -1,4 +1,6 @@
 CREATE TABLE "t" (
-  "note" text DEFAULT 'add fintech',
-  "other" text DEFAULT 'insert into stage'
+  "note" text,
+  "other" text
 );
+COMMENT ON COLUMN "t"."note" IS 'add fintech';
+COMMENT ON COLUMN "t"."other" IS 'insert into stage';

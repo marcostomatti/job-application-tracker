@@ -212,13 +212,14 @@ describe('migration lint', () => {
     expect(legit).toHaveLength(0)
   })
 
-  test('rejects MERGE ... THEN INSERT with no INTO, and allows a BEFORE INSERT trigger', () => {
+  test('rejects MERGE ... THEN INSERT with no INTO, and does not read a BEFORE INSERT trigger as a seed', () => {
     const bad = lintMigrations(isolate('evade-merge-insert.sql'))
-    const legit = lintMigrations(isolate('trigger-legit.sql'))
+    const trigger = lintMigrations(isolate('trigger-legit.sql'))
 
     expect(bad.map((finding) => finding.rule)).toEqual(['registry-seed'])
     expect(bad[0]?.line).toBe(2)
-    expect(legit).toHaveLength(0)
+    // CREATE TRIGGER is forbidden outright now, but BEFORE INSERT is still not a seed.
+    expect(trigger.map((finding) => finding.rule)).toEqual(['forbidden-routine'])
   })
 
   test('rejects ALTER TYPE RENAME VALUE to a vocabulary word, and allows a rename to a structural one', () => {
@@ -227,5 +228,62 @@ describe('migration lint', () => {
     expect(findings.map((finding) => finding.rule)).toEqual(['vocabulary-in-check'])
     expect(findings[0]?.line).toBe(2)
     expect(findings[0]?.detail).toContain('Icelandic')
+  })
+
+  test('rejects vocabulary in a column DEFAULT, and allows structural defaults', () => {
+    const bad = lintMigrations(isolate('evade-default.sql'))
+    const legit = lintMigrations(isolate('structural-defaults.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check', 'vocabulary-in-check'])
+    expect(bad.map((finding) => finding.line)).toEqual([3, 6])
+    expect(bad[0]?.detail).toContain('Icelandic')
+    expect(legit).toEqual([])
+  })
+
+  test('rejects vocabulary in an index WHERE predicate, and allows a structural predicate', () => {
+    const bad = lintMigrations(isolate('evade-index-where.sql'))
+    const legit = lintMigrations(isolate('structural-index.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check'])
+    expect(bad[0]?.line).toBe(2)
+    expect(bad[0]?.detail).toContain('Elixir')
+    expect(legit).toEqual([])
+  })
+
+  test('rejects vocabulary in a GENERATED ... AS (expression), and allows a structural one', () => {
+    const bad = lintMigrations(isolate('evade-generated.sql'))
+    const legit = lintMigrations(isolate('structural-generated.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check'])
+    expect(bad[0]?.line).toBe(3)
+    expect(bad[0]?.detail).toContain('Crypto')
+    expect(legit).toEqual([])
+  })
+
+  test('rejects vocabulary in a view body, and allows a structural one', () => {
+    const bad = lintMigrations(isolate('evade-view-body.sql'))
+    const legit = lintMigrations(isolate('structural-view.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['vocabulary-in-check'])
+    expect(bad[0]?.detail).toContain('Hybrid')
+    expect(legit).toEqual([])
+  })
+
+  test('rejects a table, index, type or constraint named after vocabulary, and allows clean names', () => {
+    const bad = lintMigrations(isolate('evade-object-names.sql'))
+    const legit = lintMigrations(isolate('clean-object-names.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(5).fill('named-object'))
+    expect(bad.map((finding) => finding.line)).toEqual([1, 2, 3, 4, 5])
+    expect(legit).toEqual([])
+  })
+
+  test('forbids CREATE FUNCTION, CREATE TRIGGER and DO blocks, and ignores the words elsewhere', () => {
+    const bad = lintMigrations(isolate('evade-function-body.sql'))
+    const legit = lintMigrations(isolate('routine-lookalikes.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(3).fill('forbidden-routine'))
+    expect(bad.map((finding) => finding.line)).toEqual([1, 2, 3])
+    expect(legit).toEqual([])
   })
 })
