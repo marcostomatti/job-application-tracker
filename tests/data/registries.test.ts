@@ -169,6 +169,10 @@ describe('registries', () => {
 
     // Assert: stage.phase_id is the one reference at this point; guard against a vacuous pass
     expect(toRegistries.some((row) => row.owner === 'stage' && row.column === 'phase_id')).toBe(true)
-    expect(toRegistries.filter((row) => !row.nullable)).toEqual([])
+    // The one deliberate exception: a penalty row is an application of a penalty kind, so with
+    // an empty registry the right state is no penalty rows, not penalty rows without a kind.
+    // The exception is listed by name, so any other NOT NULL registry reference still fails.
+    const notNull = toRegistries.filter((row) => !row.nullable).map((row) => `${row.owner}.${row.column}`)
+    expect(notNull).toEqual(['position_penalty.penalty_kind_id'])
   })
 })

@@ -63,14 +63,14 @@ describe('scores, ratings and penalties', () => {
     const stored = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const score = await insertScore(tx, ids.positionId, ids.setId)
-      await tx.insert(positionRating).values({ scoreId: score.id, requirementId: ids.requirementId, coverage: 0.5 })
+      await tx.insert(positionRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: 0.5 })
       const [added] = await tx
         .insert(requirement)
         .values({ criteriaSetId: ids.setId, key: 'added-later', label: 'Added later', anchors: ANCHORS })
         .returning()
       await tx
         .insert(positionRating)
-        .values({ scoreId: score.id, requirementId: added?.id as number, coverage: 1, evidence: 'stated in the posting' })
+        .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: added?.id as number, coverage: 1, evidence: 'stated in the posting' })
       const rows = await tx.select().from(positionRating).where(eq(positionRating.scoreId, score.id))
       return { rows, addedId: added?.id }
     })
@@ -91,11 +91,11 @@ describe('scores, ratings and penalties', () => {
         .returning()
       const [unrated] = await tx
         .insert(positionRating)
-        .values({ scoreId: score.id, requirementId: ids.requirementId, coverage: null })
+        .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: null })
         .returning()
       const [zero] = await tx
         .insert(positionRating)
-        .values({ scoreId: score.id, requirementId: second?.id as number, coverage: 0 })
+        .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: second?.id as number, coverage: 0 })
         .returning()
       return { unrated, zero }
     })
@@ -117,7 +117,7 @@ describe('scores, ratings and penalties', () => {
           .values({ criteriaSetId: ids.setId, key, label: key, anchors: ANCHORS })
           .returning()
         return thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionRating).values({ scoreId: score.id, requirementId: req?.id as number, coverage }),
+          inner.insert(positionRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: req?.id as number, coverage }),
         )
       }
       return {
@@ -225,6 +225,92 @@ describe('scores, ratings and penalties', () => {
   })
 })
 
+describe('a score only holds what belongs to its own criteria set', () => {
+  /** A second set with one requirement of its own, to be the wrong set. */
+  async function otherSetRequirement(tx: Tx, token: string) {
+    const [otherSet] = await tx.insert(criteriaSet).values({ name: `test-set-${token}`, version: 2 }).returning()
+    const [req] = await tx
+      .insert(requirement)
+      .values({ criteriaSetId: otherSet?.id as number, key: 'elsewhere', label: 'Elsewhere', anchors: ANCHORS })
+      .returning()
+    return { otherSetId: otherSet?.id as number, otherRequirementId: req?.id as number }
+  }
+
+  test('a rating for a requirement of another criteria set is rejected', async () => {
+    // Arrange / Act
+    const outcome = await rolledBack(async (tx, token) => {
+      const ids = await seed(tx, token)
+      const other = await otherSetRequirement(tx, token)
+      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const rate = (criteriaSetId: number, requirementId: number) =>
+        thrownInSavepoint(tx, (inner) =>
+          inner.insert(positionRating).values({ scoreId: score.id, criteriaSetId, requirementId, coverage: 1 }),
+        )
+      return {
+        // Claims its own set, but the requirement lives in the other one
+        wrongRequirement: await rate(ids.setId, other.otherRequirementId),
+        // Names the requirement's real set, but the score was made under a different one
+        wrongScore: await rate(other.otherSetId, other.otherRequirementId),
+        correct: await rate(ids.setId, ids.requirementId),
+      }
+    })
+
+    // Assert: both halves of the pair are enforced, and the matching case is unaffected
+    expect(violationText(outcome.wrongRequirement)).toContain('position_rating_set_requirement_fk')
+    expect(violationText(outcome.wrongScore)).toContain('position_rating_score_set_fk')
+    expect(outcome.correct).toBeUndefined()
+  })
+
+  test('a limiter or runner-up from another criteria set is rejected', async () => {
+    // Arrange / Act
+    const outcome = await rolledBack(async (tx, token) => {
+      const ids = await seed(tx, token)
+      const other = await otherSetRequirement(tx, token)
+      const base = { positionId: ids.positionId, criteriaSetId: ids.setId }
+      const attempt = (day: string, extra: { limiterRequirementId?: number; runnerUpRequirementId?: number }) =>
+        thrownInSavepoint(tx, (inner) => inner.insert(positionScore).values({ ...base, scoredAt: day, ...extra }))
+      return {
+        limiter: await attempt('2026-02-01', { limiterRequirementId: other.otherRequirementId }),
+        runnerUp: await attempt('2026-02-02', { runnerUpRequirementId: other.otherRequirementId }),
+        own: await attempt('2026-02-03', {
+          limiterRequirementId: ids.requirementId,
+          runnerUpRequirementId: ids.requirementId,
+        }),
+      }
+    })
+
+    // Assert: a limiter naming a requirement outside the scored set would be a wrong answer with no error
+    expect(violationText(outcome.limiter)).toContain('position_score_limiter_set_fk')
+    expect(violationText(outcome.runnerUp)).toContain('position_score_runner_up_set_fk')
+    expect(outcome.own).toBeUndefined()
+  })
+
+  test('a penalty needs a kind, and a kind applies once per score', async () => {
+    // Arrange / Act
+    const outcome = await rolledBack(async (tx, token) => {
+      const ids = await seed(tx, token)
+      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const [kind] = await tx.insert(penaltyKind).values({ label: `test-kind-${token}` }).returning()
+      const kindId = kind?.id as number
+      const missing = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(positionPenalty).values({ scoreId: score.id, amount: -0.1 } as never),
+      )
+      const first = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.1 }),
+      )
+      const again = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.2 }),
+      )
+      return { missing, first, again }
+    })
+
+    // Assert: an empty registry means no penalty rows, not penalty rows without a kind
+    expect(violationText(outcome.missing)).toContain('penalty_kind_id')
+    expect(outcome.first).toBeUndefined()
+    expect(violationText(outcome.again)).toContain('position_penalty_score_kind_unique')
+  })
+})
+
 describe('numeric columns read back as numbers', () => {
   test('a stored coverage is a number the rating schema accepts', async () => {
     // Arrange / Act
@@ -233,7 +319,7 @@ describe('numeric columns read back as numbers', () => {
       const score = await insertScore(tx, ids.positionId, ids.setId)
       await tx
         .insert(positionRating)
-        .values({ scoreId: score.id, requirementId: ids.requirementId, coverage: 0.35, confidence: 'supported' })
+        .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: 0.35, confidence: 'supported' })
       const [rating] = await tx.select().from(positionRating).where(eq(positionRating.scoreId, score.id))
       return rating as NonNullable<typeof rating>
     })
@@ -320,7 +406,7 @@ describe('numeric columns read back as numbers', () => {
 })
 
 describe('the score tables keep the schema free of vocabulary', () => {
-  test('no table here has a column named for a criterion, and the penalty kind is nullable', async () => {
+  test('no table here has a column named for a criterion, and a penalty always has a kind', async () => {
     // Arrange / Act
     const columns = await rolledBack(async (tx) => {
       const result = await tx.execute(sql`
@@ -336,7 +422,7 @@ describe('the score tables keep the schema free of vocabulary', () => {
     expect(names).not.toContain('penalty_fintech')
     expect(names).not.toContain('problem_type')
     const kind = columns.find((column) => column.table_name === 'position_penalty' && column.column_name === 'penalty_kind_id')
-    expect(kind?.is_nullable).toBe('YES')
+    expect(kind?.is_nullable).toBe('NO')
     const coverage = columns.find((column) => column.table_name === 'position_rating' && column.column_name === 'coverage')
     expect(coverage?.is_nullable).toBe('YES')
   })

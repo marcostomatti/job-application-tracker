@@ -1,5 +1,5 @@
 {
-  "id": "e85d33b7-95f1-4a03-b935-44f64d7d6f30",
+  "id": "8ccf5b95-52ac-47b1-8e2d-5b47307b1a2b",
   "prevId": "34be10d7-cdad-4ad1-954f-33fc51a2220c",
   "version": "7",
   "dialect": "postgresql",
@@ -292,6 +292,14 @@
           "columns": [
             "criteria_set_id",
             "key"
+          ]
+        },
+        "requirement_criteria_set_id_id_unique": {
+          "name": "requirement_criteria_set_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "criteria_set_id",
+            "id"
           ]
         }
       },
@@ -1410,7 +1418,7 @@
           "name": "penalty_kind_id",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "amount": {
           "name": "amount",
@@ -1485,6 +1493,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "criteria_set_id": {
+          "name": "criteria_set_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "requirement_id": {
           "name": "requirement_id",
           "type": "integer",
@@ -1513,27 +1527,31 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "position_rating_score_id_position_score_id_fk": {
-          "name": "position_rating_score_id_position_score_id_fk",
+        "position_rating_score_set_fk": {
+          "name": "position_rating_score_set_fk",
           "tableFrom": "position_rating",
           "tableTo": "position_score",
           "columnsFrom": [
-            "score_id"
+            "score_id",
+            "criteria_set_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "criteria_set_id"
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "position_rating_requirement_id_requirement_id_fk": {
-          "name": "position_rating_requirement_id_requirement_id_fk",
+        "position_rating_set_requirement_fk": {
+          "name": "position_rating_set_requirement_fk",
           "tableFrom": "position_rating",
           "tableTo": "requirement",
           "columnsFrom": [
+            "criteria_set_id",
             "requirement_id"
           ],
           "columnsTo": [
+            "criteria_set_id",
             "id"
           ],
           "onDelete": "no action",
@@ -1695,27 +1713,31 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "position_score_limiter_requirement_id_requirement_id_fk": {
-          "name": "position_score_limiter_requirement_id_requirement_id_fk",
+        "position_score_limiter_set_fk": {
+          "name": "position_score_limiter_set_fk",
           "tableFrom": "position_score",
           "tableTo": "requirement",
           "columnsFrom": [
+            "criteria_set_id",
             "limiter_requirement_id"
           ],
           "columnsTo": [
+            "criteria_set_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "position_score_runner_up_requirement_id_requirement_id_fk": {
-          "name": "position_score_runner_up_requirement_id_requirement_id_fk",
+        "position_score_runner_up_set_fk": {
+          "name": "position_score_runner_up_set_fk",
           "tableFrom": "position_score",
           "tableTo": "requirement",
           "columnsFrom": [
+            "criteria_set_id",
             "runner_up_requirement_id"
           ],
           "columnsTo": [
+            "criteria_set_id",
             "id"
           ],
           "onDelete": "no action",
@@ -1731,6 +1753,14 @@
             "position_id",
             "criteria_set_id",
             "scored_at"
+          ]
+        },
+        "position_score_id_criteria_set_unique": {
+          "name": "position_score_id_criteria_set_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "criteria_set_id"
           ]
         }
       },
