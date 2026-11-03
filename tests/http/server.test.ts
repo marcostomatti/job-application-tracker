@@ -10,6 +10,7 @@ import { join } from 'node:path'
 
 import type { ServiceHandle } from '@open-tomato/service-express'
 
+import { generateApiKey } from '../../src/auth/api-key.ts'
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
 import { startService } from '../../src/http/server.ts'
@@ -159,12 +160,20 @@ describe('startService', () => {
   test.each([
     ['unset', undefined],
     ['empty', ''],
-  ])('with API_KEY %s, refuses to start and opens nothing', async (_label, value) => {
+  ])('with API_KEY %s, refuses to start before the database or any listener is touched', async (_label, value) => {
     restore('API_KEY', value)
+    // With the database unreachable, a key check that ran after the pool started would surface
+    // the database failure instead of the key's, so the message tells the two orders apart.
+    process.env.DATABASE_URL = `postgres://tracker:unused@localhost:${await unusedPort()}/tracker`
+    await closeDb()
     const listen = spyOn(express.application, 'listen')
 
     try {
-      await expect(startService()).rejects.toThrow(/API_KEY/)
+      const failure = await startService().catch((error: unknown) => error)
+
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toMatch(/API_KEY/)
+      expect((failure as Error).message).not.toMatch(/database/i)
       expect(listen).not.toHaveBeenCalled()
     } finally {
       listen.mockRestore()
@@ -172,13 +181,17 @@ describe('startService', () => {
     expect(typeof express.application.listen).toBe('function')
   })
 
-  test('the refusal names the fix and does not echo any key', async () => {
+  test('the refusal names the fix', async () => {
     restore('API_KEY', undefined)
 
     const failure = await startService().catch((error: unknown) => error)
 
     expect(failure).toBeInstanceOf(Error)
     expect((failure as Error).message).toContain('setApiKey')
+  })
+
+  test.each([0, 70_000, 80.5, Number.NaN])('refuses a port option of %s before opening anything', async (port) => {
+    await expect(startService({ port })).rejects.toThrow(/port option/)
   })
 
   test.each(['abc', '0', '70000', '80.5'])('refuses a PORT of %s before opening anything', async (value) => {
@@ -228,6 +241,64 @@ describe('startService', () => {
     expect(failure).toBeInstanceOf(Error)
     expect(String((failure as Error).message)).not.toContain(password)
     expect(String((failure as Error).message)).not.toContain('postgres://')
+  })
+
+  describe('what the service logs', () => {
+    /** A made-up key and a made-up wrong token, built at run time so no key-shaped literal is committed. */
+    const LOG_KEY = 'log-probe-key-'.concat('k'.repeat(40))
+    const WRONG_TOKEN = 'log-probe-wrong-'.concat('w'.repeat(40))
+
+    /** Runs the probe fixture with the given key and returns everything it wrote, parsed one JSON line at a time. */
+    async function probe(apiKey: string): Promise<{ readonly raw: string; readonly entries: readonly Record<string, unknown>[] }> {
+      const child = Bun.spawn(['bun', join(import.meta.dir, 'fixtures/probe-service.ts')], {
+        env: { ...process.env, API_KEY: apiKey, PROBE_WRONG_TOKEN: WRONG_TOKEN, NODE_ENV: 'test' },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const [out, err, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect(code).toBe(0)
+      const raw = `${out}\n${err}`
+      const entries = raw
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+      return { raw, entries }
+    }
+
+    test('no log line carries the key or a presented token while an authorized and an unauthorized request are served', async () => {
+      const { raw, entries } = await probe(LOG_KEY)
+
+      expect(entries.length).toBeGreaterThan(0)
+      expect(entries.some((entry) => entry.msg === 'request completed')).toBe(true)
+      expect(raw).not.toContain(LOG_KEY)
+      expect(raw).not.toContain(WRONG_TOKEN)
+    }, 30_000)
+
+    test('a key shorter than a generated one starts the service and warns, naming neither key nor length', async () => {
+      const shortKey = 'short-probe-key'
+
+      const { raw, entries } = await probe(shortKey)
+
+      const warnings = entries.filter((entry) => entry.level === 40)
+      expect(warnings).toHaveLength(1)
+      const extras = Object.keys(warnings[0] ?? {}).filter(
+        (name) => !['level', 'time', 'pid', 'hostname', 'service', 'msg'].includes(name),
+      )
+      expect(extras).toEqual([])
+      expect(String(warnings[0]?.msg)).toMatch(/shorter/)
+      expect(String(warnings[0]?.msg)).not.toMatch(/\d/)
+      expect(raw).not.toContain(shortKey)
+    }, 30_000)
+
+    test('a key as long as a generated one draws no warning', async () => {
+      const { entries } = await probe(generateApiKey())
+
+      expect(entries.filter((entry) => entry.level === 40)).toEqual([])
+    }, 30_000)
   })
 
   describe('the web bundle', () => {

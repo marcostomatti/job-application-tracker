@@ -69,11 +69,15 @@ threshold set, and `seed:pack` refuses such a file too.
 `bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
 
 ```sh
-bun run setApiKey --burn-after-reading   # once: writes API_KEY into .env
+bun run setApiKey --burn-after-reading   # once: writes API_KEY into .env, shows it once, then clears the screen
 bun run serve
 curl -s localhost:3000/health
-curl -s -H "Authorization: Bearer $API_KEY" localhost:3000/api/positions
+curl -s -H "Authorization: Bearer <the key setApiKey showed you>" localhost:3000/api/positions
 ```
+
+Paste the key the script showed you into that last command; that is why it shows the key once
+and then clears the screen. The script writes the key into `.env`, which the service reads. A
+shell does not read `.env`, so a shell variable named `API_KEY` is empty unless you set it yourself.
 
 **It will not start without an `API_KEY`.** The package that runs the service listens on
 **every network interface** and has no setting for a host, so a service with no key would hand

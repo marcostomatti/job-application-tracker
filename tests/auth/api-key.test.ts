@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { generateApiKey, verifyApiKey } from '../../src/auth/api-key.ts'
+import { GENERATED_KEY_LENGTH, generateApiKey, verifyApiKey } from '../../src/auth/api-key.ts'
 
 /** A stand-in secret built at run time, so no key-shaped literal sits in the repository. */
 const EXPECTED = 'stand-in-secret-'.concat('a'.repeat(24))
@@ -21,6 +21,10 @@ describe('generateApiKey', () => {
     // 32 bytes is 43 base64url characters without padding.
     expect(body).toHaveLength(43)
     expect(Buffer.from(body, 'base64url')).toHaveLength(32)
+  })
+
+  test('GENERATED_KEY_LENGTH is the length of a generated key', () => {
+    expect(generateApiKey()).toHaveLength(GENERATED_KEY_LENGTH)
   })
 })
 

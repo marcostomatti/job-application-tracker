@@ -6,6 +6,7 @@ import { createLogger } from '@open-tomato/service-logger'
 import { sql } from 'drizzle-orm'
 import express from 'express'
 
+import { GENERATED_KEY_LENGTH } from '../auth/api-key.ts'
 import { requireApiKey } from '../auth/middleware.ts'
 import { closeDb, getDb } from '../data/client.ts'
 import { mountRoutes } from './routes/index.ts'
@@ -55,16 +56,30 @@ function requiredApiKey(env: NodeJS.ProcessEnv): string {
   return key
 }
 
-/** The port from the caller, else `PORT`, else the default; a `PORT` that is not a port number is refused. */
-function resolvePort(requested: number | undefined, env: NodeJS.ProcessEnv): number {
-  if (requested !== undefined) return requested
-  const raw = env.PORT
-  if (raw === undefined || raw === '') return DEFAULT_PORT
-  const port = Number(raw)
+/** Refuses anything but a whole number from 1 to 65,535. `what` names the setting in the message. */
+function assertPort(port: number, what: string): number {
   if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) {
-    throw new Error(`PORT must be a whole number from 1 to ${MAX_PORT}`)
+    throw new Error(`${what} must be a whole number from 1 to ${MAX_PORT}`)
   }
   return port
+}
+
+/** The port from the caller, else `PORT`, else the default; a port that is not a port number is refused. */
+function resolvePort(requested: number | undefined, env: NodeJS.ProcessEnv): number {
+  if (requested !== undefined) return assertPort(requested, 'the port option')
+  const raw = env.PORT
+  if (raw === undefined || raw === '') return DEFAULT_PORT
+  return assertPort(Number(raw), 'PORT')
+}
+
+/**
+ * Whether the key is shorter than one `setApiKey` makes. Short keys are allowed, because a
+ * hand-edited `.env` is the user's to write and a floor is a policy choice, but a short key on
+ * a service bound to every interface is worth a warning. Only the comparison is made here: the
+ * key and its length are never returned or logged.
+ */
+function isShorterThanGenerated(key: string): boolean {
+  return key.length < GENERATED_KEY_LENGTH
 }
 
 /**
@@ -112,6 +127,12 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
     rateLimit: RATE_LIMIT,
     dependencies: [postgresDependency(db)],
     register: (app, { logger }) => {
+      if (isShorterThanGenerated(apiKey)) {
+        logger.warn(
+          'API_KEY is shorter than the keys `bun run setApiKey` makes, and the service listens on every ' +
+            'network interface; run `bun run setApiKey --burn-after-reading` to replace it with a strong one.',
+        )
+      }
       app.use('/api', requireApiKey(apiKey))
       mountRoutes(app, db)
       if (existsSync(webDist)) {

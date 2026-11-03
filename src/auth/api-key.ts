@@ -6,6 +6,9 @@ const KEY_PREFIX = 'jat_'
 /** The random bytes in a key: 256 bits, past any online or offline guessing. */
 const KEY_BYTES = 32
 
+/** The length of every generated key: the prefix, then 32 bytes as unpadded base64url (6 bits a character). */
+export const GENERATED_KEY_LENGTH = KEY_PREFIX.length + Math.ceil((KEY_BYTES * 8) / 6)
+
 /**
  * A new API key: 32 bytes from the platform's cryptographic generator, base64url-encoded
  * (URL and header safe, no padding) behind the `jat_` prefix. The caller stores it; this
