@@ -134,19 +134,36 @@ guess wearing a price tag).
 | Source files under 800 lines, functions under 50, immutable updates, no deep nesting | `~/.claude/rules/common/coding-style.md` |
 | 80% test coverage, TDD | `~/.claude/rules/common/testing.md` |
 
-### Open constraint, blocking the service layer
+### Resolved: the package pins
 
-Whether to pin the published `@open-tomato` service packages from npm,
-or build against the local unreleased `feat/v2-core` branch. This is
-with Marcos through the other session.
+Pin the published packages from npm. Verified against the registry on
+2026-11-03:
 
-The builder check found the question is **wider than first stated**: the
-local checkout's packages are named `service-core`, `mcp` and `express`
-at 0.1.1, while the brief refers to `service`, `service-mcp` and
-`service-express` at 1.0.2. So the answer settles package *names* as
-well as versions, and the import lines cannot be written from either
-guess. **No import of those packages is written until it lands.**
-Everything in §6 to §10 is independent of the answer.
+```json
+"@open-tomato/service":         "^1.0.1",
+"@open-tomato/service-mcp":     "^1.0.1",
+"@open-tomato/service-express": "^1.0.2",
+"@open-tomato/service-logger":  "^1.0.0"
+```
+
+Caret ranges pick up the pending releases when they land. **Do not
+depend on `@open-tomato/service-errors`**, which exists only as an
+unpublished 0.0.0 package on a local branch.
+
+The builder check reported these packages as `service-core`, `mcp` and
+`express` at 0.1.1. The mechanism, recorded so it does not recur: there
+are two codebases. The standalone repo behind `github.com/open-tomato/service`
+is the one that publishes to npm, and its workspace packages carry the
+names above. A second, older in-monorepo copy under
+`open-tomato/packages/service/` names its packages `service-core`,
+`mcp`, `express`, `orchestration` and `worker-protocol` at 0.1.1, none
+ever published, and three stale worktrees hold copies of that same tree —
+which is why the wrong names turn up more than once.
+
+**Read package names from npm or from the standalone repo, never from
+the monorepo copy.** Local `package.json` files also run ahead of the
+registry (the branch says 1.0.2 where npm serves 1.0.1), so the registry
+is the source for versions.
 
 ---
 
@@ -734,6 +751,40 @@ one route per MCP tool the UI needs — about twenty.
 The app is served by the same Bun process as the API, so there is one
 origin, one port and no CORS configuration in the template.
 
+**Express rather than Next.js with server-side rendering**, decided
+2026-11-03 and recorded because it is the kind of question that gets
+reopened.
+
+The measurement first: in the existing PoC the whole list view
+serialises to 141,406 bytes of JSON for 106 positions — about 1.3 KB per
+row, roughly 25 KB gzipped, over loopback. At that size there is no
+payload worth withholding.
+
+The decisive argument is the interaction shape rather than the size. The
+cards are static in content but not in placement: sorting and filtering
+run client-side across the full row set, so a card cannot be an
+independently cached server fragment when its row position depends on
+client state, and the client needs every row regardless. The table's
+sorting, the board's drag-and-drop and the filter bar are all
+interactive, so under Next.js they would be client components anyway and
+would opt out of the feature being considered. The other wins are
+absent: no SEO value on a loopback binding, no network latency to hide,
+no shared cache with one user. Re-scoring argues the same way — it
+touches a handful of rows, and refetching the whole list costs 25 KB.
+
+**The threshold where this flips, as a number rather than a feeling:**
+at 1.3 KB per row, around 5,000 positions the list payload reaches about
+6.5 MB and shipping it all becomes the bottleneck. The fix then is
+server-side sorting, filtering and pagination in SQL behind the same
+Express API, which is framework-independent. SSR would only become right
+if the app also went hosted and multi-user, which §3 rules out.
+
+Against that, Next.js would have cost three concrete things: Storybook
+and visual-regression baselines are more awkward across server-component
+boundaries, which fights the one-story-per-variant rule in §5; two build
+systems where one process serves the API, the MCP transport and the
+static bundle; and its adapter does not exist in published form.
+
 ### 11.3 Capture: agent paste
 
 **The shipped default is agent paste.** The user opens a posting and
@@ -955,8 +1006,8 @@ Each step is testable before the next begins.
 5. **Origins and routes** (§7.7), with the first-touch test: one position
    with three origins where a backdated conversation must win, then the
    same after deleting it.
-6. **Auth and the MCP surface** (§11.1, §12.1) — blocked on the package
-   question in §5.
+6. **Auth and the MCP surface** (§11.1, §12.1), on the pinned packages
+   in §5.
 7. **The internal HTTP layer** (§11.2), one route per tool the UI needs.
 8. **Backups** (§12.2).
 9. **The web app** (§13), board and grid first.
@@ -997,6 +1048,8 @@ Steps 10 to 12 are parallelisable with 9 once step 5 lands.
 | 2026-11-03 | Capture ships as agent paste only |
 | 2026-11-03 | Both Stats halves in this build, cost acknowledged |
 | 2026-11-03 | Compose plus documented setup; no published image in this build |
+| 2026-11-03 | Pin the published `@open-tomato` packages from npm, per §5 |
+| 2026-11-03 | Express serving a bundled React UI, not Next.js with SSR, per §11.2 |
 
 ## 19. Settled by the design session, flagged for checking
 

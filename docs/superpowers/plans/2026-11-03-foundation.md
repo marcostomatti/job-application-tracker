@@ -837,6 +837,7 @@ an invented fixture, and whose first-touch derivation agrees with its own
 SQL view. That is the scaffold that runs.
 
 The three plans that follow: **service** (auth, the MCP surface, the
-internal HTTP layer, backups — blocked on the package question in spec
-§5), **web app** (board, grid, modal, criteria settings), and **market
-stats** (claims, thresholds, four importers, the Stats surface).
+internal HTTP layer, backups — unblocked as of 2026-11-03, on the
+package pins in spec §5), **web app** (board, grid, modal, criteria
+settings), and **market stats** (claims, thresholds, four importers, the
+Stats surface).
