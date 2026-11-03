@@ -41,7 +41,8 @@ export async function listCriteriaSets(db: Db, opts: ListCriteriaSetsOptions = {
     .orderBy(desc(criteriaSet.createdAt), desc(criteriaSet.id))
 }
 
-async function findSet(db: Db, id: number): Promise<CriteriaSetRow> {
+/** One criteria set by id; one that does not exist is `NotFoundError`. */
+export async function findCriteriaSet(db: Db, id: number): Promise<CriteriaSetRow> {
   const [found] = await db.select().from(criteriaSet).where(eq(criteriaSet.id, id))
   if (!found) throw new NotFoundError('criteria set', id)
   return found
@@ -74,7 +75,7 @@ async function readRequirementRows(db: Db, condition: SQL): Promise<RequirementR
  * "nothing in it yet" and "no such set" stay different answers.
  */
 export async function getRequirements(db: Db, criteriaSetId: number): Promise<RequirementRow[]> {
-  await findSet(db, criteriaSetId)
+  await findCriteriaSet(db, criteriaSetId)
   return readRequirementRows(db, eq(requirement.criteriaSetId, criteriaSetId))
 }
 
@@ -152,7 +153,7 @@ export async function createCriteriaVersion(
 ): Promise<CriteriaSetRow> {
   return db.transaction(async (tx) => {
     await lockEverySet(tx)
-    const source = await findSet(tx, input.fromSetId)
+    const source = await findCriteriaSet(tx, input.fromSetId)
     const name = input.name ?? source.name
     const created = await insertCriteriaSet(tx, {
       name,
@@ -214,7 +215,7 @@ async function lockEverySet(db: Db): Promise<void> {
 export async function setDefaultCriteriaSet(db: Db, id: number): Promise<void> {
   await db.transaction(async (tx) => {
     await lockEverySet(tx)
-    const target = await findSet(tx, id)
+    const target = await findCriteriaSet(tx, id)
     if (target.archivedAt !== null) throw new ArchivedError('criteria set', id)
     await tx.update(criteriaSet).set({ isDefault: false }).where(eq(criteriaSet.isDefault, true))
     await tx.update(criteriaSet).set({ isDefault: true }).where(eq(criteriaSet.id, id))
