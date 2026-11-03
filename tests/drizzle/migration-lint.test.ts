@@ -281,9 +281,50 @@ describe('migration lint', () => {
   test('forbids CREATE FUNCTION, CREATE TRIGGER and DO blocks, and ignores the words elsewhere', () => {
     const bad = lintMigrations(isolate('evade-function-body.sql'))
     const legit = lintMigrations(isolate('routine-lookalikes.sql'))
+    const upsert = lintMigrations(isolate('on-conflict-do.sql'))
 
     expect(bad.map((finding) => finding.rule)).toEqual(Array(3).fill('forbidden-routine'))
     expect(bad.map((finding) => finding.line)).toEqual([1, 2, 3])
+    // CREATE VIEW and CREATE OR REPLACE VIEW are not routines.
     expect(legit).toEqual([])
+    // ON CONFLICT DO NOTHING / DO UPDATE is a seed INSERT, not a DO block.
+    expect(upsert.map((finding) => finding.rule)).toEqual(['registry-seed', 'registry-seed'])
+  })
+
+  test('rejects a view output alias named after vocabulary, and allows clean aliases', () => {
+    const bad = lintMigrations(isolate('evade-view-alias.sql'))
+    const legit = lintMigrations(isolate('structural-view.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['named-column', 'named-column'])
+    expect(bad.map((finding) => finding.line)).toEqual([1, 2])
+    expect(legit).toEqual([])
+  })
+
+  test('rejects dollar-quoted vocabulary in DEFAULT, CHECK, GENERATED, ENUM, ADD/RENAME VALUE and an index, and allows structural ones', () => {
+    const bad = lintMigrations(isolate('evade-dollar-literals.sql'))
+    const legit = lintMigrations(isolate('structural-dollar.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(Array(8).fill('vocabulary-in-check'))
+    expect(bad.map((finding) => finding.line)).toEqual([3, 4, 5, 6, 8, 9, 10, 11])
+    expect(legit).toEqual([])
+  })
+
+  test('does not scan a dollar-quoted COMMENT ON text as DEFAULT, CHECK, ENUM or CREATE FUNCTION', () => {
+    expect(lintMigrations(isolate('dollar-comment-text.sql'))).toEqual([])
+  })
+
+  test('allows interval, date_trunc, to_char, AT TIME ZONE utc, infinity, epoch, 1e-3 and true, but not look-alikes', () => {
+    const legit = lintMigrations(isolate('structural-values.sql'))
+    const bad = lintMigrations(isolate('evade-lookalike-values.sql'))
+
+    expect(legit).toEqual([])
+    expect(bad.map((finding) => finding.line)).toEqual([2, 3, 4])
+  })
+
+  test('rejects a TEMP or UNLOGGED table and a RENAME CONSTRAINT named after vocabulary', () => {
+    const findings = lintMigrations(isolate('evade-temp-names.sql'))
+
+    expect(findings.map((finding) => finding.rule)).toEqual(Array(3).fill('named-object'))
+    expect(findings.map((finding) => finding.line)).toEqual([1, 2, 3])
   })
 })

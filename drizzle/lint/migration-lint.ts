@@ -7,8 +7,16 @@ import {
   DENIED_SUBSTRINGS,
   EMPTY_VALUE_LITERALS,
   PLACEHOLDER_COMPANY_NAMES,
+  SPECIAL_VALUE_LITERALS,
   STRUCTURAL_VALUE_PATTERNS,
 } from './forbidden'
+
+/*
+ * Known limits, left unscanned on purpose: CREATE DOMAIN and CREATE POLICY
+ * bodies, `UPDATE ... SET x = 'literal'` (a backfill is allowed), a view's
+ * implicit alias with no AS, and CTE names. Functions, procedures, triggers
+ * and DO blocks are forbidden outright instead (see `routineFindings`).
+ */
 
 export type LintRule =
   | 'vocabulary-in-check'
@@ -60,6 +68,7 @@ export function splitCodeAndComments(sql: string): SplitSql {
   while (i < sql.length) {
     const char = sql[i] as string
     const next = sql[i + 1]
+    const tag = dollarTagAt(sql, i)
     if (char === '-' && next === '-') {
       const end = sql.indexOf('\n', i)
       const stop = end === -1 ? sql.length : end
@@ -73,8 +82,8 @@ export function splitCodeAndComments(sql: string): SplitSql {
       comments += block
       code += [...block].map(blank).join('')
       i = stop
-    } else if (char === "'" || char === '"') {
-      const stop = endOfQuoted(sql, i, char)
+    } else if (char === "'" || char === '"' || tag) {
+      const stop = tag ? endOfLiteral(sql, i) : endOfQuoted(sql, i, char)
       const quoted = sql.slice(i, stop)
       code += quoted
       comments += [...quoted].map(blank).join('')
@@ -100,15 +109,38 @@ function endOfQuoted(text: string, start: number, quote: string): number {
   return text.length
 }
 
-/** The code with the inside of every single-quoted string blanked, so a string cannot pass for a statement. */
+/** The `$tag$` that opens a dollar-quoted string at `index`, if one does. */
+function dollarTagAt(text: string, index: number): string | undefined {
+  if (text[index] !== '$') return undefined
+  return /^\$[A-Za-z_]*\$/.exec(text.slice(index, index + 64))?.[0]
+}
+
+/** Index just past the string literal opened at `open`: single-quoted or dollar-quoted. */
+function endOfLiteral(text: string, open: number): number {
+  const tag = dollarTagAt(text, open)
+  if (!tag) return endOfQuoted(text, open, "'")
+  const close = text.indexOf(tag, open + tag.length)
+  return close === -1 ? text.length : close + tag.length
+}
+
+/**
+ * The code with the inside of every single-quoted and dollar-quoted string
+ * blanked, so a string cannot pass for a statement. The quotes and tags stay,
+ * and so does every offset.
+ */
 function blankStrings(code: string): string {
   let result = ''
   let i = 0
   while (i < code.length) {
     const char = code[i] as string
-    const stop = char === "'" || char === '"' ? endOfQuoted(code, i, char) : i + 1
+    const tag = dollarTagAt(code, i)
+    const stop = tag || char === "'" || char === '"' ? (tag ? endOfLiteral(code, i) : endOfQuoted(code, i, char)) : i + 1
     const piece = code.slice(i, stop)
-    if (char === "'") {
+    if (tag) {
+      const closed = piece.length >= tag.length * 2 && piece.endsWith(tag)
+      const inner = piece.slice(tag.length, closed ? piece.length - tag.length : undefined)
+      result += `${tag}${[...inner].map(blank).join('')}${closed ? tag : ''}`
+    } else if (char === "'") {
       const closed = piece.length > 1 && piece.endsWith("'")
       const inner = closed ? piece.slice(1, -1) : piece.slice(1)
       result += `'${[...inner].map(blank).join('')}${closed ? "'" : ''}`
@@ -192,9 +224,10 @@ const isDiscriminator = (value: string): boolean => ALLOWED_STRUCTURAL_LITERALS.
 const isStructuralValue = (value: string): boolean =>
   isDiscriminator(value) ||
   EMPTY_VALUE_LITERALS.includes(value) ||
+  SPECIAL_VALUE_LITERALS.includes(value) ||
   STRUCTURAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
 
-/** Every single-quoted literal in `text[from, to)` that `isAllowed` rejects. */
+/** Every single-quoted or dollar-quoted literal in `text[from, to)` that `isAllowed` rejects. */
 function vocabularyLiterals(
   text: string,
   from: number,
@@ -202,8 +235,8 @@ function vocabularyLiterals(
   isAllowed: (value: string) => boolean = isDiscriminator,
 ): Literal[] {
   const offending: Literal[] = []
-  for (const literal of text.slice(from, to).matchAll(/'((?:[^']|'')*)'/g)) {
-    const value = literal[1] as string
+  for (const literal of text.slice(from, to).matchAll(/'((?:[^']|'')*)'|(\$[A-Za-z_]*\$)([\s\S]*?)\2/g)) {
+    const value = literal[1] ?? literal[3] ?? ''
     if (!isAllowed(value)) offending.push({ value, index: from + literal.index })
   }
   return offending
@@ -222,28 +255,37 @@ function vocabularyFinding(file: string, code: string, construct: string, offend
 
 /**
  * The closed sets: `CHECK (...)` bodies, `CREATE TYPE ... AS ENUM (...)`
- * bodies and `ALTER TYPE ... ADD VALUE '...'` / `RENAME VALUE ... TO '...'`. Drizzle's `pgEnum` emits the
- * enum forms, so they hold vocabulary just as a CHECK does.
+ * bodies, `ALTER TYPE ... ADD VALUE '...'` and `RENAME VALUE ... TO '...'`.
+ * Drizzle's `pgEnum` emits the enum forms, so they hold vocabulary just as a
+ * CHECK does. Positions come from `stringless`, literals from `code`.
  */
-function closedSetFindings(code: string, file: string): LintFinding[] {
+function closedSetFindings(code: string, stringless: string, file: string): LintFinding[] {
   const findings: LintFinding[] = []
   const openers: [RegExp, string][] = [[/\bCHECK\s*\(/gi, 'CHECK'], [/\bENUM\s*\(/gi, 'ENUM']]
   for (const [pattern, construct] of openers) {
-    for (const match of code.matchAll(pattern)) {
+    for (const match of stringless.matchAll(pattern)) {
       const open = match.index + match[0].length - 1
-      const offending = vocabularyLiterals(code, open, closingParen(code, open) + 1)
+      const offending = vocabularyLiterals(code, open, closingParen(stringless, open) + 1)
       findings.push(...vocabularyFinding(file, code, construct, offending))
     }
   }
-  for (const match of code.matchAll(/\bADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?'/gi)) {
-    const open = match.index + match[0].length - 1
-    const offending = vocabularyLiterals(code, open, endOfQuoted(code, open, "'"))
-    findings.push(...vocabularyFinding(file, code, 'ADD VALUE', offending))
-  }
-  for (const match of code.matchAll(/\bRENAME\s+VALUE\s+'(?:[^']|'')*'\s+TO\s+'/gi)) {
-    const open = match.index + match[0].length - 1
-    const offending = vocabularyLiterals(code, open, endOfQuoted(code, open, "'"))
-    findings.push(...vocabularyFinding(file, code, 'RENAME VALUE', offending))
+  const literalStart = String.raw`(?=['$])`
+  const values: [RegExp, string][] = [
+    [new RegExp(String.raw`\bADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?${literalStart}`, 'gi'), 'ADD VALUE'],
+    [
+      new RegExp(
+        String.raw`\bRENAME\s+VALUE\s+(?:'[^']*'|\$[A-Za-z_]*\$[^$]*\$[A-Za-z_]*\$)\s+TO\s+${literalStart}`,
+        'gi',
+      ),
+      'RENAME VALUE',
+    ],
+  ]
+  for (const [pattern, construct] of values) {
+    for (const match of stringless.matchAll(pattern)) {
+      const open = match.index + match[0].length
+      const offending = vocabularyLiterals(code, open, endOfLiteral(stringless, open))
+      findings.push(...vocabularyFinding(file, code, construct, offending))
+    }
   }
   return findings
 }
@@ -285,6 +327,10 @@ function endOfDefault(text: string, from: number): number {
 
 type Span = { construct: string; from: number; to: number }
 
+/** Words that may sit between CREATE and the object kind. */
+const CREATE_MODIFIERS = String.raw`(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMP|TEMPORARY|UNLOGGED|RECURSIVE|UNIQUE|MATERIALIZED)\s+)*`
+const CREATE_INDEX_OR_VIEW = new RegExp(String.raw`\bCREATE\s+${CREATE_MODIFIERS}(INDEX|VIEW)\b`, 'gi')
+
 /**
  * Expressions that can carry a literal without being a CHECK or an enum: a
  * column DEFAULT, a GENERATED ... AS (...) expression, and the whole of a
@@ -303,7 +349,7 @@ function expressionFindings(code: string, stringless: string, file: string): Lin
     const open = match.index + match[0].length - 1
     spans.push({ construct: 'GENERATED', from: open, to: closingParen(stringless, open) + 1 })
   }
-  for (const match of stringless.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(?:MATERIALIZED\s+)?(INDEX|VIEW)\b/gi)) {
+  for (const match of stringless.matchAll(CREATE_INDEX_OR_VIEW)) {
     const construct = (match[1] as string).toUpperCase()
     spans.push({ construct, from: match.index, to: endOfStatement(stringless, match.index) })
   }
@@ -318,12 +364,16 @@ const QUALIFIED_NAME = String.raw`(?:${IDENTIFIER})(?:\s*\.\s*(?:${IDENTIFIER}))
 const OBJECT_NAME_PATTERNS: { pattern: RegExp; kind?: string }[] = [
   {
     pattern: new RegExp(
-      String.raw`\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(?:MATERIALIZED\s+)?(TABLE|INDEX|TYPE|VIEW|SEQUENCE|SCHEMA)\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${QUALIFIED_NAME})`,
+      String.raw`\bCREATE\s+${CREATE_MODIFIERS}(TABLE|INDEX|TYPE|VIEW|SEQUENCE|SCHEMA)\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${QUALIFIED_NAME})`,
       'gi',
     ),
   },
   { pattern: new RegExp(String.raw`\bCONSTRAINT\s+(${QUALIFIED_NAME})`, 'gi'), kind: 'constraint' },
   { pattern: new RegExp(String.raw`\bRENAME\s+TO\s+(${QUALIFIED_NAME})`, 'gi'), kind: 'renamed object' },
+  {
+    pattern: new RegExp(String.raw`\bRENAME\s+CONSTRAINT\s+(?:${IDENTIFIER})\s+TO\s+(${QUALIFIED_NAME})`, 'gi'),
+    kind: 'constraint',
+  },
 ]
 
 /** A table, index, type, view, sequence, schema or constraint named after vocabulary. */
@@ -343,6 +393,33 @@ function objectNameFindings(code: string, file: string): LintFinding[] {
             detail: `${label} "${unquote(segment)}" is named after "${word}"`,
           })
         }
+      }
+    }
+  }
+  return findings
+}
+
+const NOT_ALIASES = new Set(['select', 'with', 'values', 'table', 'not', 'materialized'])
+
+/**
+ * A view's output aliases (`AS "name"`) are column names the view exposes, so
+ * they get the same denied-word check as a column. Drizzle emits `as "alias"`.
+ */
+function viewAliasFindings(stringless: string, file: string): LintFinding[] {
+  const findings: LintFinding[] = []
+  for (const view of stringless.matchAll(new RegExp(String.raw`\bCREATE\s+${CREATE_MODIFIERS}VIEW\b`, 'gi'))) {
+    const end = endOfStatement(stringless, view.index)
+    const body = stringless.slice(view.index, end)
+    for (const alias of body.matchAll(new RegExp(String.raw`\bAS\s+(${IDENTIFIER})`, 'gi'))) {
+      const name = unquote(alias[1] as string)
+      const word = NOT_ALIASES.has(name.toLowerCase()) ? undefined : deniedWord(name)
+      if (word) {
+        findings.push({
+          file,
+          line: lineOf(stringless, view.index + alias.index + alias[0].length - (alias[1] as string).length),
+          rule: 'named-column',
+          detail: `view alias "${name}" is named after "${word}"`,
+        })
       }
     }
   }
@@ -541,9 +618,10 @@ export function lintMigrations(dir: string, options: LintOptions = {}): LintFind
     const comments = withCommentOnText(split.code, split.comments)
     const stringless = blankStrings(split.code)
     return [
-      ...closedSetFindings(split.code, file),
+      ...closedSetFindings(split.code, stringless, file),
       ...expressionFindings(split.code, stringless, file),
       ...objectNameFindings(stringless, file),
+      ...viewAliasFindings(stringless, file),
       ...routineFindings(stringless, file),
       ...columnFindings(stringless, file),
       ...seedFindings(stringless, file),

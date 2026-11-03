@@ -42,13 +42,52 @@ export const ALLOWED_STRUCTURAL_LITERALS: readonly string[] = [
 export const EMPTY_VALUE_LITERALS: readonly string[] = ['', '{}', '[]']
 
 /**
+ * Special values and time units that Postgres and Drizzle emit as string
+ * literals and that carry no vocabulary: `'infinity'`, `'epoch'`, `'true'`,
+ * the `date_trunc` units, and the `utc` zone. A named zone such as a city is
+ * a jurisdiction, so only UTC and GMT are listed.
+ */
+export const SPECIAL_VALUE_LITERALS: readonly string[] = [
+  'infinity',
+  '-infinity',
+  'epoch',
+  'now',
+  'today',
+  'tomorrow',
+  'yesterday',
+  'true',
+  'false',
+  'utc',
+  'UTC',
+  'GMT',
+  'microseconds',
+  'milliseconds',
+  'second',
+  'minute',
+  'hour',
+  'day',
+  'week',
+  'month',
+  'quarter',
+  'year',
+  'decade',
+  'century',
+  'millennium',
+]
+
+const INTERVAL_UNITS = String.raw`(?:microsecond|millisecond|second|minute|hour|day|week|month|year|decade|century|millennium)s?`
+
+/**
  * Literal shapes that cannot carry vocabulary: a number quoted as a string
- * (Drizzle writes `numeric().default('0.5')` that way) and an ISO date or
- * timestamp.
+ * (Drizzle writes `numeric().default('0.5')` that way, and `'1e-3'` is the
+ * same), an ISO date or timestamp, an interval such as `'7 days'` or
+ * `'1 year 2 months'`, and a `to_char` format such as `'YYYY-MM-DD'`.
  */
 export const STRUCTURAL_VALUE_PATTERNS: readonly RegExp[] = [
-  /^-?\d+(?:\.\d+)?$/,
+  /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/,
   /^\d{4}-\d{2}-\d{2}(?:[ T][\d:.+\-Z]+)?$/,
+  new RegExp(String.raw`^(?:\d+\s+${INTERVAL_UNITS}\s*)+$`, 'i'),
+  /^[YMDHISWQ0-9:.\/\- ]+$/,
 ]
 
 /**
