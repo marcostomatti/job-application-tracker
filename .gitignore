@@ -7,3 +7,6 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# subagent-driven-development workspace: briefs, reports, review packages
+.superpowers/
