@@ -23,17 +23,26 @@ import { route, type RouteSpec } from './spec.ts'
  * `criteria_requirement_update` names a requirement and nothing else, but the URL also names its
  * set. The set is checked, not ignored: a URL that says set 3 must not change a requirement of
  * set 4. `getRequirements` is `NotFoundError` for a set that is not there.
+ *
+ * The check and the write run in one transaction, because verifying ownership and then acting on
+ * it is a pair that should not be split across two connections' views. Nothing in this codebase
+ * re-parents a requirement (the update writes weight, kind, label and anchors only), so the
+ * membership the check reads cannot change underneath the write today; the transaction keeps the
+ * pair together should that ever change, though without a row lock it is not by itself an
+ * exclusion against a concurrent writer.
  */
 async function updateRequirementOfSet(
   db: Db,
   criteriaSetId: number,
   input: RequirementUpdateInput,
 ): Promise<unknown> {
-  const rows = await getRequirements(db, criteriaSetId)
-  if (!rows.some((row) => row.id === input.requirementId)) {
-    throw new NotFoundError(`criteria set ${criteriaSetId} requirement`, input.requirementId)
-  }
-  return updateRequirement(db, input.requirementId, input.patch)
+  return db.transaction(async (tx) => {
+    const rows = await getRequirements(tx, criteriaSetId)
+    if (!rows.some((row) => row.id === input.requirementId)) {
+      throw new NotFoundError(`criteria set ${criteriaSetId} requirement`, input.requirementId)
+    }
+    return updateRequirement(tx, input.requirementId, input.patch)
+  })
 }
 
 /** The routes over criteria sets, their requirements, the default set and the criteria mode. */

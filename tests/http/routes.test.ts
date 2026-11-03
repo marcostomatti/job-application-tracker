@@ -313,13 +313,25 @@ describe('the stage and disposition routes', () => {
     }
   })
 
-  test('POST /disposition keeps each reason to its own schema: a rejection takes no set-aside field', async () => {
-    const id = await newPositionId('Wrong field')
+  test('POST /disposition parses with the chosen tool schema, which is strict, so a stray field is refused by name', async () => {
+    const id = await newPositionId('Stray field')
 
-    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: 1, setAsideReasonId: undefined, extra: true })
+    const rejection = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: 1, extra: true })
+    const setAside = await live.request('POST', `/api/positions/${id}/disposition`, { setAsideReasonId: 1, extra: true })
+
+    expect([rejection.status, setAside.status]).toEqual([400, 400])
+    expect(errorOf(rejection).message).toContain('extra')
+    expect(errorOf(setAside).message).toContain('extra')
+  })
+
+  test('POST /disposition with both reasons, one of them null, is the both-reasons refusal and not a silent pick', async () => {
+    const id = await newPositionId('Null beside a reason')
+
+    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: 1, setAsideReasonId: null })
 
     expect(outcome.status).toBe(400)
-    expect(errorOf(outcome).message).toContain('extra')
+    expect(errorOf(outcome).message).toContain('setAsideReasonId')
+    expect(errorOf(outcome).message).toContain('rejectionReasonId')
   })
 
   test('POST /disposition refuses an archived reason with 409', async () => {
@@ -387,6 +399,30 @@ describe('the criteria and configuration routes', () => {
     expect(outcome.status).toBe(404)
     expect(errorOf(outcome).message).toBe(`criteria set ${stranger.setId} requirement ${owner.requirementId} does not exist`)
     expect(dataOf(unchanged)).toEqual([expect.objectContaining({ weight: 1 })])
+  })
+
+  test('PATCH a requirement runs its ownership check and its write inside one transaction', async () => {
+    const { setId, requirementId } = await arrangeSet(database(), 'Transactional edit')
+    let transactions = 0
+    const counting = new Proxy(database(), {
+      get(target, property, receiver) {
+        const value: unknown = Reflect.get(target, property, receiver)
+        if (property !== 'transaction' || typeof value !== 'function') return value
+        return (...args: unknown[]): unknown => {
+          transactions += 1
+          return Reflect.apply(value, target, args)
+        }
+      },
+    })
+    const counted = await startTestServer((app) => mountRoutes(app, counting))
+
+    try {
+      const outcome = await counted.request('PATCH', `/api/criteria-sets/${setId}/requirements/${requirementId}`, { patch: { weight: 4 } })
+      expect(outcome.status).toBe(200)
+      expect(transactions).toBe(1)
+    } finally {
+      await counted.close()
+    }
   })
 
   test('PATCH a requirement refuses a body that is the patch itself, naming the stray field', async () => {
