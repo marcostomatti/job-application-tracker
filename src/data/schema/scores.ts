@@ -122,6 +122,11 @@ export const positionRating = pgTable(
  * requirement, so it goes when the rating does, and the second key ties the detour to that
  * requirement, so a coverage cannot name a detour that is a way round some other requirement.
  * `coverage` reads like a rating's: null is not rated, which is different from 0.
+ *
+ * The key to `detour` is restrictive on purpose (no `ON DELETE`): a stored score's inputs must
+ * not vanish underneath it, or history would silently change meaning. It matches the key from
+ * `position_rating` to `requirement`. A surface that edits a set's detours must therefore retire
+ * one rather than delete it, which needs an archival column `detour` does not have yet.
  */
 export const positionRatingDetour = pgTable(
   'position_rating_detour',

@@ -56,7 +56,8 @@ export const PenaltyInputSchema = z.strictObject({
 
 export type PenaltyInput = z.infer<typeof PenaltyInputSchema>
 
-const detourIdsOf = (ratings: readonly RatingInput[]): number[] =>
+/** Every detour id a call gives a coverage, across all its ratings. */
+export const detourIdsOf = (ratings: readonly RatingInput[]): number[] =>
   ratings.flatMap((rating) => (rating.detours ?? []).map((entry) => entry.detourId))
 
 const hasDuplicate = (values: readonly number[]): boolean => new Set(values).size !== values.length

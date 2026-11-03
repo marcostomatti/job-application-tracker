@@ -3,8 +3,8 @@ import { alias } from 'drizzle-orm/pg-core'
 
 import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
-import { RequirementSchema } from '../../schemas/scoring.ts'
-import type { PenaltyInput, RatingInput, ScorePositionInput } from '../../schemas/scores.ts'
+import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/criteria.ts'
+import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePositionInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
 import { requirement } from '../schema/criteria.ts'
@@ -55,15 +55,22 @@ async function assertPositionExists(db: Db, positionId: number): Promise<void> {
   if (!found) throw new NotFoundError('position', positionId)
 }
 
-/** Narrows a stored requirement to what the scoring function reads. Layers only group a report, so the id stands in for the key. */
+/** The stored kind as the discriminator the scoring function reads. The table's CHECK allows nothing else, so a miss is a broken invariant. */
+function narrowKind(kind: string): RequirementKind {
+  const found = REQUIREMENT_KINDS.find((candidate) => candidate === kind)
+  if (found === undefined) throw new Error('A stored requirement has a kind the requirement table does not allow.')
+  return found
+}
+
+/** A stored requirement as the scoring function reads it, which parses its whole input itself. Layers only group a report, so the id stands in for the key. */
 function toScoringRequirement(row: RequirementRow): Requirement {
-  return RequirementSchema.parse({
+  return {
     key: row.key,
     layerKey: row.layerId === null ? '' : String(row.layerId),
-    kind: row.kind,
+    kind: narrowKind(row.kind),
     weight: row.weight,
     label: row.label,
-  })
+  }
 }
 
 /** The coverage a rating gave one detour of its requirement; null when it gave none. */
@@ -112,7 +119,12 @@ function buildScoreInput(
 /** The score columns for a result, with the keys it names mapped back to requirement ids. */
 function toScoreValues(result: ScoreResult, requirements: readonly RequirementRow[], note: string | undefined): ScoreValues {
   const idByKey = new Map(requirements.map((row) => [row.key, row.id]))
-  const idOf = (key: string | null): number | null => (key === null ? null : (idByKey.get(key) ?? null))
+  const idOf = (key: string | null): number | null => {
+    if (key === null) return null
+    const id = idByKey.get(key)
+    if (id === undefined) throw new Error('The scoring function named a requirement key the set does not hold.')
+    return id
+  }
   return {
     overall: result.overall,
     floor: result.floor,
@@ -233,8 +245,8 @@ function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown
     })
   }
   if (isForeignKeyViolation(error, DETOUR_OF_OTHER_REQUIREMENT)) {
-    return new ConflictError('requirement detour', `in one of the ${input.ratings.length} ratings this call carried`, {
-      message: 'a detour coverage names a detour that does not belong to the requirement it is rated under',
+    return new ConflictError('requirement detour', detourIdsOf(input.ratings).join(', '), {
+      message: 'a detour coverage names something that is not a detour of the requirement it is rated under',
       cause: error,
     })
   }

@@ -190,6 +190,29 @@ describe('scorePosition', () => {
     expect(rows).toBe(1)
   })
 
+  test('a set with no requirements stores three nulls and no limiter, and recommends nothing', async () => {
+    // Arrange / Act
+    const score = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const empty = await insertCriteriaSet(db, { name: 'Fresh install', applyThreshold: 0.6 })
+      return scorePosition(db, { positionId: arranged.positionId, criteriaSetId: empty.id, ratings: [], penalties: [] })
+    })
+
+    // Assert
+    expect(score).toMatchObject({
+      overall: null,
+      floor: null,
+      ceiling: null,
+      limiterRequirementId: null,
+      limiterKey: null,
+      limiterCoverage: null,
+      limiterIsUnknown: false,
+      runnerUpRequirementId: null,
+      runnerUpKey: null,
+      recommendApply: false,
+    })
+  })
+
   test('writes a rating row per requirement given, never a column, with confidence and evidence', async () => {
     // Arrange / Act
     const { arranged, ratings } = await withMigratedScratchDatabase(async (db) => {
@@ -479,7 +502,7 @@ describe('scorePosition', () => {
 
   test('refuses a detour coverage naming a detour of another requirement, as a ConflictError, writing nothing', async () => {
     // Arrange / Act
-    const { error, scores, stored, direct } = await withMigratedScratchDatabase(async (db) => {
+    const { error, scores, stored, direct, bDetourId } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const error = await thrownBy(() =>
         scorePosition(db, {
@@ -495,13 +518,16 @@ describe('scorePosition', () => {
       const direct = await thrownBy(() =>
         db.insert(positionRatingDetour).values({ scoreId, requirementId: arranged.a, detourId: arranged.bDetour, coverage: 1 }),
       )
-      return { error, scores: await countRows(db, positionScore), stored: await countRows(db, positionRatingDetour), direct }
+      return { error, scores: await countRows(db, positionScore), stored: await countRows(db, positionRatingDetour), direct, bDetourId: arranged.bDetour }
     })
 
     // Assert
     expect(error).toBeInstanceOf(ConflictError)
     expect(statusFor(error)).toBe(409)
     expect((error as Error).message).not.toMatch(/insert|select|position_rating|violates|\$\d/i)
+    expect(error).toMatchObject({ field: 'requirement detour' })
+    expect((error as ConflictError).key).toBe(String(bDetourId))
+    expect((error as Error).message).toContain('not a detour of the requirement')
     expect(violationText((error as Error).cause)).toContain('position_rating_detour_detour_fk')
     expect(violationText(direct)).toContain('position_rating_detour_detour_fk')
     expect(scores).toBe(1)
@@ -711,6 +737,7 @@ describe('the score schemas', () => {
   test('the bulk form is the single form in a bounded, non-empty envelope', () => {
     const item = { positionId: 1, criteriaSetId: 1, ratings: [], penalties: [] }
     expect(ScorePositionBulkSchema.safeParse({ items: [item] }).success).toBe(true)
+    expect(ScorePositionBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX }, () => item) }).success).toBe(true)
     expect(ScorePositionBulkSchema.safeParse({ items: [] }).success).toBe(false)
     expect(ScorePositionBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX + 1 }, () => item) }).success).toBe(false)
   })
