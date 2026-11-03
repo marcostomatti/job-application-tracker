@@ -175,7 +175,7 @@ export const FIXTURE_POSITIONS: readonly FixturePosition[] = [
     },
   },
   {
-    name: 'Soylent Starter Pack, every weight null',
+    name: 'Quillon Placeholder Starter Pack, every weight null',
     input: {
       requirements: [
         gate('location', 'Works from an allowed location'),

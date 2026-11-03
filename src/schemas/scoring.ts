@@ -6,7 +6,8 @@ export const RequirementSchema = z.object({
   key: z.string(),
   layerKey: z.string(),
   kind: z.enum(['gate', 'soft']),
-  weight: z.number().nullable(),
+  // Never negative: 0 records a criterion without scoring it, null means none is set yet.
+  weight: z.number().min(0).nullable(),
   label: z.string(),
 })
 

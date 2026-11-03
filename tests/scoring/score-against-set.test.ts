@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { ZodError } from 'zod'
 import type { Rating, Requirement, ScoreInput } from '../../src/entities/scoring.ts'
 import { ScoreInputSchema } from '../../src/schemas/scoring.ts'
 import { scoreAgainstSet } from '../../src/scoring/score-against-set.ts'
@@ -101,16 +102,47 @@ describe('scoreAgainstSet', () => {
       }),
     )
 
-    expect(result).toEqual({
-      overall: 0.6666666666666666,
-      floor: 0.6666666666666666,
-      ceiling: 0.6666666666666666,
-      limiterKey: 'b',
-      limiterCoverage: 0.25,
-      limiterIsUnknown: false,
-      runnerUpKey: 'c',
-      recommendApply: true,
-    })
+    expect(result.overall).toBeCloseTo(2 / 3, 10)
+    expect(result.floor).toBeCloseTo(2 / 3, 10)
+    expect(result.ceiling).toBeCloseTo(2 / 3, 10)
+    expect(result.limiterKey).toBe('b')
+    expect(result.limiterCoverage).toBe(0.25)
+    expect(result.limiterIsUnknown).toBe(false)
+    expect(result.runnerUpKey).toBe('c')
+    expect(result.recommendApply).toBe(true)
+  })
+
+  // The gate check reads the same detours as the score, so a detour can open a gate.
+  test('allows apply when a gate rated 0 is opened by a detour', () => {
+    const gate = requirement('gate', null, 'gate')
+    const base = {
+      requirements: [gate, requirement('a', 1)],
+      ratings: [rating('gate', 0), rating('a', 1)],
+      applyThreshold: 0.5,
+    }
+    const detour = { requirementKey: 'gate', label: 'detour', discount: 0.25, coverage: 1 }
+
+    expect(scoreAgainstSet(input({ ...base, detours: [] })).recommendApply).toBe(false)
+
+    // The detour gives the gate an effective coverage of 1 * (1 - 0.25) = 0.75.
+    const withDetour = scoreAgainstSet(input({ ...base, detours: [detour] }))
+    expect(withDetour.recommendApply).toBe(true)
+  })
+
+  test('withholds apply when a penalty drives the overall below the threshold', () => {
+    const base = {
+      requirements: [requirement('a', 1)],
+      ratings: [rating('a', 0.75)],
+      applyThreshold: 0.7,
+    }
+
+    expect(scoreAgainstSet(input(base)).recommendApply).toBe(true)
+
+    const penalised = scoreAgainstSet(
+      input({ ...base, penalties: [{ kindKey: 'penalty', amount: -0.25 }] }),
+    )
+    expect(penalised.overall).toBe(0.5)
+    expect(penalised.recommendApply).toBe(false)
   })
 
   // The schemas are what make an infinite weight and a positive penalty unreachable, so the
@@ -123,7 +155,7 @@ describe('scoreAgainstSet', () => {
           ratings: [rating('a', 1)],
         }),
       ),
-    ).toThrow()
+    ).toThrow(ZodError)
   })
 
   test('rejects a positive penalty before computing', () => {
@@ -135,7 +167,7 @@ describe('scoreAgainstSet', () => {
           penalties: [{ kindKey: 'bonus', amount: 0.5 }],
         }),
       ),
-    ).toThrow()
+    ).toThrow(ZodError)
   })
 
   test.each(FIXTURE_POSITIONS)('scores fixture position $name as expected', ({
@@ -158,5 +190,20 @@ describe('ScoreInputSchema applyThreshold', () => {
   // 0 recommends anything no gate blocks, 1 wants a perfect score, null is no bar set yet.
   test.each([0, 1, null])('accepts a threshold of %p', (threshold) => {
     expect(withThreshold(threshold)).toBe(true)
+  })
+})
+
+describe('ScoreInputSchema weight', () => {
+  const withWeight = (weight: number | null) =>
+    ScoreInputSchema.safeParse(input({ requirements: [requirement('a', weight)] })).success
+
+  // A negative weight is a typo: the score would ignore it while the limiter still ranked it.
+  test('rejects a negative weight', () => {
+    expect(withWeight(-0.1)).toBe(false)
+  })
+
+  // 0 records a criterion without scoring it; null means no weight has been set yet.
+  test.each([0, 0.3, null])('accepts a weight of %p', (weight) => {
+    expect(withWeight(weight)).toBe(true)
   })
 })
