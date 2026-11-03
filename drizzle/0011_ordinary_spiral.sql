@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "text_asset_label_version_unique" ON "text_asset" USING btree ("label","version");

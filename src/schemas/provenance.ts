@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
+
 /** A calendar day as `YYYY-MM-DD`, the shape a Postgres `date` column reads and writes. */
 const calendarDay = z.iso.date()
 
@@ -22,16 +24,34 @@ export const OriginSchema = z.object({
   searchRunId: z.number().int().nullable(),
 })
 
-/** What a caller supplies to log a touch; the database assigns `id` and `recordedAt`. */
-export const NewOriginSchema = z.object({
-  positionId: z.number().int().nullable().default(null),
-  routeId: z.number().int().nullable().default(null),
+/** A line of free text, trimmed and non-empty so a blank says nothing, and free of NUL, which Postgres cannot store. */
+const line = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
+
+/**
+ * What a caller supplies to log a touch; the database assigns `id` and `recordedAt`, so neither
+ * is accepted. `positionId` and `routeId` are nullable as well as optional because both are
+ * absent on a real touch (a conversation before any posting, a route registry that ships empty),
+ * and `touchedOn` is required and may be backdated or, by mistake, future-dated: it is stored
+ * as typed and only ignored when first touch is derived.
+ */
+export const OriginInputSchema = z.strictObject({
+  positionId: IdSchema.nullable().optional(),
+  routeId: IdSchema.nullable().optional(),
   touchedOn: calendarDay,
-  note: z.string().nullable().default(null),
-  searchRunId: z.number().int().nullable().default(null),
+  note: line.optional(),
+  searchRunId: IdSchema.nullable().optional(),
 })
 
-export const NewSearchRunSchema = z.object({
-  query: z.string().min(1),
-  source: z.string().min(1),
+export type OriginInput = z.infer<typeof OriginInputSchema>
+
+export const OriginBulkSchema = bulkOf(OriginInputSchema)
+
+/** One machine query: what was asked and where. The database stamps when it ran. */
+export const SearchRunInputSchema = z.strictObject({
+  query: line,
+  source: line,
 })
+
+export type SearchRunInput = z.infer<typeof SearchRunInputSchema>
+
+export const SearchRunBulkSchema = bulkOf(SearchRunInputSchema)

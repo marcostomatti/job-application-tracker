@@ -78,6 +78,13 @@
       "when": 1793730062181,
       "tag": "0010_rating_detour_coverage",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793732342162,
+      "tag": "0011_ordinary_spiral",
+      "breakpoints": true
     }
   ]
 }

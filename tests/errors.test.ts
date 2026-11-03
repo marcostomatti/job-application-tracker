@@ -43,6 +43,13 @@ describe('error messages', () => {
     expect(error.message).not.toContain('select')
   })
 
+  test('NotFoundError may carry the driver fault on cause and keeps it out of the message', () => {
+    const cause = new Error('insert into "origin" violates a foreign key')
+    const error = new NotFoundError('position', 7, { cause })
+    expect(error.cause).toBe(cause)
+    expect(error.message).toBe('position 7 does not exist')
+  })
+
   test('ConflictError takes its own message, keeps the cause off it, and still names the field and key', () => {
     const cause = new Error('driver detail')
     const error = new ConflictError('criteria set', '3', { message: 'a rating names a requirement outside it', cause })

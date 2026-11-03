@@ -7,13 +7,17 @@ const HTTP_STATUS = {
   internal: 500,
 } as const
 
-/** A thing the caller named does not exist. */
+/**
+ * A thing the caller named does not exist. `cause` carries the driver fault when the database's
+ * own foreign key is what found it out, and is never part of the message.
+ */
 export class NotFoundError extends Error {
   constructor(
     readonly entity: string,
     readonly id: string | number,
+    options?: ErrorOptions,
   ) {
-    super(`${entity} ${id} does not exist`)
+    super(`${entity} ${id} does not exist`, options)
     this.name = 'NotFoundError'
   }
 }
