@@ -19,7 +19,8 @@ import { layer } from './registries.ts'
  * The versioned unit of scoring. A position's score only means something against
  * the whole set it was scored under, so a new version is a new set, and old
  * versions stay. `applyThreshold` is null until the user sets a bar, which is
- * how a vanilla pack ships.
+ * how a vanilla pack ships. The 0..1 columns use number mode, because the default mode
+ * returns a string from the driver and every scoring schema expects a number.
  */
 export const criteriaSet = pgTable(
   'criteria_set',
@@ -28,7 +29,7 @@ export const criteriaSet = pgTable(
     name: text().notNull(),
     version: integer().notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    applyThreshold: numeric('apply_threshold'),
+    applyThreshold: numeric('apply_threshold', { mode: 'number' }),
     isDefault: boolean('is_default').notNull().default(false),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
@@ -65,7 +66,7 @@ export const requirement = pgTable(
     key: text().notNull(),
     label: text().notNull(),
     kind: text().notNull().default('soft'),
-    weight: numeric(),
+    weight: numeric({ mode: 'number' }),
     anchors: jsonb().notNull(),
     sort: integer().notNull().default(0),
   },
@@ -80,7 +81,8 @@ export const requirement = pgTable(
 /**
  * A way round a requirement. `discount` is how much of the detour's coverage is
  * lost, so a detour can lift a gate but never to full strength. The cost has no
- * default unit, because naming one would be the user's vocabulary.
+ * default unit, because naming one would be the user's vocabulary. `costAmount` stays a
+ * string-mode numeric on purpose: it is money, and a float is the wrong shape for money.
  */
 export const detour = pgTable(
   'detour',
@@ -90,7 +92,7 @@ export const detour = pgTable(
       .notNull()
       .references(() => requirement.id, { onDelete: 'cascade' }),
     label: text().notNull(),
-    discount: numeric().notNull(),
+    discount: numeric({ mode: 'number' }).notNull(),
     costAmount: numeric('cost_amount'),
     costUnit: text('cost_unit'),
   },
