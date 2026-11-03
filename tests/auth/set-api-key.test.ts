@@ -271,6 +271,28 @@ describe('main', () => {
     expect(fake.stdout.join('')).toContain('any client using the old key must be updated')
   })
 
+  test('main writes the replacement warning after the clear, and the key never after it', async () => {
+    const fake = fakeIo(`API_KEY=${OLD_KEY}\n`)
+
+    await main(['--burn-after-reading'], fake.io)
+
+    expect(fake.events).toEqual(['file', 'write', 'wait', 'clear', 'write'])
+    const [beforeClear, afterClear] = fake.stdout
+    const savedKey = fake.state.file!.slice('API_KEY='.length).trim()
+    expect(beforeClear).toContain(savedKey)
+    expect(afterClear).toContain('update any client')
+    expect(afterClear).not.toContain(savedKey)
+    expect(afterClear).not.toContain(OLD_KEY)
+  })
+
+  test('main writes nothing after the clear when no key was replaced', async () => {
+    const fake = fakeIo(null)
+
+    await main(['--burn-after-reading'], fake.io)
+
+    expect(fake.events.at(-1)).toBe('clear')
+  })
+
   test('main does not announce a replacement when only a commented API_KEY line exists', async () => {
     const fake = fakeIo('# API_KEY=\nDB_PORT=5439\n')
 

@@ -72,6 +72,10 @@ export function replaceApiKeyLine(current: string, key: string): string {
 const REPLACED_NOTICE =
   'This replaced the API_KEY that was already in .env: any client using the old key must be updated, or its requests will be refused.'
 
+/** Written after the clear, so it stays on screen once the key is gone. Holds no key. */
+const REPLACED_REMINDER =
+  'Cleared. The API_KEY in .env was replaced: update any client that still uses the old key.\n'
+
 type BurnAfterReadingOptions = {
   key: string
   seconds: number
@@ -181,6 +185,8 @@ export async function main(argv: readonly string[], io: MainIo = realIo): Promis
     clear: io.clear,
     wait: io.wait,
   })
+  // The key is gone from the screen now; the warning is the part that must outlast the clear.
+  if (replacedExisting) io.write(REPLACED_REMINDER)
   return 0
 }
 
