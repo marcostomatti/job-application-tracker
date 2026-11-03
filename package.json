@@ -18,6 +18,7 @@
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:migrate": "drizzle-kit migrate",
-    "seed:pack": "bun src/seeds/load-pack.ts"
+    "seed:pack": "bun src/seeds/load-pack.ts",
+    "setApiKey": "bun src/auth/set-api-key.ts"
   }
 }
