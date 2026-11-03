@@ -109,18 +109,36 @@ running, and takes the user, password and database from `DATABASE_URL` as usual.
 
 The connection is given to `pg_dump` through its `PG*` environment variables, so the password
 is in no command line, and an error from `pg_dump` is shown with the URL and password removed.
-Restore into an empty database with the connection in `PG*` variables and the password at a
-prompt, not in a command line:
+
+### Restoring
+
+A dump is a custom-format archive, so it is restored with `pg_restore`, **and only when you name a
+database to restore into**: `pg_restore` connects only when it is given `--dbname`, and without it
+it restores nothing. `PGDATABASE` does not stand in for it. Restore into an empty database, and
+read the connection from `PG*` variables with the password at a prompt, not in a command line:
 
 ```sh
 export PGHOST=<host> PGPORT=<port> PGUSER=<user> PGDATABASE=<database>
-read -rs PGPASSWORD && export PGPASSWORD     # asks for it without echoing it
-pg_restore backups/<file>
+export PGSSLMODE=<the sslmode in your URL>      # leave this line out if the URL has none
+printf 'Password: '; read -rs PGPASSWORD; echo; export PGPASSWORD
+pg_restore --dbname="$PGDATABASE" backups/<file>
 ```
 
-Do not write `pg_restore --dbname <url>` here, or anywhere: a URL on a command line is readable by
-every other user on the machine through `ps`, which is why the dump above splits the URL into
-variables, and a `~/.pgpass` file is an equally good place for the password.
+`pg_restore` has the same version rule as `pg_dump`: it must be at least as new as the one that
+wrote the archive, and a 14 stops at `unsupported version (1.15) in file header` on a dump made
+by 16. With the Docker database, use the container's own `pg_restore`, which needs only the user,
+password and database name, passed by name:
+
+```sh
+export PGUSER=<user> PGDATABASE=<database>
+printf 'Password: '; read -rs PGPASSWORD; echo; export PGPASSWORD
+docker compose exec -T -e PGUSER -e PGPASSWORD db pg_restore --dbname="$PGDATABASE" < backups/<file>
+```
+
+Do not write `--dbname <url>` here, or anywhere: a URL on a command line is readable by every
+other user on the machine through `ps`, which is why the dump splits the URL into variables. A
+database name is not a credential, so `--dbname="$PGDATABASE"` is safe. A `~/.pgpass` file is an
+equally good place for the password.
 
 ## The HTTP service
 

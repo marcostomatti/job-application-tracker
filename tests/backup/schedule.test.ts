@@ -214,6 +214,9 @@ describe('startBackupSchedule', () => {
 
       expect(afterStart).toBeGreaterThan(0)
       expect(calls).toEqual([])
+      // each of the three paths (start, tick, tick) names the class and never the driver's message
+      expect(logged.length).toBeGreaterThan(afterStart + 1)
+      expect(logged.join('\n')).not.toContain('connection reset')
     })
   })
 
