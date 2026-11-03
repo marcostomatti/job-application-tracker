@@ -47,13 +47,13 @@ Five conditions the spec implies that no task's own happy-path tests would exerc
 drizzle/
   lint/forbidden.ts          denylists and the allowed structural literals
   lint/migration-lint.ts     the parser and the five rules
-  0001_registries.sql        the twelve registries, all empty
-  0002_criteria.sql          criteria_set, requirement, detour
-  0003_positions.sql         company, position, position_summary, artefact
-  0004_scores.sql            position_score, position_rating, position_penalty
-  0005_dispositions.sql      position_disposition, position_stage_event
-  0006_provenance.sql        search_run, origin, the first-touch view
-  0007_config_rescore.sql    app_config, rescore_request, the pending view
+  0000_registries.sql        the twelve registries, all empty
+  0001_criteria.sql          criteria_set, requirement, detour
+  0002_positions.sql         company, position, position_summary, artefact
+  0003_scores.sql            position_score, position_rating, position_penalty
+  0004_dispositions.sql      position_disposition, position_stage_event
+  0005_provenance.sql        search_run, origin, the first-touch view
+  0006_config_rescore.sql    app_config, rescore_request, the pending view
 src/
   schemas/scoring.ts         Zod for requirements, ratings, detours, penalties
   schemas/provenance.ts      Zod for origins and routes
@@ -433,7 +433,7 @@ git commit -m "feat: add Postgres in compose and the Drizzle client"
 ## Task 7: The registries
 
 **Files:**
-- Create: `src/data/schema/registries.ts`, `drizzle/0001_registries.sql`
+- Create: `src/data/schema/registries.ts`, `drizzle/0000_registries.sql`
 - Create: `tests/data/registries.test.ts`
 
 **Interfaces:**
@@ -462,7 +462,7 @@ Expected: FAIL — the tables do not exist.
 
 - [ ] **Step 3: Define the twelve tables in `src/data/schema/registries.ts` and generate the migration**
 
-Run `bunx drizzle-kit generate` and rename the output to `0001_registries.sql`. Review the generated SQL against the Global Constraints before committing: no seed INSERT, no vocabulary in a CHECK.
+Run `bunx drizzle-kit generate` and rename the output to `0000_registries.sql`. Review the generated SQL against the Global Constraints before committing: no seed INSERT, no vocabulary in a CHECK.
 
 - [ ] **Step 4: Migrate and run the tests**
 
@@ -472,7 +472,7 @@ Expected: PASS, and the lint reports nothing.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/registries.ts drizzle/0001_registries.sql tests/data/registries.test.ts
+git add src/data/schema/registries.ts drizzle/0000_registries.sql tests/data/registries.test.ts
 git commit -m "feat: add the twelve registries, shipped empty"
 ```
 
@@ -481,7 +481,7 @@ git commit -m "feat: add the twelve registries, shipped empty"
 ## Task 8: Criteria sets, requirements and detours
 
 **Files:**
-- Create: `src/data/schema/criteria.ts`, `drizzle/0002_criteria.sql`
+- Create: `src/data/schema/criteria.ts`, `drizzle/0001_criteria.sql`
 - Create: `tests/data/criteria.test.ts`
 
 **Interfaces:**
@@ -509,7 +509,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/data/criteria.test.ts`
 Expected: FAIL — the tables do not exist.
 
-- [ ] **Step 3: Define the three tables, generate `0002_criteria.sql`, and add `CriteriaSetConflictError`**
+- [ ] **Step 3: Define the three tables, generate `0001_criteria.sql`, and add `CriteriaSetConflictError`**
 
 Map the unique-violation error code from the `postgres` driver onto `CriteriaSetConflictError` in the repository boundary, so callers never pattern-match a driver string.
 
@@ -521,7 +521,7 @@ Expected: PASS, all seven, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/criteria.ts drizzle/0002_criteria.sql tests/data/criteria.test.ts
+git add src/data/schema/criteria.ts drizzle/0001_criteria.sql tests/data/criteria.test.ts
 git commit -m "feat: add versioned criteria sets with requirements and detours"
 ```
 
@@ -530,7 +530,7 @@ git commit -m "feat: add versioned criteria sets with requirements and detours"
 ## Task 9: Companies, positions, summaries and artefacts
 
 **Files:**
-- Create: `src/data/schema/positions.ts`, `drizzle/0003_positions.sql`
+- Create: `src/data/schema/positions.ts`, `drizzle/0002_positions.sql`
 - Create: `tests/data/positions.test.ts`
 
 **Interfaces:**
@@ -557,7 +557,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/data/positions.test.ts`
 Expected: FAIL — the tables do not exist.
 
-- [ ] **Step 3: Define the four tables, implement `normaliseName`, and generate `0003_positions.sql`**
+- [ ] **Step 3: Define the four tables, implement `normaliseName`, and generate `0002_positions.sql`**
 
 `normaliseName` is NFKD, lowercase, then runs of non-alphanumerics collapsed to a single space and trimmed.
 
@@ -569,7 +569,7 @@ Expected: PASS, all seven, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/positions.ts drizzle/0003_positions.sql tests/data/positions.test.ts
+git add src/data/schema/positions.ts drizzle/0002_positions.sql tests/data/positions.test.ts
 git commit -m "feat: add companies, positions, summaries and artefacts"
 ```
 
@@ -578,7 +578,7 @@ git commit -m "feat: add companies, positions, summaries and artefacts"
 ## Task 10: Scores, ratings and penalties
 
 **Files:**
-- Create: `src/data/schema/scores.ts`, `drizzle/0004_scores.sql`
+- Create: `src/data/schema/scores.ts`, `drizzle/0003_scores.sql`
 - Create: `tests/data/scores.test.ts`
 
 **Interfaces:**
@@ -607,7 +607,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/data/scores.test.ts`
 Expected: FAIL — the tables do not exist.
 
-- [ ] **Step 3: Define the three tables and generate `0004_scores.sql`**
+- [ ] **Step 3: Define the three tables and generate `0003_scores.sql`**
 
 - [ ] **Step 4: Migrate and run the tests**
 
@@ -617,7 +617,7 @@ Expected: PASS, all eight, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/scores.ts drizzle/0004_scores.sql tests/data/scores.test.ts
+git add src/data/schema/scores.ts drizzle/0003_scores.sql tests/data/scores.test.ts
 git commit -m "feat: add scores with ratings as rows"
 ```
 
@@ -626,7 +626,7 @@ git commit -m "feat: add scores with ratings as rows"
 ## Task 11: Dispositions and stage history
 
 **Files:**
-- Create: `src/data/schema/dispositions.ts`, `drizzle/0005_dispositions.sql`
+- Create: `src/data/schema/dispositions.ts`, `drizzle/0004_dispositions.sql`
 - Create: `tests/data/dispositions.test.ts`
 
 **Interfaces:**
@@ -653,7 +653,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/data/dispositions.test.ts`
 Expected: FAIL — the tables do not exist.
 
-- [ ] **Step 3: Define the two tables and generate `0005_dispositions.sql`**
+- [ ] **Step 3: Define the two tables and generate `0004_dispositions.sql`**
 
 The disposition CHECK is the exact expression in spec §7.5. Its literals are a structural discriminator, so the lint permits them.
 
@@ -665,7 +665,7 @@ Expected: PASS, all seven, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/dispositions.ts drizzle/0005_dispositions.sql tests/data/dispositions.test.ts
+git add src/data/schema/dispositions.ts drizzle/0004_dispositions.sql tests/data/dispositions.test.ts
 git commit -m "feat: add the set-aside axis and stage history"
 ```
 
@@ -674,7 +674,7 @@ git commit -m "feat: add the set-aside axis and stage history"
 ## Task 12: Origins, routes and first touch
 
 **Files:**
-- Create: `src/data/schema/provenance.ts`, `src/schemas/provenance.ts`, `src/entities/provenance.ts`, `src/provenance/first-touch.ts`, `drizzle/0006_provenance.sql`
+- Create: `src/data/schema/provenance.ts`, `src/schemas/provenance.ts`, `src/entities/provenance.ts`, `src/provenance/first-touch.ts`, `drizzle/0005_provenance.sql`
 - Create: `tests/data/provenance.test.ts`, `tests/provenance/first-touch.test.ts`
 
 **Interfaces:**
@@ -713,7 +713,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/provenance tests/data/provenance.test.ts`
 Expected: FAIL — `firstTouch` is not exported and the tables do not exist.
 
-- [ ] **Step 3: Implement `firstTouch`, define the two tables and the view, and generate `0006_provenance.sql`**
+- [ ] **Step 3: Implement `firstTouch`, define the two tables and the view, and generate `0005_provenance.sql`**
 
 `firstTouch` filters out origins with `touched_on` after `today`, then takes the minimum of `(touched_on, recorded_at, id)`. The view applies the same ordering in SQL so the two cannot disagree; the test in step 1 pins that.
 
@@ -725,7 +725,7 @@ Expected: PASS, all ten, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/schemas/provenance.ts src/entities/provenance.ts src/provenance src/data/schema/provenance.ts drizzle/0006_provenance.sql tests/provenance tests/data/provenance.test.ts
+git add src/schemas/provenance.ts src/entities/provenance.ts src/provenance src/data/schema/provenance.ts drizzle/0005_provenance.sql tests/provenance tests/data/provenance.test.ts
 git commit -m "feat: add route-keyed provenance with derived first touch"
 ```
 
@@ -734,7 +734,7 @@ git commit -m "feat: add route-keyed provenance with derived first touch"
 ## Task 13: App config and the pending re-score view
 
 **Files:**
-- Create: `src/data/schema/config.ts`, `drizzle/0007_config_rescore.sql`
+- Create: `src/data/schema/config.ts`, `drizzle/0006_config_rescore.sql`
 - Create: `tests/data/rescore.test.ts`
 
 **Interfaces:**
@@ -759,7 +759,7 @@ test('the migration passes the lint', ...)
 Run: `bun test tests/data/rescore.test.ts`
 Expected: FAIL — the tables do not exist.
 
-- [ ] **Step 3: Define the two tables and the view, and generate `0007_config_rescore.sql`**
+- [ ] **Step 3: Define the two tables and the view, and generate `0006_config_rescore.sql`**
 
 - [ ] **Step 4: Migrate and run the tests**
 
@@ -769,7 +769,7 @@ Expected: PASS, all six, lint clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/data/schema/config.ts drizzle/0007_config_rescore.sql tests/data/rescore.test.ts
+git add src/data/schema/config.ts drizzle/0006_config_rescore.sql tests/data/rescore.test.ts
 git commit -m "feat: add app config and the derived pending re-score view"
 ```
 
