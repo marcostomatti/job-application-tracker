@@ -1,0 +1,13 @@
+{
+  "name": "web-search",
+  "apply_threshold": null,
+  "requirements": [
+    {
+      "key": "remote-friendly",
+      "label": "Works remotely",
+      "kind": "soft",
+      "weight": null,
+      "anchors": { "0": "On-site only", "0.5": "Hybrid", "1": "Fully remote" }
+    }
+  ]
+}

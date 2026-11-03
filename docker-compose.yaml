@@ -1,0 +1,23 @@
+# Pinned so the volume is always job-application-tracker_tracker-data, whatever the clone's directory is called.
+name: job-application-tracker
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker
+      POSTGRES_DB: tracker
+    ports:
+      - '127.0.0.1:${DB_PORT:-5432}:5432'
+    volumes:
+      - tracker-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tracker -d tracker']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  tracker-data:
