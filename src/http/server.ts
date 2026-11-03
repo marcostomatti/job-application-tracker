@@ -133,7 +133,7 @@ type BackupHandle = { stop(): Promise<void> }
  */
 function startBackups(db: ReturnType<typeof getDb>, wiring: BackupWiring | undefined): Promise<BackupHandle | undefined> {
   if (wiring === undefined) return Promise.resolve(undefined)
-  return startBackupSchedule({ ...wiring, db, outDir: wiring.outDir ?? DEFAULT_BACKUP_DIR }).catch((error: unknown) => {
+  return startBackupSchedule({ ...wiring, db: wiring.db ?? db, outDir: wiring.outDir ?? DEFAULT_BACKUP_DIR }).catch((error: unknown) => {
     const log = wiring.logger ?? createLogger('backup')
     log.error({ reason: error instanceof Error ? error.name : 'unknown' }, 'the backup schedule did not start')
     return undefined

@@ -13,6 +13,8 @@ import type { ServiceHandle } from '@open-tomato/service-express'
 import { generateApiKey } from '../../src/auth/api-key.ts'
 import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
 import type { BackupTimers } from '../../src/backup/schedule.ts'
+import { setBackupSettings } from '../../src/data/repositories/config.ts'
+import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
 import { backupOptionsFor, startService } from '../../src/http/server.ts'
@@ -337,6 +339,8 @@ describe('startService', () => {
 
   describe('the backup schedule', () => {
     const silent = { info: () => {}, warn: () => {}, error: () => {} }
+    /** A made-up connection for a stand-in that never connects. */
+    const FAKE_URL = 'postgres://backup_user:s3cret@db.example.test:5433/tracker_db'
     let backupDir: string | undefined
 
     afterEach(async () => {
@@ -361,56 +365,78 @@ describe('startService', () => {
     })
 
     test('does not hold the service back while a due dump runs, and stop() clears its timer', async () => {
-      // Arrange: a stand-in whose dump does not finish until the test says so
-      backupDir = await mkdtemp(join(tmpdir(), 'service-backups-'))
-      const calls: SpawnRequest[] = []
-      let release: () => void = () => {}
-      const gate = new Promise<void>((resolve) => {
-        release = resolve
+      await withMigratedScratchDatabase(async (scratch) => {
+        // Arrange: a stand-in whose dump does not finish until the test says so
+        backupDir = await mkdtemp(join(tmpdir(), 'service-backups-'))
+        const calls: SpawnRequest[] = []
+        let release: () => void = () => {}
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const spawn: Spawner = async (request) => {
+          calls.push(request)
+          await gate
+          const target = request.args.find((arg) => arg.startsWith('--file='))?.slice('--file='.length) ?? ''
+          await writeFile(target, 'a dump')
+          return { exitCode: 0, signal: null, stderr: '' }
+        }
+        const cleared: unknown[] = []
+        const timers: BackupTimers = { setInterval: () => 'timer', clearInterval: (handle) => void cleared.push(handle) }
+
+        try {
+          // Act: startService resolves although the first check is waiting on the gate
+          const { origin } = await start({ backup: { db: scratch, outDir: backupDir, spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
+          await until(() => calls.length === 1)
+          const health = await fetch(`${origin}/health`)
+
+          // Assert: the dump is still in flight and the service already answers
+          expect(health.status).toBe(200)
+          expect(cleared).toEqual([])
+        } finally {
+          release()
+        }
+        await stopRunning()
+        expect(cleared).toEqual(['timer'])
       })
-      const spawn: Spawner = async (request) => {
-        calls.push(request)
-        await gate
-        const target = request.args.find((arg) => arg.startsWith('--file='))?.slice('--file='.length) ?? ''
-        await writeFile(target, 'a dump')
-        return { exitCode: 0, signal: null, stderr: '' }
-      }
-      const cleared: unknown[] = []
-      const timers: BackupTimers = { setInterval: () => 'timer', clearInterval: (handle) => void cleared.push(handle) }
-      const databaseUrl = 'postgres://backup_user:s3cret@db.example.test:5433/tracker_db'
+    })
 
-      try {
-        // Act: startService resolves although the first check is waiting on the gate
-        const { origin } = await start({ backup: { outDir: backupDir, spawn, timers, databaseUrl, logger: silent } })
-        await until(() => calls.length === 1)
-        const health = await fetch(`${origin}/health`)
+    test('reads its settings from the database it is given, so a local app_config cannot change the test', async () => {
+      await withMigratedScratchDatabase(async (scratch) => {
+        await setBackupSettings(scratch, { enabled: false })
+        const calls: SpawnRequest[] = []
+        const spawn: Spawner = async (request) => {
+          calls.push(request)
+          return { exitCode: 1, signal: null, stderr: '' }
+        }
+        const started: unknown[] = []
+        const timers: BackupTimers = { setInterval: () => void started.push(1), clearInterval: () => {} }
 
-        // Assert: the dump is still in flight and the service already answers
-        expect(health.status).toBe(200)
-        expect(cleared).toEqual([])
-      } finally {
-        release()
-      }
-      await stopRunning()
-      expect(cleared).toEqual(['timer'])
+        await start({ backup: { db: scratch, outDir: tmpdir(), spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
+        await stopRunning()
+
+        expect(started).toEqual([])
+        expect(calls).toEqual([])
+      })
     })
 
     test('a schedule that cannot start is logged by name and does not stop the service', async () => {
-      const logged: string[] = []
-      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
-      const timers: BackupTimers = {
-        setInterval: () => {
-          throw new TypeError('timer refused for postgres://u:leaky@h/d')
-        },
-        clearInterval: () => {},
-      }
+      await withMigratedScratchDatabase(async (scratch) => {
+        const logged: string[] = []
+        const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+        const timers: BackupTimers = {
+          setInterval: () => {
+            throw new TypeError('timer refused for postgres://u:leaky@h/d')
+          },
+          clearInterval: () => {},
+        }
 
-      const { origin } = await start({ backup: { outDir: tmpdir(), timers, logger } })
-      const health = await fetch(`${origin}/health`)
+        const { origin } = await start({ backup: { db: scratch, outDir: tmpdir(), timers, logger } })
+        const health = await fetch(`${origin}/health`)
 
-      expect(health.status).toBe(200)
-      await until(() => logged.length > 0)
-      expect(logged.join('\n')).not.toContain('leaky')
+        expect(health.status).toBe(200)
+        await until(() => logged.length > 0)
+        expect(logged.join('\n')).not.toContain('leaky')
+      })
     })
   })
 })

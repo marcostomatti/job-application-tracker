@@ -59,7 +59,11 @@ export type BackupOptions = {
 export type BackupScheduleOptions = BackupOptions & { readonly timers?: BackupTimers }
 
 /** What a service passes to run the schedule beside it: the options but for the database, and the directory is optional. */
-export type BackupWiring = Omit<BackupScheduleOptions, 'db' | 'outDir'> & { readonly outDir?: string }
+export type BackupWiring = Omit<BackupScheduleOptions, 'db' | 'outDir'> & {
+  readonly outDir?: string
+  /** Where the settings are read from. Defaults to the service's own database; a test passes a scratch one. */
+  readonly db?: Db
+}
 
 export type BackupResult = { readonly path: string; readonly dropped: number }
 
@@ -183,6 +187,7 @@ export async function runBackupOnce(opts: BackupOptions): Promise<BackupResult> 
 
 /**
  * Starts the backup schedule. With `enabled: false` stored it returns at once with no timer.
+ * If the settings cannot be read at start, the schedule starts anyway and tries again at each check.
  *
  * Otherwise it first sweeps stale partial dumps, then checks whether a backup is due before it returns, and then hourly: a backup
  * is due when none exists or the newest is at least `intervalDays` old. Every check reads
@@ -197,8 +202,12 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
   const log = opts.logger ?? defaultLogger()
   const timers = opts.timers ?? realTimers
   const now = opts.now ?? (() => new Date())
-  const settings = await readBackupSettings(opts.db, log)
-  if (!settings.enabled) {
+  // A read that fails here is not final: the schedule starts anyway and the first check, and
+  // every hourly one after it, reads the settings again and logs a failure. Unreadable settings
+  // are treated as backups on, which is the data-safe side and what `readBackupSettings` does
+  // for a stored value it cannot use.
+  const settings = await readBackupSettings(opts.db, log).catch(() => undefined)
+  if (settings !== undefined && !settings.enabled) {
     log.info({}, 'backups are off in app_config; no schedule started')
     return { stop: async () => {} }
   }

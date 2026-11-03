@@ -167,6 +167,35 @@ describe('runDump', () => {
     expect((error as Error).message).not.toContain(URL_UNDER_TEST)
   })
 
+  test('redacts before it truncates, so a URL straddling the cut leaves no fragment of the credential', async () => {
+    // Arrange: a stand-in whose stderr puts the URL across the 4,000-character mark of the message
+    const scriptDir = await mkdtemp(join(tmpdir(), 'backup-straddle-'))
+    const script = join(scriptDir, 'pg_dump')
+    const padding = 'x'.repeat(4_000 - 26)
+    await writeFile(script, `#!/bin/sh\n/bin/echo "${padding}${URL_UNDER_TEST}" >&2\nexit 1\n`, { mode: 0o755 })
+    const original = process.env.PG_DUMP_BIN
+    process.env.PG_DUMP_BIN = script
+
+    try {
+      // Act
+      const error = await runDump({ databaseUrl: URL_UNDER_TEST, outDir, now: NOW, spawn: createBunSpawner() }).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      )
+
+      // Assert: 26 characters of the URL would have survived a cut-then-redact ("postgres://backup_user:s3c")
+      const message = (error as Error).message
+      expect(message).toContain('exited with code 1')
+      expect(message).not.toContain('backup_user')
+      expect(message).not.toContain('s3c')
+      expect(message).not.toContain('postgres://')
+    } finally {
+      if (original === undefined) delete process.env.PG_DUMP_BIN
+      else process.env.PG_DUMP_BIN = original
+      await rm(scriptDir, { recursive: true, force: true })
+    }
+  })
+
   test('raises when a successful exit left no file behind', async () => {
     const spawn: Spawner = async () => ({ exitCode: 0, signal: null, stderr: '' })
 
@@ -240,6 +269,17 @@ describe('createBunSpawner, with a stand-in script for the binary', () => {
 
     expect(result.signal).toBe('SIGTERM')
     expect(existsSync(markerPath)).toBe(false)
+  })
+
+  test('kills with SIGKILL a child that ignores the SIGTERM sent at the timeout, so it cannot wedge the caller', async () => {
+    const command = await standIn('trap "" TERM\nwhile :; do /bin/sleep 0.1; done')
+    const started = Date.now()
+
+    const result = await createBunSpawner({ timeoutMs: 1000, killGraceMs: 300, drainMs: 100 })({ command, args: [], env: {} })
+
+    // the timeout is long enough for a freshly written script to have installed its trap
+    expect(result.signal).toBe('SIGKILL')
+    expect(Date.now() - started).toBeLessThan(4000)
   })
 
   test('does not wait for a grandchild that still holds the stderr pipe', async () => {

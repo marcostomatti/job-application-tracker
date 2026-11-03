@@ -85,7 +85,7 @@ runs on its own, so a dump that is due at start never delays a request. Nothing 
 under `NODE_ENV=test`. Changing `keep`, `intervalDays` or `enabled` applies at the next hourly
 check, with no restart. A dump that fails is logged (the reason from `pg_dump`, with the URL and
 password removed) and the service carries on. A dump half-written when a process dies is a
-`*.partial` file; the next start removes those that have sat untouched for an hour.
+`*.dump.partial` file (also ignored by git); the next start removes those that have sat untouched for an hour.
 
 ### If `pg_dump` says "aborting because of server version mismatch"
 
@@ -98,6 +98,10 @@ distro default) refuses it. The fix that needs nothing installed is the database
 bun run db:up
 PG_DUMP_BIN=scripts/pg_dump-docker.sh bun run backup
 ```
+
+**Use it only when `DATABASE_URL` is the Docker database.** The script ignores the host and port in
+`DATABASE_URL` and connects inside the container, so with a different database named there it would
+silently dump the container's database instead: a backup of the wrong data, which no error reveals.
 
 For `bun run serve` put `PG_DUMP_BIN=scripts/pg_dump-docker.sh` in `.env` and start it from the
 clone's root, where that relative path resolves. The script needs the container from `db:up`

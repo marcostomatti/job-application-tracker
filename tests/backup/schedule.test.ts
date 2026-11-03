@@ -174,6 +174,37 @@ describe('startBackupSchedule', () => {
     })
   })
 
+  test('a settings read that fails at start does not end the schedule: the timer is armed and a later tick recovers', async () => {
+    await withMigratedScratchDatabase(async (real) => {
+      // Arrange: a database whose first two selects fail, as a hiccup at boot would
+      let failures = 2
+      const flaky = new Proxy(real, {
+        get(target, property) {
+          if (property !== 'select') return Reflect.get(target, property)
+          return (...args: Parameters<typeof target.select>) => {
+            if (failures-- > 0) throw new Error('connection reset')
+            return (target.select as (...a: unknown[]) => unknown)(...args)
+          }
+        },
+      }) as Db
+      const logged: string[] = []
+      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+      const { calls, timers, started } = start(flaky, { logger })
+
+      // Act: start does not reject, and the failure is logged by class name only
+      const handle = await started
+      expect(timers.started).toHaveLength(1)
+      expect(calls).toEqual([])
+      expect(logged.join('\n')).not.toContain('connection reset')
+      expect(logged.length).toBeGreaterThan(0)
+
+      // Assert: the next hourly tick reads the settings again and makes the due dump
+      timers.started[0]?.run()
+      await handle.stop()
+      expect(calls).toHaveLength(1)
+    })
+  })
+
   test('a failing dump is logged without the URL and does not stop the schedule or throw', async () => {
     await withMigratedScratchDatabase(async (db) => {
       const logged: string[] = []

@@ -11,6 +11,7 @@ node_modules/
 # Database dumps are the personal data this project exists to keep out of the repository.
 backups/
 *.dump
+*.dump.partial
 
 # subagent-driven-development workspace: briefs, reports, review packages
 .superpowers/
