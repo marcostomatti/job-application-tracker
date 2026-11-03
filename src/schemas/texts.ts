@@ -46,8 +46,6 @@ export const TextUpdateSchema = z.strictObject({
 
 export type TextUpdateInput = z.infer<typeof TextUpdateSchema>
 
-export const TextUpdateBulkSchema = bulkOf(TextUpdateSchema)
-
 /**
  * Which texts to list: by default the latest version of each label, and with
  * `includeHistory` every version of the labels that match. `textTypeId` is judged on the

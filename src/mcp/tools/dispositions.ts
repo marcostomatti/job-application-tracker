@@ -83,7 +83,7 @@ export const dispositionTools: ToolDefinition[] = [
     description:
       'Returns every set-aside position grouped by the reason it was last set aside for: [{ reasonId, reasonLabel, positions }], in reason order, each position as position_search shows it. ' +
       'The label is there even for a reason archived since. Use this to see why the user passes on leads, so a gate or a weight can be refined or the user asked about a pattern. ' +
-      'A position that was only rejected is not listed, and a later rejection does not remove a position from its group. Takes no arguments; an empty list means nothing was set aside.',
+      'A position that was only rejected is not listed, and a later rejection does not remove a position from its group. Takes no arguments, and the result is complete, never truncated or paged: an empty list means nothing was set aside.',
     input: EmptyInputSchema,
     run: async (_args, db) => listSetAside(db),
   }),
