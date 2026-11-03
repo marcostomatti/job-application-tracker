@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 import type { DrizzleClient } from '../client.ts'
@@ -38,6 +39,11 @@ export const criteriaSet = pgTable(
       'criteria_set_apply_threshold_check',
       sql`${table.applyThreshold} >= 0 AND ${table.applyThreshold} <= 1`,
     ),
+    // One active set is the default. Every row in the index has the same key (true), so the
+    // index admits at most one; an archived default drops out of it and frees the slot.
+    uniqueIndex('criteria_set_single_default')
+      .on(table.isDefault)
+      .where(sql`${table.isDefault} AND ${table.archivedAt} IS NULL`),
   ],
 )
 

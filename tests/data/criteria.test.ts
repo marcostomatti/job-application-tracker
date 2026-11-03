@@ -264,3 +264,28 @@ describe('criteria sets, requirements and detours', () => {
     expect(findings).toEqual([])
   })
 })
+
+describe('the default criteria set', () => {
+  test('at most one active criteria set can be the default', async () => {
+    // Arrange / Act
+    const { second, plain, archivedPair } = await rolledBack(async (tx, name) => {
+      await tx.insert(criteriaSet).values({ name, version: 1, isDefault: true })
+      const second = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(criteriaSet).values({ name, version: 2, isDefault: true }),
+      )
+      // A non-default set is unaffected, and an archived default frees the slot
+      const plain = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(criteriaSet).values({ name, version: 3, isDefault: false }),
+      )
+      const archivedPair = await thrownInSavepoint(tx, (inner) =>
+        inner.insert(criteriaSet).values({ name, version: 4, isDefault: true, archivedAt: new Date() }),
+      )
+      return { second, plain, archivedPair }
+    })
+
+    // Assert: a second active default is an error, not a silent pick
+    expect(violationText(second)).toContain('criteria_set_single_default')
+    expect(plain).toBeUndefined()
+    expect(archivedPair).toBeUndefined()
+  })
+})

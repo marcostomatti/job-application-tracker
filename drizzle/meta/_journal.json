@@ -15,6 +15,13 @@
       "when": 1793705392676,
       "tag": "0001_criteria",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793705750051,
+      "tag": "0002_positions",
+      "breakpoints": true
     }
   ]
 }
