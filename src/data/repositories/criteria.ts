@@ -48,6 +48,17 @@ export async function findCriteriaSet(db: Db, id: number): Promise<CriteriaSetRo
   return found
 }
 
+/**
+ * A set a new write may name: `findCriteriaSet`, and an archived set is `ArchivedError`. Archival
+ * keeps a set readable and stops it being offered for new use, the rule every registry
+ * reference follows; reads of what was stored under it must use `findCriteriaSet` and so keep working.
+ */
+export async function findUsableCriteriaSet(db: Db, id: number): Promise<CriteriaSetRow> {
+  const found = await findCriteriaSet(db, id)
+  if (found.archivedAt !== null) throw new ArchivedError('criteria_set', id)
+  return found
+}
+
 /** The requirements a condition selects, in rubric order, each with its layer label and detours. */
 async function readRequirementRows(db: Db, condition: SQL): Promise<RequirementRow[]> {
   const rows = await db

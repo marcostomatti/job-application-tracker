@@ -4,7 +4,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { NotFoundError } from '../../errors.ts'
 import type { RescoreRequestInput } from '../../schemas/scores.ts'
 import { pendingRescore, rescoreRequest } from '../schema/config.ts'
-import { findCriteriaSet } from './criteria.ts'
+import { findUsableCriteriaSet } from './criteria.ts'
 import type { Db } from './db.ts'
 
 export type RescoreRequest = InferSelectModel<typeof rescoreRequest>
@@ -20,10 +20,10 @@ export type PendingRescoreRow = {
  * Records that every position seen on or after `sinceDate` should be scored against a set.
  * Only the intent is stored; which positions are still waiting is read from the
  * `pending_rescore` view, so the request cannot drift from the scores. A set that does not exist is
- * `NotFoundError`.
+ * `NotFoundError`, and an archived one is `ArchivedError`: a new request is a new use of the set.
  */
 export async function requestRescore(db: Db, input: RescoreRequestInput): Promise<RescoreRequest> {
-  await findCriteriaSet(db, input.criteriaSetId)
+  await findUsableCriteriaSet(db, input.criteriaSetId)
   const [created] = await db
     .insert(rescoreRequest)
     .values({ criteriaSetId: input.criteriaSetId, sinceDate: input.sinceDate })

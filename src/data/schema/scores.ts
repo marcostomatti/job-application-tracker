@@ -12,7 +12,7 @@ import {
   unique,
 } from 'drizzle-orm/pg-core'
 
-import { criteriaSet, requirement } from './criteria.ts'
+import { criteriaSet, detour, requirement } from './criteria.ts'
 import { position } from './positions.ts'
 import { penaltyKind } from './registries.ts'
 
@@ -112,6 +112,38 @@ export const positionRating = pgTable(
       'position_rating_confidence_check',
       sql`${table.confidence} IN ('supported', 'partial', 'unknown')`,
     ),
+  ],
+)
+
+/**
+ * How well a position covers one detour of a requirement, under one score. The detour itself
+ * (its label and discount) belongs to the criteria set; this is the per-position half, the
+ * part `scoreAgainstSet` needs and no other table holds. A row hangs off the rating of the same
+ * requirement, so it goes when the rating does, and the second key ties the detour to that
+ * requirement, so a coverage cannot name a detour that is a way round some other requirement.
+ * `coverage` reads like a rating's: null is not rated, which is different from 0.
+ */
+export const positionRatingDetour = pgTable(
+  'position_rating_detour',
+  {
+    scoreId: integer('score_id').notNull(),
+    requirementId: integer('requirement_id').notNull(),
+    detourId: integer('detour_id').notNull(),
+    coverage: numeric({ mode: 'number' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scoreId, table.detourId] }),
+    foreignKey({
+      name: 'position_rating_detour_rating_fk',
+      columns: [table.scoreId, table.requirementId],
+      foreignColumns: [positionRating.scoreId, positionRating.requirementId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'position_rating_detour_detour_fk',
+      columns: [table.requirementId, table.detourId],
+      foreignColumns: [detour.requirementId, detour.id],
+    }),
+    check('position_rating_detour_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
   ],
 )
 

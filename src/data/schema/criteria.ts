@@ -103,7 +103,12 @@ export const detour = pgTable(
     costAmount: numeric('cost_amount'),
     costUnit: text('cost_unit'),
   },
-  (table) => [check('detour_discount_check', sql`${table.discount} >= 0 AND ${table.discount} <= 1`)],
+  (table) => [
+    // Redundant as a key (id is already unique); it exists so a stored detour coverage can
+    // reference the pair and the database can check the detour belongs to the rated requirement.
+    unique('detour_requirement_id_id_unique').on(table.requirementId, table.id),
+    check('detour_discount_check', sql`${table.discount} >= 0 AND ${table.discount} <= 1`),
+  ],
 )
 
 const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'

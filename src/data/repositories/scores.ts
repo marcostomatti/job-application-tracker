@@ -1,15 +1,16 @@
 import { and, desc, eq, lt, sql, type InferSelectModel } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import { NotFoundError } from '../../errors.ts'
+import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
 import { RequirementSchema } from '../../schemas/scoring.ts'
 import type { PenaltyInput, RatingInput, ScorePositionInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
+import { isForeignKeyViolation } from '../driver-faults.ts'
 import { requirement } from '../schema/criteria.ts'
 import { position } from '../schema/positions.ts'
-import { positionPenalty, positionRating, positionScore } from '../schema/scores.ts'
-import { findCriteriaSet, getRequirements, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
+import { positionPenalty, positionRating, positionRatingDetour, positionScore } from '../schema/scores.ts'
+import { findUsableCriteriaSet, getRequirements, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived } from './registries.ts'
@@ -65,6 +66,11 @@ function toScoringRequirement(row: RequirementRow): Requirement {
   })
 }
 
+/** The coverage a rating gave one detour of its requirement; null when it gave none. */
+function coverageOfDetour(rating: RatingInput | undefined, detourId: number): number | null {
+  return rating?.detours?.find((entry) => entry.detourId === detourId)?.coverage ?? null
+}
+
 /**
  * What `scoreAgainstSet` reads, built from the stored set and what the caller rated. Ratings and
  * penalties are keyed by requirement id and penalty kind id in the table and by key in the
@@ -72,8 +78,8 @@ function toScoringRequirement(row: RequirementRow): Requirement {
  * set has no key and takes no part in the arithmetic; the composite key on `position_rating`
  * then refuses the row when it is written, which rolls the whole score back.
  *
- * Detours carry a null coverage: a detour's coverage would be a per-position fact, and no table
- * stores one, so a detour is a way round nobody has assessed and cannot raise a stored score.
+ * A detour's coverage is the one the caller gave under the rating of its requirement, and null
+ * (not rated) when it gave none, so a declared detour only counts once someone has assessed it.
  * The penalty kind has no key column, so its id stands in; the function only sums the amounts.
  */
 function buildScoreInput(
@@ -83,6 +89,7 @@ function buildScoreInput(
   penalties: readonly PenaltyInput[],
 ): ScoreInput {
   const keyById = new Map(requirements.map((row) => [row.id, row.key]))
+  const ratingByRequirementId = new Map(ratings.map((rating) => [rating.requirementId, rating]))
   return {
     requirements: requirements.map(toScoringRequirement),
     ratings: ratings.flatMap((rating) => {
@@ -90,7 +97,12 @@ function buildScoreInput(
       return requirementKey === undefined ? [] : [{ requirementKey, coverage: rating.coverage, confidence: rating.confidence }]
     }),
     detours: requirements.flatMap((row) =>
-      row.detours.map((entry) => ({ requirementKey: row.key, label: entry.label, discount: entry.discount, coverage: null })),
+      row.detours.map((entry) => ({
+        requirementKey: row.key,
+        label: entry.label,
+        discount: entry.discount,
+        coverage: coverageOfDetour(ratingByRequirementId.get(row.id), entry.id),
+      })),
     ),
     penalties: penalties.map((penalty) => ({ kindKey: String(penalty.penaltyKindId), amount: penalty.amount })),
     applyThreshold: set.applyThreshold,
@@ -151,37 +163,94 @@ async function upsertScoreRow(db: Db, input: ScorePositionInput, values: ScoreVa
   return written
 }
 
+async function insertRatings(db: Db, score: StoredScore, ratings: readonly RatingInput[]): Promise<void> {
+  if (ratings.length === 0) return
+  await db.insert(positionRating).values(
+    ratings.map((rating) => ({
+      scoreId: score.id,
+      criteriaSetId: score.criteriaSetId,
+      requirementId: rating.requirementId,
+      coverage: rating.coverage,
+      confidence: rating.confidence,
+      evidence: rating.evidence ?? null,
+    })),
+  )
+}
+
+async function insertDetourCoverages(db: Db, score: StoredScore, ratings: readonly RatingInput[]): Promise<void> {
+  const rows = ratings.flatMap((rating) =>
+    (rating.detours ?? []).map((entry) => ({
+      scoreId: score.id,
+      requirementId: rating.requirementId,
+      detourId: entry.detourId,
+      coverage: entry.coverage,
+    })),
+  )
+  if (rows.length > 0) await db.insert(positionRatingDetour).values(rows)
+}
+
+async function insertPenalties(db: Db, score: StoredScore, penalties: readonly PenaltyInput[]): Promise<void> {
+  if (penalties.length === 0) return
+  await db.insert(positionPenalty).values(
+    penalties.map((penalty) => ({
+      scoreId: score.id,
+      penaltyKindId: penalty.penaltyKindId,
+      amount: penalty.amount,
+      reason: penalty.reason ?? null,
+    })),
+  )
+}
+
 /**
- * Makes the ratings and penalties of a score exactly the ones given. A same-day re-score
- * replaces what the row held rather than merging into it, because the stored numbers were
- * computed from these ratings and these penalties alone; a leftover row from the earlier call
- * would sit beside a score that never saw it.
+ * Makes the ratings, detour coverages and penalties of a score exactly the ones given. A
+ * same-day re-score replaces what the row held rather than merging into it, because the stored
+ * numbers were computed from these alone; a leftover row from the earlier call would sit beside
+ * a score that never saw it. A detour coverage hangs off its rating by a cascading key, so
+ * deleting the ratings deletes the coverages with them.
  */
 async function replaceRatingsAndPenalties(db: Db, score: StoredScore, input: ScorePositionInput): Promise<void> {
   await db.delete(positionRating).where(eq(positionRating.scoreId, score.id))
   await db.delete(positionPenalty).where(eq(positionPenalty.scoreId, score.id))
-  if (input.ratings.length > 0) {
-    await db.insert(positionRating).values(
-      input.ratings.map((rating) => ({
-        scoreId: score.id,
-        criteriaSetId: score.criteriaSetId,
-        requirementId: rating.requirementId,
-        coverage: rating.coverage,
-        confidence: rating.confidence,
-        evidence: rating.evidence ?? null,
-      })),
+  await insertRatings(db, score, input.ratings)
+  await insertDetourCoverages(db, score, input.ratings)
+  await insertPenalties(db, score, input.penalties)
+}
+
+/** What the caller sees when a rating or a detour coverage names a row the score's set or requirement does not hold. */
+class MembershipConflictError extends ConflictError {
+  constructor(field: string, key: string, detail: string, options: ErrorOptions) {
+    super(field, key, options)
+    this.message = detail
+  }
+}
+
+const REQUIREMENT_OUTSIDE_SET = 'position_rating_set_requirement_fk'
+const DETOUR_OF_OTHER_REQUIREMENT = 'position_rating_detour_detour_fk'
+
+/**
+ * Types the two foreign-key faults a caller can cause, and leaves every other error as it was.
+ * The keys stay the guarantee (the database, not this code, decides membership); this only turns
+ * the driver's fault, whose message repeats the failed statement, into an error that carries no
+ * SQL. The driver fault stays on `cause`.
+ */
+function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown {
+  if (isForeignKeyViolation(error, REQUIREMENT_OUTSIDE_SET)) {
+    return new MembershipConflictError(
+      'criteria set',
+      String(input.criteriaSetId),
+      `a rating names a requirement that is not in criteria set ${input.criteriaSetId}`,
+      { cause: error },
     )
   }
-  if (input.penalties.length > 0) {
-    await db.insert(positionPenalty).values(
-      input.penalties.map((penalty) => ({
-        scoreId: score.id,
-        penaltyKindId: penalty.penaltyKindId,
-        amount: penalty.amount,
-        reason: penalty.reason ?? null,
-      })),
+  if (isForeignKeyViolation(error, DETOUR_OF_OTHER_REQUIREMENT)) {
+    return new MembershipConflictError(
+      'requirement detour',
+      `in one of the ${input.ratings.length} ratings this call carried`,
+      'a detour coverage names a detour that does not belong to the requirement it is rated under',
+      { cause: error },
     )
   }
+  return error
 }
 
 /**
@@ -193,21 +262,27 @@ async function replaceRatingsAndPenalties(db: Db, score: StoredScore, input: Sco
  *
  * A null coverage is stored as null: not rated, which is not zero. A call on the same day as
  * an existing score for the same set replaces that row, its ratings and its penalties; a call on a
- * later day writes a new row marked `isRescore`. A penalty naming an archived kind is refused
- * before anything is written. The function moves no position and writes no stage event: a
+ * later day writes a new row marked `isRescore`. A penalty naming an archived kind, or a score
+ * against an archived criteria set, is refused before anything is written (`ArchivedError`).
+ * A rating naming a requirement outside the set, or a detour coverage naming a detour of another
+ * requirement, is refused by the database's composite keys and surfaces as a `ConflictError`. The function moves no position and writes no stage event: a
  * recommendation is acted on by whoever composes this call with the pipeline.
  */
 export async function scorePosition(db: Db, input: ScorePositionInput): Promise<ScoreRow> {
-  return db.transaction(async (tx) => {
-    await assertPositionExists(tx, input.positionId)
-    const set = await findCriteriaSet(tx, input.criteriaSetId)
-    for (const penalty of input.penalties) await assertNotArchived(tx, 'penalty_kind', penalty.penaltyKindId)
-    const requirements = await getRequirements(tx, set.id)
-    const result = scoreAgainstSet(buildScoreInput(set, requirements, input.ratings, input.penalties))
-    const score = await upsertScoreRow(tx, input, toScoreValues(result, requirements, input.note))
-    await replaceRatingsAndPenalties(tx, score, input)
-    return { ...score, limiterKey: result.limiterKey, runnerUpKey: result.runnerUpKey }
-  })
+  try {
+    return await db.transaction(async (tx) => {
+      await assertPositionExists(tx, input.positionId)
+      const set = await findUsableCriteriaSet(tx, input.criteriaSetId)
+      for (const penalty of input.penalties) await assertNotArchived(tx, 'penalty_kind', penalty.penaltyKindId)
+      const requirements = await getRequirements(tx, set.id)
+      const result = scoreAgainstSet(buildScoreInput(set, requirements, input.ratings, input.penalties))
+      const score = await upsertScoreRow(tx, input, toScoreValues(result, requirements, input.note))
+      await replaceRatingsAndPenalties(tx, score, input)
+      return { ...score, limiterKey: result.limiterKey, runnerUpKey: result.runnerUpKey }
+    })
+  } catch (error) {
+    throw typeMembershipFault(error, input)
+  }
 }
 
 /**

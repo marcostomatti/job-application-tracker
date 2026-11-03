@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { count, eq } from 'drizzle-orm'
+import { count, eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
@@ -7,10 +7,10 @@ import type { DrizzleClient } from '../../src/data/client.ts'
 import { addPositions } from '../../src/data/repositories/positions.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
 import { getBestScores, getScoreHistory, scorePosition } from '../../src/data/repositories/scores.ts'
-import { insertCriteriaSet, requirement, detour } from '../../src/data/schema/criteria.ts'
+import { criteriaSet, detour, insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
 import { positionStageEvent } from '../../src/data/schema/dispositions.ts'
-import { positionPenalty, positionRating, positionScore } from '../../src/data/schema/scores.ts'
-import { ArchivedError, NotFoundError } from '../../src/errors.ts'
+import { positionPenalty, positionRating, positionRatingDetour, positionScore } from '../../src/data/schema/scores.ts'
+import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import {
   PenaltyInputSchema,
   RatingInputSchema,
@@ -18,6 +18,8 @@ import {
   ScorePositionInputSchema,
 } from '../../src/schemas/scores.ts'
 import { BULK_MAX } from '../../src/schemas/common.ts'
+import { requestRescore } from '../../src/data/repositories/rescore.ts'
+import { isForeignKeyViolation } from '../../src/data/driver-faults.ts'
 import { thrownBy, violationText } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
@@ -33,6 +35,10 @@ type Arranged = {
   readonly a: number
   readonly b: number
   readonly other: number
+  /** A detour of `a` that gives up half its strength, one of `a` that gives up none, and one of `b`. */
+  readonly halfDetour: number
+  readonly freeDetour: number
+  readonly bDetour: number
 }
 
 /** The id at `index`, or a loud failure: an absent row would otherwise read as a pass. */
@@ -61,6 +67,14 @@ async function arrange(db: DrizzleClient): Promise<Arranged> {
       { criteriaSetId: otherSet.id, key: 'other', label: 'Other', kind: 'soft', weight: 1, anchors: ANCHORS },
     ])
     .returning()
+  const detours = await db
+    .insert(detour)
+    .values([
+      { requirementId: idOf(rows, 1), label: 'Half way round', discount: 0.5 },
+      { requirementId: idOf(rows, 1), label: 'Free way round', discount: 0 },
+      { requirementId: idOf(rows, 2), label: 'Way round B', discount: 0.5 },
+    ])
+    .returning()
   return {
     positionId: created.id,
     setId: set.id,
@@ -69,10 +83,19 @@ async function arrange(db: DrizzleClient): Promise<Arranged> {
     a: idOf(rows, 1),
     b: idOf(rows, 2),
     other: idOf(rows, 3),
+    halfDetour: idOf(detours, 0),
+    freeDetour: idOf(detours, 1),
+    bDetour: idOf(detours, 2),
   }
 }
 
-type RatingArg = { requirementId: number; coverage: number | null; confidence: 'supported' | 'partial' | 'unknown'; evidence?: string | null }
+type RatingArg = {
+  requirementId: number
+  coverage: number | null
+  confidence: 'supported' | 'partial' | 'unknown'
+  evidence?: string | null
+  detours?: { detourId: number; coverage: number | null }[]
+}
 
 const supported = (requirementId: number, coverage: number | null, evidence?: string): RatingArg => ({
   requirementId,
@@ -81,12 +104,14 @@ const supported = (requirementId: number, coverage: number | null, evidence?: st
   ...(evidence === undefined ? {} : { evidence }),
 })
 
+const viaDetours = (rating: RatingArg, ...detours: { detourId: number; coverage: number | null }[]): RatingArg => ({ ...rating, detours })
+
 /** A penalty kind from the registry, which ships empty, so every test makes its own. */
 async function aPenaltyKind(db: DrizzleClient, label = 'Relocation'): Promise<number> {
   return idOf(await addRegistryRows(db, 'penalty_kind', [{ label }]))
 }
 
-async function countRows(db: DrizzleClient, table: typeof positionScore | typeof positionRating | typeof positionPenalty | typeof positionStageEvent): Promise<number> {
+async function countRows(db: DrizzleClient, table: typeof positionScore | typeof positionRating | typeof positionRatingDetour | typeof positionPenalty | typeof positionStageEvent): Promise<number> {
   const [found] = await db.select({ n: count() }).from(table)
   return found?.n ?? 0
 }
@@ -309,7 +334,7 @@ describe('scorePosition', () => {
     expect(scores.map((row) => row.isRescore)).toEqual([false, false])
   })
 
-  test('refuses a rating naming a requirement from another set, and rolls the whole score back', async () => {
+  test('refuses a rating naming a requirement from another set as a ConflictError with no SQL, rolling the score back', async () => {
     // Arrange / Act
     const { error, scores, ratings } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
@@ -324,9 +349,12 @@ describe('scorePosition', () => {
       return { error, scores: await countRows(db, positionScore), ratings: await countRows(db, positionRating) }
     })
 
-    // Assert: the composite foreign key refuses it, so the error surfaces and nothing is left behind
-    expect(error).toBeInstanceOf(Error)
-    expect(violationText(error)).toContain('position_rating_set_requirement_fk')
+    // Assert: the composite foreign key is still the guarantee; the fault is typed on its way out
+    expect(error).toBeInstanceOf(ConflictError)
+    expect(statusFor(error)).toBe(409)
+    expect(error).toMatchObject({ field: 'criteria set' })
+    expect((error as Error).message).not.toMatch(/insert|select|position_rating|violates|\$\d/i)
+    expect(violationText((error as Error).cause)).toContain('position_rating_set_requirement_fk')
     expect(scores).toBe(0)
     expect(ratings).toBe(0)
   })
@@ -346,20 +374,115 @@ describe('scorePosition', () => {
     expect(missingSet).toBeInstanceOf(NotFoundError)
   })
 
-  test('a detour has no per-position coverage to store, so it never changes the stored score', async () => {
+  test('a detour lifts a requirement above its direct rating by its coverage times what it keeps', async () => {
     // Arrange / Act
-    const { without, withDetour } = await withMigratedScratchDatabase(async (db) => {
+    const { direct, lifted } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const input = { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 0.2)], penalties: [] }
-      const without = await scorePosition(db, input)
-      await db.insert(detour).values({ requirementId: arranged.a, label: 'Way round', discount: 0 })
-      const withDetour = await scorePosition(db, input)
-      return { without, withDetour }
+      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
+      const direct = await scorePosition(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
+      const lifted = await scorePosition(db, {
+        ...base,
+        ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.halfDetour, coverage: 1 })],
+      })
+      return { direct, lifted }
+    })
+
+    // Assert: 1 x (1 - 0.5) = 0.5 beats the direct 0.2, and the stored overall says so
+    expect(direct.overall).toBeCloseTo(0.2, 10)
+    expect(lifted.overall).toBeCloseTo(0.5, 10)
+  })
+
+  test('a detour with a discount of 0 contributes its full coverage', async () => {
+    // Arrange / Act
+    const score = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      return scorePosition(db, {
+        positionId: arranged.positionId,
+        criteriaSetId: arranged.setId,
+        ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.freeDetour, coverage: 0.9 })],
+        penalties: [],
+      })
     })
 
     // Assert
-    expect(withDetour.overall).toBe(without.overall)
-    expect(withDetour.limiterCoverage).toBe(without.limiterCoverage)
+    expect(score.overall).toBeCloseTo(0.9, 10)
+  })
+
+  test('a detour with a null coverage, or none given, leaves the score as the direct rating made it', async () => {
+    // Arrange / Act
+    const { direct, nullCoverage } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
+      const direct = await scorePosition(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
+      const nullCoverage = await scorePosition(db, {
+        ...base,
+        ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.halfDetour, coverage: null })],
+      })
+      return { direct, nullCoverage }
+    })
+
+    // Assert
+    expect(nullCoverage.overall).toBe(direct.overall)
+    expect(nullCoverage.limiterCoverage).toBe(direct.limiterCoverage)
+  })
+
+  test('stores each detour coverage under its rating, null as not rated, and replaces them with the ratings', async () => {
+    // Arrange / Act
+    const { arranged, afterFirst, afterSecond } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
+      await scorePosition(db, {
+        ...base,
+        ratings: [
+          viaDetours(
+            supported(arranged.a, null),
+            { detourId: arranged.halfDetour, coverage: 0.4 },
+            { detourId: arranged.freeDetour, coverage: null },
+          ),
+        ],
+      })
+      const afterFirst = await db.select().from(positionRatingDetour).orderBy(positionRatingDetour.detourId)
+      await scorePosition(db, { ...base, ratings: [viaDetours(supported(arranged.a, 1), { detourId: arranged.halfDetour, coverage: 0 })] })
+      return { arranged, afterFirst, afterSecond: await db.select().from(positionRatingDetour) }
+    })
+
+    // Assert: a same-day re-score leaves exactly the second call's detour coverages
+    expect(afterFirst.map((row) => [row.requirementId, row.detourId, row.coverage])).toEqual([
+      [arranged.a, arranged.halfDetour, 0.4],
+      [arranged.a, arranged.freeDetour, null],
+    ])
+    expect(afterSecond.map((row) => [row.detourId, row.coverage])).toEqual([[arranged.halfDetour, 0]])
+  })
+
+  test('refuses a detour coverage naming a detour of another requirement, as a ConflictError, writing nothing', async () => {
+    // Arrange / Act
+    const { error, scores, stored, direct } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const error = await thrownBy(() =>
+        scorePosition(db, {
+          positionId: arranged.positionId,
+          criteriaSetId: arranged.setId,
+          ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.bDetour, coverage: 1 })],
+          penalties: [],
+        }),
+      )
+      // The same pair written straight to the table is refused by the same constraint
+      const scoreId = idOf(await db.insert(positionScore).values({ positionId: arranged.positionId, criteriaSetId: arranged.setId }).returning())
+      await db.insert(positionRating).values({ scoreId, criteriaSetId: arranged.setId, requirementId: arranged.a })
+      const direct = await thrownBy(() =>
+        db.insert(positionRatingDetour).values({ scoreId, requirementId: arranged.a, detourId: arranged.bDetour, coverage: 1 }),
+      )
+      return { error, scores: await countRows(db, positionScore), stored: await countRows(db, positionRatingDetour), direct }
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(ConflictError)
+    expect(statusFor(error)).toBe(409)
+    expect((error as Error).message).not.toMatch(/insert|select|position_rating|violates|\$\d/i)
+    expect(violationText((error as Error).cause)).toContain('position_rating_detour_detour_fk')
+    expect(violationText(direct)).toContain('position_rating_detour_detour_fk')
+    expect(scores).toBe(1)
+    expect(stored).toBe(0)
   })
 
   test('two connections scoring the same day at once leave one row whose ratings are one call\'s, whole', async () => {
@@ -388,6 +511,66 @@ describe('scorePosition', () => {
     expect(coverages.size).toBe(1)
     expect(scores[0]?.overall).toBe([...coverages][0] as number)
     expect(new Set(ratings.map((row) => row.requirementId))).toEqual(new Set([arranged.a, arranged.b]))
+  })
+})
+
+describe('a criteria set that has been archived', () => {
+  const archive = (db: DrizzleClient, setId: number): Promise<unknown> =>
+    db.update(criteriaSet).set({ archivedAt: new Date() }).where(eq(criteriaSet.id, setId))
+
+  test('is refused by scorePosition and requestRescore, with nothing written', async () => {
+    // Arrange / Act
+    const { scoreError, requestError, scores, pending } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      await archive(db, arranged.setId)
+      return {
+        scoreError: await thrownBy(() =>
+          scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] }),
+        ),
+        requestError: await thrownBy(() => requestRescore(db, { criteriaSetId: arranged.setId, sinceDate: '2026-01-01' })),
+        scores: await countRows(db, positionScore),
+        pending: await db.execute(sql`select count(*)::int as n from rescore_request`),
+      }
+    })
+
+    // Assert
+    expect(scoreError).toBeInstanceOf(ArchivedError)
+    expect(requestError).toBeInstanceOf(ArchivedError)
+    expect(scoreError).toMatchObject({ entity: 'criteria_set' })
+    expect(statusFor(scoreError)).toBe(409)
+    expect(scores).toBe(0)
+    expect(pending[0]?.n).toBe(0)
+  })
+
+  test('still has its earlier scores read back, by history and by best score', async () => {
+    // Arrange / Act
+    const { arranged, history, best } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
+      await archive(db, arranged.setId)
+      return { arranged, history: await getScoreHistory(db, arranged.positionId), best: await getBestScores(db, arranged.positionId) }
+    })
+
+    // Assert
+    expect(history.map((row) => row.criteriaSetId)).toEqual([arranged.setId])
+    expect(best.map((row) => row.criteriaSetId)).toEqual([arranged.setId])
+  })
+})
+
+describe('isForeignKeyViolation', () => {
+  const fault = { code: '23503', constraint_name: 'some_fk' }
+
+  test('matches the bare driver error and the one Drizzle wraps as its cause', () => {
+    expect(isForeignKeyViolation(fault, 'some_fk')).toBe(true)
+    expect(isForeignKeyViolation(new Error('Failed query', { cause: fault }), 'some_fk')).toBe(true)
+  })
+
+  test('does not match another constraint, another SQLSTATE, or something that is not a fault', () => {
+    expect(isForeignKeyViolation(fault, 'other_fk')).toBe(false)
+    expect(isForeignKeyViolation({ ...fault, code: '23505' }, 'some_fk')).toBe(false)
+    expect(isForeignKeyViolation(new Error('plain'), 'some_fk')).toBe(false)
+    expect(isForeignKeyViolation(null, 'some_fk')).toBe(false)
+    expect(isForeignKeyViolation(undefined, 'some_fk')).toBe(false)
   })
 })
 
@@ -482,6 +665,14 @@ describe('the score schemas', () => {
     expect(PenaltyInputSchema.safeParse({ penaltyKindId: 1, amount: 0.1 }).success).toBe(false)
     expect(PenaltyInputSchema.safeParse({ penaltyKindId: 1, amount: Number.NEGATIVE_INFINITY }).success).toBe(false)
     expect(PenaltyInputSchema.safeParse({ penaltyKindId: 1, amount: Number.NaN }).success).toBe(false)
+  })
+
+  test('a rating may carry detour coverages, each from 0 to 1 or null, and refuses a detour named twice', () => {
+    const withDetours = (detours: unknown[]): unknown => ({ positionId: 1, criteriaSetId: 1, penalties: [], ratings: [{ ...rating, detours }] })
+    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 3, coverage: null }])).success).toBe(true)
+    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 1.5 }])).success).toBe(false)
+    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5, extra: 1 }])).success).toBe(false)
+    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 2, coverage: 0 }])).success).toBe(false)
   })
 
   test('a score input refuses a requirement rated twice, a penalty kind used twice and an unknown key', () => {
