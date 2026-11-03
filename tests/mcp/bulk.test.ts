@@ -4,6 +4,7 @@ import { addPositions, searchPositions } from '../../src/data/repositories/posit
 import { PositionQuerySchema } from '../../src/schemas/positions.ts'
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
 import { inOneTransaction } from '../../src/mcp/bulk.ts'
+import { describeError } from '../../src/mcp/result.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { useSharedScratchDatabase } from './tools/harness.ts'
 
@@ -88,7 +89,31 @@ describe('inOneTransaction', () => {
     expect(opened).toBe(1)
   })
 
-  test('an empty list opens a transaction and returns an empty list', async () => {
-    expect(await inOneTransaction(database(), [], async () => 1)).toEqual([])
+  test('an empty list returns an empty list without calling the per-item function', async () => {
+    let called = 0
+
+    const results = await inOneTransaction(database(), [], async () => {
+      called += 1
+    })
+
+    expect(results).toEqual([])
+    expect(called).toBe(0)
+  })
+
+  test('a BulkItemError from an item is wrapped with this level\'s index and keeps the inner one on its cause', async () => {
+    const inner = new BulkItemError(0, new NotFoundError('route', 9))
+
+    const failure = await thrownBy(() =>
+      inOneTransaction(database(), ['nest-0', 'nest-1', 'nest-2'], async (tx, title, index) => {
+        await writeOne(tx, title)
+        if (index === 2) throw inner
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(BulkItemError)
+    expect(failure).toMatchObject({ index: 2, cause: inner })
+    // describeError adds one level of cause, so the inner reason itself stays on `cause` only.
+    expect(describeError(failure).message).toBe('bulk item 2 failed: bulk item 0 failed')
+    expect(await titlesStored('nest-')).toEqual([])
   })
 })

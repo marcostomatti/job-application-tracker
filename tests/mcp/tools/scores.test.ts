@@ -131,8 +131,9 @@ describe('the scores group', () => {
     const client = await connectTools(scoreTools, counting)
     const arranged = await arrange(database(), 'One transaction')
 
-    await client.call('score_position', covered(arranged))
+    const outcome = await client.call('score_position', covered(arranged))
 
+    expect(outcome.failed).toBe(false)
     expect(opened).toBe(1)
   })
 

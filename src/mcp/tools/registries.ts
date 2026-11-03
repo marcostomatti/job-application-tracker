@@ -19,7 +19,11 @@ export const registryTools: ToolDefinition[] = [
     name: 'registry_add',
     title: 'Add a registry row',
     description:
-      'Adds ONE row to a registry and returns it with its id. The shape of row depends on registry: most take just a label; phase and layer also take a key; stage takes a key, an optional phaseId and the flags isTerminal, isRepeatable, isTraction and isApplied; phase takes isShortlist. ' +
+      'Adds ONE row to a registry and returns it with its id. The shape of row depends on registry. ' +
+      'apply_route, artefact_kind, penalty_kind, rejection_reason, route, set_aside_reason, text_type and work_format take only a label. ' +
+      'seniority takes a label and an optional sort. layer takes a key, a label and an optional sort. phase takes a key, a label, an optional sort and an optional isShortlist flag. ' +
+      'stage takes a key, a label, an optional sort, an optional phaseId and the optional flags isTerminal, isRepeatable, isTraction and isApplied. ' +
+      'sort is the position in the user\'s own order, and only seniority, layer, phase and stage have one. ' +
       'A field the chosen registry does not have is refused. A key the registry already holds is a conflict. ' +
       'Use registry_add_bulk to add several rows to one registry in one call.',
     input: RegistryAddSchema,

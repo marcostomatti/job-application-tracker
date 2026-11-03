@@ -12,6 +12,13 @@ import { BulkItemError } from '../errors.ts'
  * `addPositions` uses) becomes a `BulkItemError` naming the item's index with the real reason as
  * its cause; any other error, such as a lost connection, is rethrown unchanged.
  *
+ * A `BulkItemError` thrown by `perItem` itself, because an item is made of a bulk call of its
+ * own, counts as an item fault too. It is wrapped with this level's index and keeps the inner
+ * one on its cause, so each index belongs to the level that reported it. Left unwrapped, the
+ * caller would read the inner index as the outer one, which is wrong in the one field a bulk
+ * failure exists to communicate. The message then reads "bulk item 2 failed: bulk item 0
+ * failed: route 9 does not exist".
+ *
  * `perItem` receives the transaction as its `Db`, so every repository call it makes joins the
  * same transaction. This function only manages that transaction; it touches no table.
  */
@@ -26,7 +33,7 @@ export async function inOneTransaction<I, R>(
       try {
         results.push(await perItem(tx, item, index))
       } catch (error: unknown) {
-        throw isItemFault(error) ? new BulkItemError(index, error) : error
+        throw isItemFault(error) || error instanceof BulkItemError ? new BulkItemError(index, error) : error
       }
     }
     return results

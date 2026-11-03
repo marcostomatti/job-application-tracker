@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
+import { BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
 import type { PositionInput, PositionPatch, PositionQuery } from '../../schemas/positions.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
