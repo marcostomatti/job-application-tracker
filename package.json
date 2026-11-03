@@ -4,6 +4,10 @@
     "drizzle-kit": "^0.31.11"
   },
   "dependencies": {
+    "@open-tomato/service": "^1.0.1",
+    "@open-tomato/service-express": "^1.0.2",
+    "@open-tomato/service-logger": "^1.0.0",
+    "@open-tomato/service-mcp": "^1.0.1",
     "drizzle-orm": "^0.45.4",
     "postgres": "^4.0.0",
     "zod": "^4.6.7"
