@@ -167,6 +167,19 @@ describe('currentStage', () => {
     expect(found).toBeNull()
   })
 
+  test('raises NotFoundError for a position that does not exist, and null for one with no events', async () => {
+    // Arrange / Act
+    const { missing, noEvents } = await withMigratedScratchDatabase(async (db) => ({
+      missing: await thrownBy(() => currentStage(db, 999_999)),
+      noEvents: await currentStage(db, (await addPosition(db)).id),
+    }))
+
+    // Assert
+    expect(missing).toBeInstanceOf(NotFoundError)
+    expect(statusFor(missing)).toBe(404)
+    expect(noEvents).toBeNull()
+  })
+
   test('returns the latest event by time, not the last one written', async () => {
     // Arrange / Act: the later-dated event is written first, so the highest id is not the latest
     const found = await withMigratedScratchDatabase(async (db) => {
@@ -241,6 +254,19 @@ describe('isApplied', () => {
 
     // Assert
     expect(applied).toBe(false)
+  })
+
+  test('raises NotFoundError for a position that does not exist, and false for one with no events', async () => {
+    // Arrange / Act
+    const { missing, noEvents } = await withMigratedScratchDatabase(async (db) => ({
+      missing: await thrownBy(() => isApplied(db, 999_999)),
+      noEvents: await isApplied(db, (await addPosition(db)).id),
+    }))
+
+    // Assert
+    expect(missing).toBeInstanceOf(NotFoundError)
+    expect(statusFor(missing)).toBe(404)
+    expect(noEvents).toBe(false)
   })
 
   test('is false when the latest stage is null', async () => {

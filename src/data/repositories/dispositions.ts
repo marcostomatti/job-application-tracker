@@ -83,8 +83,12 @@ async function insertStageEvent(db: Db, input: StageEventInput): Promise<StageEv
  * trigger would need. The current stage is read from the latest event, never stored.
  *
  * A stage that was archived, or never existed, is refused (`ArchivedError`, `NotFoundError`),
- * as is a missing position. Nothing stops a stage being recorded twice: a repeatable stage
- * occurs once per round, and counting those rows is how the length of a process is answered.
+ * as is a missing position. Nothing stops a stage being recorded twice, and that is deliberate:
+ * `is_repeatable` is a reading hint, not a write constraint. It tells a consumer that the
+ * stage occurs once per round, and the counting of those rounds ("this process had four
+ * steps") is done by whoever reads the rows. The history is append-only, so refusing a
+ * second record of a stage the user marked non-repeatable would lose something that did
+ * happen, which is worse than an advisory flag.
  */
 export async function appendStageEvent(db: Db, input: StageEventInput): Promise<StageEvent> {
   return db.transaction(async (tx) => {
@@ -113,9 +117,11 @@ async function readLatestEvent(
  * Where the position is now: its latest event by `(occurredAt, id)`, with that stage's flags.
  * Null when the position has no event, and also when the latest event names no stage, which
  * is a normal state before the user has built a stage registry. A stage archived after the
- * event was recorded is still returned, so its label still renders.
+ * event was recorded is still returned, so its label still renders. A position that does not
+ * exist is `NotFoundError`, so "no such position" and "no stage yet" stay different answers.
  */
 export async function currentStage(db: Db, positionId: number): Promise<StageRow | null> {
+  await assertPositionExists(db, positionId)
   const latest = await readLatestEvent(db, positionId)
   return latest?.stage ? { event: latest.event, stage: latest.stage } : null
 }
@@ -125,8 +131,16 @@ export async function currentStage(db: Db, positionId: number): Promise<StageRow
  * the user flagged `is_applied`. A null stage is not applied, and neither is an unflagged
  * one, because the stage registry ships empty and a fresh install must not read every
  * position as committed, which would silently stop `moveIfRecommended` from ever firing.
+ * A position that does not exist is `NotFoundError`: `false` would be an affirmative answer
+ * about nothing.
  */
 export async function isApplied(db: Db, positionId: number): Promise<boolean> {
+  await assertPositionExists(db, positionId)
+  return isAppliedAt(db, positionId)
+}
+
+/** The applied check without the existence read, for a caller that already holds the position's row. */
+async function isAppliedAt(db: Db, positionId: number): Promise<boolean> {
   const latest = await readLatestEvent(db, positionId)
   return latest?.stage?.isApplied === true
 }
@@ -173,7 +187,7 @@ export async function moveIfRecommended(
   if (!input.recommendApply) return null
   return db.transaction(async (tx) => {
     await lockPosition(tx, input.positionId)
-    if (await isApplied(tx, input.positionId)) return null
+    if (await isAppliedAt(tx, input.positionId)) return null
     const stageId = await findShortlistStageId(tx)
     return stageId === null ? null : insertStageEvent(tx, { positionId: input.positionId, stageId })
   })
@@ -254,8 +268,12 @@ async function readLatestSetAsideReasons(db: Db): Promise<Map<number, SetAsideRe
 
 /**
  * The set-aside positions grouped by why (§11.1 group 7). A position is in the group of its
- * latest set-aside reason, once; a later rejection does not remove it, because the two
- * dispositions are separate axes and a position that was only rejected has no set-aside.
+ * latest set-aside reason, once. A later rejection does not remove it: the grouping exists so
+ * the user can see why they passed on leads and refine a gate or a weight from it, and their
+ * judgement happened whatever the other side did afterwards. A position that was only
+ * rejected has no set-aside and is not listed. The positions are read through
+ * `searchPositions`, a page at a time with no cap, so the filter and the archival-safe reads
+ * are the board's own rather than a second query that could drift from them.
  * Client-hidden positions are included, since the user set these aside themselves. Groups
  * come in registry order (reason id) and positions in the board's order, newest seen first.
  * Empty when nothing was set aside.
