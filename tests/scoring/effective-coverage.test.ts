@@ -64,9 +64,13 @@ describe('scoring schema bounds', () => {
   const validRating = { requirementKey: 'req', coverage: 0.5, confidence: 'supported' }
   const validDetour = { requirementKey: 'req', label: 'detour', discount: 0.5, coverage: 0.5 }
 
-  test('rejects a coverage above 1 and a discount below 0', () => {
+  test('rejects a coverage or discount outside 0..1 on either side', () => {
     expect(RatingSchema.safeParse({ ...validRating, coverage: 1.2 }).success).toBe(false)
+    expect(RatingSchema.safeParse({ ...validRating, coverage: -0.1 }).success).toBe(false)
+    expect(DetourSchema.safeParse({ ...validDetour, coverage: 1.2 }).success).toBe(false)
+    expect(DetourSchema.safeParse({ ...validDetour, coverage: -0.1 }).success).toBe(false)
     expect(DetourSchema.safeParse({ ...validDetour, discount: -0.1 }).success).toBe(false)
+    expect(DetourSchema.safeParse({ ...validDetour, discount: 1.2 }).success).toBe(false)
   })
 
   test('accepts a null coverage as not rated', () => {

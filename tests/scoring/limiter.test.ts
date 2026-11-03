@@ -71,6 +71,18 @@ describe('findLimiter', () => {
     expect(result.isUnknown).toBe(true)
   })
 
+  test('puts an unrated requirement ahead of a low rated one, and keeps the rated one as runner up', () => {
+    const result = findLimiter(
+      [requirement('a'), requirement('b'), requirement('unrated')],
+      [rating('a', 0.1), rating('b', 0.1)],
+      [],
+    )
+
+    expect(result.requirementKey).toBe('unrated')
+    expect(result.isUnknown).toBe(true)
+    expect(result.runnerUpKey).toBe('a')
+  })
+
   test('prefers a rated zero over an unrated requirement as the limiter', () => {
     const result = findLimiter(
       [requirement('closed'), requirement('aaa-unrated')],
