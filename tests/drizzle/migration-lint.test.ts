@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -158,17 +158,74 @@ describe('migration lint', () => {
     expect(result.problems[0]).toContain('drizzle')
   })
 
-  test('the lint:migrations script gives the same result from any working directory', () => {
-    const script = join(FIXTURE_ROOT, 'drizzle', 'lint', 'migration-lint.ts')
-    const run = (cwd: string) => {
-      const result = Bun.spawnSync([process.execPath, script], { cwd })
-      return { code: result.exitCode, out: result.stdout.toString(), err: result.stderr.toString() }
+  test('the lint:migrations script lints the checkout it lives in, whatever the working directory', () => {
+    // Arrange: a checkout holding a copy of the script and one bad migration
+    const root = mkdtempSync(join(tmpdir(), 'migration-lint-checkout-'))
+    const elsewhere = mkdtempSync(join(tmpdir(), 'migration-lint-cwd-'))
+    scratchDirs.push(root, elsewhere)
+    mkdirSync(join(root, 'drizzle', 'lint'), { recursive: true })
+    for (const name of ['migration-lint.ts', 'forbidden.ts']) {
+      copyFileSync(join(FIXTURE_ROOT, 'drizzle', 'lint', name), join(root, 'drizzle', 'lint', name))
     }
+    copyFileSync(join(FIXTURES, 'bad-check.sql'), join(root, 'drizzle', 'bad-check.sql'))
+    const script = join(root, 'drizzle', 'lint', 'migration-lint.ts')
 
-    const fromRoot = run(FIXTURE_ROOT)
-    const fromElsewhere = run(tmpdir())
+    // Act: run it from a directory that has no drizzle/ of its own
+    const result = Bun.spawnSync([process.execPath, script], { cwd: elsewhere })
 
-    expect(fromElsewhere).toEqual(fromRoot)
-    expect(fromElsewhere.err).not.toContain('drizzle/ not found')
+    // Assert: the bad migration is found, with a path relative to the checkout
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout.toString()).toContain('drizzle/bad-check.sql:3 vocabulary-in-check')
+  })
+
+  test('does not read a column named copy as a COPY statement, but still rejects COPY', () => {
+    expect(lintMigrations(isolate('copy-column.sql'))).toHaveLength(0)
+
+    const findings = lintMigrations(isolate('copy-statement.sql'))
+
+    expect(findings.map((finding) => finding.rule)).toEqual(['registry-seed'])
+  })
+
+  test('does not read prose such as "3 lines" or a "3." list marker as a row count, but still rejects "93 records"', () => {
+    expect(lintMigrations(isolate('prose-comments.sql'))).toHaveLength(0)
+
+    const findings = lintMigrations(isolate('evade-phrasings.sql'))
+
+    expect(findings).toHaveLength(5)
+  })
+
+  test('rejects a column renamed with RENAME a TO b (no COLUMN keyword), and allows a clean rename', () => {
+    const bad = lintMigrations(isolate('evade-rename-nocolumn.sql'))
+    const legit = lintMigrations(isolate('rename-legit.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['named-column'])
+    expect(bad[0]?.line).toBe(2)
+    expect(legit).toHaveLength(0)
+  })
+
+  test('rejects a dollar-quoted COMMENT ON text that cites a row count or a name, and allows a clean one', () => {
+    const bad = lintMigrations(isolate('evade-comment-dollar.sql'))
+    const legit = lintMigrations(isolate('comment-on-legit.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['leaky-comment', 'leaky-comment'])
+    expect(bad.map((finding) => finding.line)).toEqual([2, 3])
+    expect(legit).toHaveLength(0)
+  })
+
+  test('rejects MERGE ... THEN INSERT with no INTO, and allows a BEFORE INSERT trigger', () => {
+    const bad = lintMigrations(isolate('evade-merge-insert.sql'))
+    const legit = lintMigrations(isolate('trigger-legit.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual(['registry-seed'])
+    expect(bad[0]?.line).toBe(2)
+    expect(legit).toHaveLength(0)
+  })
+
+  test('rejects ALTER TYPE RENAME VALUE to a vocabulary word, and allows a rename to a structural one', () => {
+    const findings = lintMigrations(isolate('evade-rename-value.sql'))
+
+    expect(findings.map((finding) => finding.rule)).toEqual(['vocabulary-in-check'])
+    expect(findings[0]?.line).toBe(2)
+    expect(findings[0]?.detail).toContain('Icelandic')
   })
 })

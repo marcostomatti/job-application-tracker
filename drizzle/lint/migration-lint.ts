@@ -115,15 +115,21 @@ function blankStrings(code: string): string {
 }
 
 /**
- * `COMMENT ON ... IS '...'` is a comment that lives in a string literal and
- * persists in the database. Write its text into the comments layer.
+ * `COMMENT ON ... IS '...'` (or `IS $tag$...$tag$`) is a comment that lives in
+ * a string literal and persists in the database. Write its text into the
+ * comments layer, padded so offsets stay aligned with `code`.
  */
 function withCommentOnText(code: string, comments: string): string {
   let result = comments
-  for (const match of code.matchAll(/\bCOMMENT\s+ON\s+[^;']*?\bIS\s+'/gi)) {
-    const open = match.index + match[0].length - 1
-    const stop = endOfQuoted(code, open, "'")
-    result = `${result.slice(0, open)} ${code.slice(open + 1, stop - 1)} ${result.slice(stop)}`
+  for (const match of code.matchAll(/\bCOMMENT\s+ON\s+[^;'$]*?\bIS\s+('|\$[A-Za-z_]*\$)/gi)) {
+    const delimiter = match[1] as string
+    const open = match.index + match[0].length - delimiter.length
+    const contentStart = open + delimiter.length
+    const close = delimiter === "'" ? endOfQuoted(code, open, "'") - 1 : code.indexOf(delimiter, contentStart)
+    const contentEnd = close === -1 ? code.length : close
+    const stop = Math.min(code.length, contentEnd + delimiter.length)
+    const pad = ' '.repeat(delimiter.length)
+    result = `${result.slice(0, open)}${pad}${code.slice(contentStart, contentEnd)}${pad}${result.slice(stop)}`
   }
   return result
 }
@@ -199,7 +205,7 @@ function vocabularyFinding(file: string, code: string, construct: string, offend
 
 /**
  * The closed sets: `CHECK (...)` bodies, `CREATE TYPE ... AS ENUM (...)`
- * bodies and `ALTER TYPE ... ADD VALUE '...'`. Drizzle's `pgEnum` emits the
+ * bodies and `ALTER TYPE ... ADD VALUE '...'` / `RENAME VALUE ... TO '...'`. Drizzle's `pgEnum` emits the
  * enum forms, so they hold vocabulary just as a CHECK does.
  */
 function closedSetFindings(code: string, file: string): LintFinding[] {
@@ -216,6 +222,11 @@ function closedSetFindings(code: string, file: string): LintFinding[] {
     const open = match.index + match[0].length - 1
     const offending = vocabularyLiterals(code, open, endOfQuoted(code, open, "'"))
     findings.push(...vocabularyFinding(file, code, 'ADD VALUE', offending))
+  }
+  for (const match of code.matchAll(/\bRENAME\s+VALUE\s+'(?:[^']|'')*'\s+TO\s+'/gi)) {
+    const open = match.index + match[0].length - 1
+    const offending = vocabularyLiterals(code, open, endOfQuoted(code, open, "'"))
+    findings.push(...vocabularyFinding(file, code, 'RENAME VALUE', offending))
   }
   return findings
 }
@@ -239,7 +250,7 @@ function deniedWord(columnName: string): string | undefined {
 
 /**
  * Every column a migration introduces: CREATE TABLE items, ALTER TABLE ADD
- * [COLUMN], and RENAME COLUMN ... TO. Expects code with strings blanked.
+ * [COLUMN], and RENAME [COLUMN] ... TO. Expects code with strings blanked.
  */
 function declaredColumns(code: string): { name: string; index: number }[] {
   const columns: { name: string; index: number }[] = []
@@ -254,7 +265,7 @@ function declaredColumns(code: string): { name: string; index: number }[] {
   }
   const introduced = [
     new RegExp(String.raw`\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${IDENTIFIER})`, 'gi'),
-    new RegExp(String.raw`\bRENAME\s+COLUMN\s+(?:${IDENTIFIER})\s+TO\s+(${IDENTIFIER})`, 'gi'),
+    new RegExp(String.raw`\bRENAME\s+(?:COLUMN\s+)?(?:${IDENTIFIER})\s+TO\s+(${IDENTIFIER})`, 'gi'),
   ]
   for (const pattern of introduced) {
     for (const match of code.matchAll(pattern)) {
@@ -283,12 +294,13 @@ function columnFindings(code: string, file: string): LintFinding[] {
   return findings
 }
 
-/** A migration carries structure, never data: any INSERT or COPY is a seed. UPDATE stays allowed. */
+/** A migration carries structure, never data: any INSERT, MERGE ... THEN INSERT or COPY is a seed. UPDATE stays allowed. */
 function seedFindings(code: string, file: string): LintFinding[] {
   const findings: LintFinding[] = []
   const statements: [RegExp, string][] = [
     [/\bINSERT\s+INTO\b/gi, 'INSERT'],
-    [/(?:^|;)\s*COPY\b/gim, 'COPY'],
+    [/\bTHEN\s+INSERT\b/gi, 'INSERT'],
+    [/(?:^|;)\s*COPY\b/gi, 'COPY'],
   ]
   for (const [pattern, keyword] of statements) {
     for (const match of code.matchAll(pattern)) {
@@ -336,8 +348,12 @@ function commentRuns(comments: string): CommentRun[] {
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** A count such as "93 rows", "10k rows", "1.2M rows", "93 records" or "93 entries". */
-const ROW_COUNT = /\b\d[\d.,]*\s*(?:k|m|thousand|million|billion)?\s*(?:rows?|records?|entries|lines)\b/gi
+/**
+ * A count such as "93 rows", "10k rows", "1.2M rows", "93 records" or "93
+ * entries": the number and the noun are adjacent. A "3." list marker is not a
+ * number here, because a number's decimal point must be followed by digits.
+ */
+const ROW_COUNT = /(?<![\w.])\d+(?:[.,]\d+)*\s*(?:k|m|thousand|million|billion)?\s*(?:rows?|records?|entries)\b/gi
 
 function commentFindings(comments: string, file: string, companyNames: readonly string[]): LintFinding[] {
   const findings: LintFinding[] = []
