@@ -32,6 +32,12 @@ const ORIGIN_OPTIONAL_COLUMNS = ['positionId', 'routeId', 'note', 'searchRunId']
  * reports when it refuses. The key is the guarantee that the row exists, so a write does not
  * read first and race the delete; it only types the fault the database raised.
  */
+/**
+ * These constraint names are drizzle's generated defaults (`<table>_<column>_<target table>_<target
+ * column>_fk`), not names this repository chose. Renaming a key in the schema or a migration
+ * without renaming it here turns a 404 into a raw driver error that carries the statement; the
+ * `recordOrigin` and `attachOrigin` tests for a missing position and search run are what catch it.
+ */
 type ReferenceKey = { readonly constraint: string; readonly entity: string }
 const POSITION_KEY: ReferenceKey = { constraint: 'origin_position_id_position_id_fk', entity: 'position' }
 const SEARCH_RUN_KEY: ReferenceKey = { constraint: 'origin_search_run_id_search_run_id_fk', entity: 'search run' }

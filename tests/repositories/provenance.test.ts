@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
+import postgres from 'postgres'
 
 import type { DrizzleClient } from '../../src/data/client.ts'
 import * as repositoryModule from '../../src/data/repositories/provenance.ts'
@@ -16,6 +17,7 @@ import { addPositions, type Position } from '../../src/data/repositories/positio
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
 import { position } from '../../src/data/schema/positions.ts'
 import { origin } from '../../src/data/schema/provenance.ts'
+import type { Origin } from '../../src/entities/provenance.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import { firstTouch } from '../../src/provenance/first-touch.ts'
 import {
@@ -50,11 +52,36 @@ async function databaseNow(db: DrizzleClient): Promise<Date> {
   return new Date(rows[0]?.now ?? '')
 }
 
-/** A calendar day `offset` days from today in UTC, as `YYYY-MM-DD`. */
-function dayFromToday(offset: number): string {
-  const moved = new Date()
-  moved.setUTCDate(moved.getUTCDate() + offset)
-  return moved.toISOString().slice(0, 10)
+/**
+ * A calendar day `offset` days from today in UTC, as `YYYY-MM-DD`, read from the database
+ * clock: the view's "today" is that clock's, so a fixture dated from the JavaScript clock could
+ * disagree with it for a moment around UTC midnight.
+ */
+async function dayFromToday(db: DrizzleClient, offset: number): Promise<string> {
+  const rows = await db.execute<{ day: string }>(sql`SELECT ((now() AT TIME ZONE 'utc')::date + ${offset}::int)::text AS day`)
+  return rows[0]?.day ?? ''
+}
+
+/**
+ * Reads first touch both ways, from the view and from `firstTouch` over the position's rows
+ * at the database's clock, and fails unless they agree. Returns the shared answer.
+ */
+async function firstTouchBothWays(db: DrizzleClient, positionId: number): Promise<Origin | null> {
+  const fromView = await getFirstTouch(db, positionId)
+  const fromFunction = firstTouch(await listOrigins(db, positionId), await databaseNow(db))
+  expect(fromView).toEqual(fromFunction)
+  return fromView
+}
+
+/** Polls until some backend is blocked on a lock, which is the moment the other transaction may commit. */
+async function waitUntilABackendWaitsOnALock(observer: postgres.Sql): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const [row] = await observer`select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`
+    if ((row?.waiting ?? 0) > 0) return
+    await Bun.sleep(20)
+  }
+  throw new Error('no backend ever waited on a lock')
 }
 
 describe('recordOrigin', () => {
@@ -154,16 +181,13 @@ describe('getFirstTouch', () => {
       const query = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
       await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-12' })
       const conversation = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-03' })
-      await recordOrigin(db, { positionId: target.id, touchedOn: dayFromToday(400) })
 
       // Act
-      const fromView = await getFirstTouch(db, target.id)
-      const fromFunction = firstTouch(await listOrigins(db, target.id), await databaseNow(db))
+      const shared = await firstTouchBothWays(db, target.id)
 
       // Assert
-      expect(fromView).toEqual(fromFunction)
-      expect(fromView?.id).toBe(conversation.id)
-      expect(fromView?.id).not.toBe(query.id)
+      expect(shared?.id).toBe(conversation.id)
+      expect(shared?.id).not.toBe(query.id)
     })
   })
 
@@ -179,36 +203,71 @@ describe('getFirstTouch', () => {
       await db.update(origin).set({ recordedAt: new Date('2026-01-11T08:00:00Z') }).where(eq(origin.id, third.id))
 
       // Act
-      const fromView = await getFirstTouch(db, target.id)
-      const fromFunction = firstTouch(await listOrigins(db, target.id), await databaseNow(db))
+      const shared = await firstTouchBothWays(db, target.id)
 
       // Assert: the earlier recorded_at wins, and equal timestamps fall to the lower id
-      expect(fromView?.id).toBe(second.id)
-      expect(fromView).toEqual(fromFunction)
+      expect(shared?.id).toBe(second.id)
     })
   })
 
-  test('skips a future-dated origin, and is null when that is the only one', async () => {
+  test('skips a future-dated origin: a position with only future origins has none, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      // Arrange
+      // Arrange: the future dates are the earliest rows these positions have, so only the cutoff decides
       const lone = await addPosition(db, 'Lone')
-      const mixed = await addPosition(db, 'Mixed')
+      const several = await addPosition(db, 'Several')
       await recordOrigin(db, { positionId: lone.id, touchedOn: '2126-10-28' })
-      const real = await recordOrigin(db, { positionId: mixed.id, touchedOn: '2026-01-05' })
-      await recordOrigin(db, { positionId: mixed.id, touchedOn: '2126-10-28' })
+      await recordOrigin(db, { positionId: several.id, touchedOn: '2126-10-28' })
+      await recordOrigin(db, { positionId: several.id, touchedOn: '2127-01-01' })
 
       // Act / Assert
-      expect(await getFirstTouch(db, lone.id)).toBeNull()
-      expect((await getFirstTouch(db, mixed.id))?.id).toBe(real.id)
+      expect(await firstTouchBothWays(db, lone.id)).toBeNull()
+      expect(await firstTouchBothWays(db, several.id)).toBeNull()
       expect(await listOrigins(db, lone.id)).toHaveLength(1)
     })
   })
 
-  test('counts an origin dated today', async () => {
+  test('skips a future-dated origin even when it has the lower id and the earlier recorded_at', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      // Arrange: the typo was entered first, so every tie-break would prefer it to the real touch
+      const target = await addPosition(db)
+      const typo = await recordOrigin(db, { positionId: target.id, touchedOn: '2126-10-28' })
+      const real = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
+      await db.update(origin).set({ recordedAt: new Date('2020-01-01T00:00:00Z') }).where(eq(origin.id, typo.id))
+
+      // Act
+      const shared = await firstTouchBothWays(db, target.id)
+
+      // Assert
+      expect(typo.id).toBeLessThan(real.id)
+      expect(shared?.id).toBe(real.id)
+    })
+  })
+
+  test('counts an origin dated today and skips a future one beside it, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
       const target = await addPosition(db)
-      const today = await recordOrigin(db, { positionId: target.id, touchedOn: dayFromToday(0) })
-      expect((await getFirstTouch(db, target.id))?.id).toBe(today.id)
+      const today = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
+      await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 400) })
+
+      expect((await firstTouchBothWays(db, target.id))?.id).toBe(today.id)
+    })
+  })
+
+  test('counts an origin dated today when it is the only one, on both sides', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const today = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
+
+      expect((await firstTouchBothWays(db, target.id))?.id).toBe(today.id)
+    })
+  })
+
+  test('skips tomorrow: the day after today is the first one the cutoff refuses', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 1) })
+
+      expect(await firstTouchBothWays(db, target.id)).toBeNull()
     })
   })
 
@@ -263,6 +322,38 @@ describe('an origin with no position', () => {
       expect(statusFor(elsewhere)).toBe(409)
       expect((await listOrigins(db, other.id))).toHaveLength(0)
     })
+  })
+
+  test('two callers attaching one origin to different positions cannot both succeed', async () => {
+    // Arrange / Act: another connection attaches it to one position and holds that open, so the
+    // attach to the other position waits on the row, then re-reads it once the first commits
+    const { error, rows, firstId } = await withMigratedScratchDatabase(async (db, sql) => {
+      const url = new URL(process.env.DATABASE_URL ?? '')
+      url.pathname = `/${sql.options.database}`
+      const writer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+      const observer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+      try {
+        const winner = await addPosition(db, 'Winner')
+        const loser = await addPosition(db, 'Loser')
+        const floating = await recordOrigin(db, { touchedOn: '2026-01-03' })
+        let attempt: Promise<unknown> = Promise.resolve()
+        await writer.begin(async (transaction) => {
+          await transaction`update origin set position_id = ${winner.id} where id = ${floating.id}`
+          attempt = thrownBy(() => attachOrigin(db, floating.id, loser.id))
+          await waitUntilABackendWaitsOnALock(observer)
+        })
+        const error = await attempt
+        const rows = await observer`select position_id from origin where id = ${floating.id}`
+        return { error, rows: rows.map((row) => row.position_id), firstId: winner.id }
+      } finally {
+        await writer.end()
+        await observer.end()
+      }
+    })
+
+    // Assert: the second caller saw the committed attach and was refused; the origin stayed put
+    expect(error).toBeInstanceOf(ConflictError)
+    expect(rows).toEqual([firstId])
   })
 
   test('refuses an origin or a position that does not exist', async () => {
