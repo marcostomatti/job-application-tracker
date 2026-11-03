@@ -50,6 +50,13 @@ export const origin = pgTable(
  * The origin that first reached each position: the smallest `(touched_on, recorded_at, id)`
  * among origins not dated after today. The same rule as `firstTouch` in code, and a test
  * pins that the two agree. An origin with no position has no row here.
+ *
+ * "Today" is the UTC date, `(now() AT TIME ZONE 'utc')::date`, and never `CURRENT_DATE`:
+ * `CURRENT_DATE` follows the session's TimeZone setting, so a database not set to UTC would
+ * answer differently from `firstTouch`, which also reads UTC. Agreement between the two beats
+ * local-date precision. The only cost is a window of a few hours around midnight in which a
+ * future-dated typo is filtered a little early or late, and a mistyped day corrects itself
+ * the next day anyway.
  */
 export const positionFirstTouch = pgView('position_first_touch').as((qb) =>
   qb
@@ -60,6 +67,6 @@ export const positionFirstTouch = pgView('position_first_touch').as((qb) =>
       touchedOn: origin.touchedOn,
     })
     .from(origin)
-    .where(sql`${origin.positionId} IS NOT NULL AND ${origin.touchedOn} <= CURRENT_DATE`)
+    .where(sql`${origin.positionId} IS NOT NULL AND ${origin.touchedOn} <= (now() AT TIME ZONE 'utc')::date`)
     .orderBy(origin.positionId, origin.touchedOn, origin.recordedAt, origin.id),
 )

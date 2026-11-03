@@ -43,6 +43,13 @@
       "when": 1793707004230,
       "tag": "0005_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793707166819,
+      "tag": "0006_provenance_utc_today",
+      "breakpoints": true
     }
   ]
 }

@@ -40,9 +40,9 @@ async function addRoute(tx: Tx, label: string): Promise<number> {
   return row!.id
 }
 
-/** The database's own idea of today, so the view and the function are asked about the same day. */
+/** Today's UTC date as the database reads it, the day both the view and the function use. */
 async function databaseToday(tx: Tx): Promise<{ text: string; date: Date }> {
-  const rows = await tx.execute<{ today: string }>(sql`SELECT CURRENT_DATE::text AS today`)
+  const rows = await tx.execute<{ today: string }>(sql`SELECT (now() AT TIME ZONE 'utc')::date::text AS today`)
   const text = rows[0]!.today
   return { text, date: new Date(`${text}T00:00:00Z`) }
 }
@@ -167,6 +167,55 @@ describe('provenance', () => {
     expect(byPosition.get(outcome.ids.onlyTypo)!.viewRow).toBeUndefined()
     expect(byPosition.get(outcome.ids.onlyToday)!.derived).not.toBeNull()
     expect(byPosition.get(outcome.ids.onlyToday)!.viewRow).toBeDefined()
+  })
+
+  test('the view and firstTouch agree whatever time zone the session uses', async () => {
+    // Arrange: one zone far ahead of UTC and one far behind. Between them, at every hour of the
+    // day at least one has a local date that differs from the UTC date, which is what a view
+    // built on the session's CURRENT_DATE would get wrong.
+    const farZones = ['Pacific/Kiritimati', 'Etc/GMT+12']
+
+    // Act
+    const runs = []
+    for (const zone of farZones) {
+      runs.push(
+        await rolledBack(async (tx, token) => {
+          await tx.execute(sql.raw(`SET LOCAL TimeZone = '${zone}'`))
+          const utcToday = await databaseToday(tx)
+          const localToday = await tx.execute<{ today: string }>(sql`SELECT CURRENT_DATE::text AS today`)
+          const routeId = await addRoute(tx, `zone-${token}`)
+          const tomorrowOnly = await addPosition(tx, token, 'tomorrow')
+          const todayOnly = await addPosition(tx, token, 'today')
+          const mixed = await addPosition(tx, token, 'mixed')
+          const tomorrow = dayFrom(utcToday.text, 1)
+          await tx.insert(origin).values([
+            { positionId: tomorrowOnly, routeId, touchedOn: tomorrow },
+            { positionId: todayOnly, routeId, touchedOn: utcToday.text },
+            { positionId: mixed, routeId, touchedOn: tomorrow },
+            { positionId: mixed, routeId, touchedOn: utcToday.text },
+          ])
+          const compared = []
+          for (const positionId of [tomorrowOnly, todayOnly, mixed]) {
+            const rows: Origin[] = await tx.select().from(origin).where(eq(origin.positionId, positionId))
+            const [viewRow] = await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.positionId, positionId))
+            compared.push({ derived: firstTouch(rows, utcToday.date), viewRow })
+          }
+          return { zone, localDiffers: localToday[0]!.today !== utcToday.text, compared }
+        }),
+      )
+    }
+
+    // Assert: the zone really moved the date for at least one run, and the two sides still agree
+    expect(runs.some((run) => run.localDiffers)).toBe(true)
+    for (const run of runs) {
+      for (const { derived, viewRow } of run.compared) {
+        expect(viewRow?.originId ?? null).toBe(derived?.id ?? null)
+        expect(viewRow?.touchedOn ?? null).toBe(derived?.touchedOn ?? null)
+      }
+      expect(run.compared[0]!.derived).toBeNull()
+      expect(run.compared[1]!.derived).not.toBeNull()
+      expect(run.compared[2]!.derived?.touchedOn).toBe(run.compared[1]!.derived?.touchedOn)
+    }
   })
 
   test('an archived route still resolves its label from an origin, and leaves the pick-list', async () => {

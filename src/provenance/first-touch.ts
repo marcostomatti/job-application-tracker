@@ -22,7 +22,11 @@ function byTouchOrder(a: Origin, b: Origin): number {
  * mistyped year would otherwise become the lead's origin. The caller's array is not changed,
  * so the skipped row stays readable. A day equal to `today` counts.
  *
- * `today` is read as its UTC calendar day, to match a database running in UTC.
+ * "Today" is the UTC calendar day of `today`, and that is authoritative: the view uses
+ * `(now() AT TIME ZONE 'utc')::date` for the same reason, so the two answer alike whatever
+ * time zone the database session or the caller runs in. Determinism between them is worth
+ * more than local-date precision; the cost is a window of a few hours around midnight in which
+ * a future-dated typo is filtered a little early or late.
  */
 export function firstTouch(origins: readonly Origin[], today: Date): Origin | null {
   const cutoff = calendarDay(today)
