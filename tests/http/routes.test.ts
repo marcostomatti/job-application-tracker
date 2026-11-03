@@ -401,11 +401,19 @@ describe('the criteria and configuration routes', () => {
     expect(dataOf(unchanged)).toEqual([expect.objectContaining({ weight: 1 })])
   })
 
-  test('PATCH a requirement runs its ownership check and its write inside one transaction', async () => {
+  test('PATCH a requirement runs its ownership check and its write on the transaction, never on the outer handle', async () => {
     const { setId, requirementId } = await arrangeSet(database(), 'Transactional edit')
+    const QUERY_VERBS = new Set<string | symbol>(['select', 'insert', 'update', 'delete'])
     let transactions = 0
-    const counting = new Proxy(database(), {
+    // The outer handle refuses every query, so a read or a write moved off the transaction fails
+    // the request (a 500) instead of passing unnoticed. Only `transaction` is let through.
+    const outer = new Proxy(database(), {
       get(target, property, receiver) {
+        if (QUERY_VERBS.has(property)) {
+          return (): never => {
+            throw new Error(`a query was issued on the outer handle: ${String(property)}`)
+          }
+        }
         const value: unknown = Reflect.get(target, property, receiver)
         if (property !== 'transaction' || typeof value !== 'function') return value
         return (...args: unknown[]): unknown => {
@@ -414,14 +422,17 @@ describe('the criteria and configuration routes', () => {
         }
       },
     })
-    const counted = await startTestServer((app) => mountRoutes(app, counting))
+    const guarded = await startTestServer((app) => mountRoutes(app, outer))
 
     try {
-      const outcome = await counted.request('PATCH', `/api/criteria-sets/${setId}/requirements/${requirementId}`, { patch: { weight: 4 } })
+      const outcome = await guarded.request('PATCH', `/api/criteria-sets/${setId}/requirements/${requirementId}`, { patch: { weight: 4 } })
+      const stored = await live.request('GET', `/api/criteria-sets/${setId}/requirements`)
+
       expect(outcome.status).toBe(200)
       expect(transactions).toBe(1)
+      expect(dataOf(stored)).toEqual([expect.objectContaining({ id: requirementId, weight: 4 })])
     } finally {
-      await counted.close()
+      await guarded.close()
     }
   })
 
