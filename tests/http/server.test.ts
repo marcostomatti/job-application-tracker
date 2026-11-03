@@ -15,6 +15,7 @@ import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
 import type { BackupTimers } from '../../src/backup/schedule.ts'
 import { setBackupSettings } from '../../src/data/repositories/config.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
+import { countingDb } from '../backup/db-proxies.ts'
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
 import { backupOptionsFor, startService } from '../../src/http/server.ts'
@@ -403,6 +404,7 @@ describe('startService', () => {
     test('reads its settings from the database it is given, so a local app_config cannot change the test', async () => {
       await withMigratedScratchDatabase(async (scratch) => {
         await setBackupSettings(scratch, { enabled: false })
+        const counted = countingDb(scratch)
         const calls: SpawnRequest[] = []
         const spawn: Spawner = async (request) => {
           calls.push(request)
@@ -410,10 +412,14 @@ describe('startService', () => {
         }
         const started: unknown[] = []
         const timers: BackupTimers = { setInterval: () => void started.push(1), clearInterval: () => {} }
+        const selectsBefore = counted.selects()
 
-        await start({ backup: { db: scratch, outDir: tmpdir(), spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
+        await start({ backup: { db: counted.db, outDir: tmpdir(), spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
         await stopRunning()
 
+        // The scratch database was read (this fails if the override is dropped, whatever the shared
+        // database says), and what it said, backups off, is what the schedule did
+        expect(counted.selects()).toBeGreaterThan(selectsBefore)
         expect(started).toEqual([])
         expect(calls).toEqual([])
       })

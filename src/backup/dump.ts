@@ -52,9 +52,10 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_DRAIN_MS = 1_000
 
 /**
- * The most of the child's stderr that is kept in memory. It is far above `MESSAGE_STDERR_MAX_CHARS`
- * on purpose: the credential is removed from the text first and the text is cut afterwards, so
- * the cut can never land inside a URL and leave a fragment the redaction no longer matches.
+ * The most of the child's stderr that is kept in memory. This bound does cut before redaction,
+ * so a URL straddling it would leave a fragment. That is harmless only because it sits far past
+ * `MESSAGE_STDERR_MAX_CHARS`: the credential is removed from the text first and the message is
+ * cut afterwards, so none of the characters beyond this bound ever reach a message.
  */
 const STDERR_CAPTURE_MAX_CHARS = 64_000
 

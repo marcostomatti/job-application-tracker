@@ -8,6 +8,7 @@ import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
 import { setBackupSettings } from '../../src/data/repositories/config.ts'
 import type { Db } from '../../src/data/repositories/db.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
+import { flakyDb } from './db-proxies.ts'
 
 const NOW = new Date('2026-11-03T09:05:07Z')
 const NEW_DUMP = 'tracker-20261103T090507Z.dump'
@@ -177,31 +178,42 @@ describe('startBackupSchedule', () => {
   test('a settings read that fails at start does not end the schedule: the timer is armed and a later tick recovers', async () => {
     await withMigratedScratchDatabase(async (real) => {
       // Arrange: a database whose first two selects fail, as a hiccup at boot would
-      let failures = 2
-      const flaky = new Proxy(real, {
-        get(target, property) {
-          if (property !== 'select') return Reflect.get(target, property)
-          return (...args: Parameters<typeof target.select>) => {
-            if (failures-- > 0) throw new Error('connection reset')
-            return (target.select as (...a: unknown[]) => unknown)(...args)
-          }
-        },
-      }) as Db
+      const flaky = flakyDb(real, 2)
       const logged: string[] = []
       const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
       const { calls, timers, started } = start(flaky, { logger })
 
-      // Act: start does not reject, and the failure is logged by class name only
+      // Act: start does not reject, and the failure is logged by class name only, at once
       const handle = await started
       expect(timers.started).toHaveLength(1)
       expect(calls).toEqual([])
       expect(logged.join('\n')).not.toContain('connection reset')
-      expect(logged.length).toBeGreaterThan(0)
+      expect(logged.some((line) => line.includes('could not be read'))).toBe(true)
 
       // Assert: the next hourly tick reads the settings again and makes the due dump
       timers.started[0]?.run()
       await handle.stop()
       expect(calls).toHaveLength(1)
+    })
+  })
+
+  test('a database that stays down logs a failure at each hourly check, so no one waits to learn why', async () => {
+    await withMigratedScratchDatabase(async (real) => {
+      const logged: string[] = []
+      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+      const { calls, timers, started } = start(flakyDb(real, Number.MAX_SAFE_INTEGER), { logger })
+      const handle = await started
+      const afterStart = logged.length
+
+      timers.started[0]?.run()
+      await until(() => logged.length > afterStart)
+      const afterOneTick = logged.length
+      timers.started[0]?.run()
+      await until(() => logged.length > afterOneTick)
+      await handle.stop()
+
+      expect(afterStart).toBeGreaterThan(0)
+      expect(calls).toEqual([])
     })
   })
 
@@ -226,6 +238,13 @@ describe('startBackupSchedule', () => {
     })
   })
 })
+
+/** Waits, up to a few seconds, for something a timer tick does in the background. */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(condition()).toBe(true)
+}
 
 /** A partial dump on disk whose last write was `ageMs` before `NOW`. */
 async function seedPartial(name: string, ageMs: number): Promise<void> {

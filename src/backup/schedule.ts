@@ -202,11 +202,19 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
   const log = opts.logger ?? defaultLogger()
   const timers = opts.timers ?? realTimers
   const now = opts.now ?? (() => new Date())
-  // A read that fails here is not final: the schedule starts anyway and the first check, and
-  // every hourly one after it, reads the settings again and logs a failure. Unreadable settings
-  // are treated as backups on, which is the data-safe side and what `readBackupSettings` does
-  // for a stored value it cannot use.
-  const settings = await readBackupSettings(opts.db, log).catch(() => undefined)
+  // A read that throws here, as a database hiccup at boot would, is logged and is not final: the
+  // schedule starts anyway, and the first check and every hourly one after it read the settings
+  // again, each logging its own failure, so a database that stays down is reported every hour.
+  // Until a read succeeds, nothing is dumped: with no settings there is no `keep` to prune by.
+  //
+  // That is a different case from a stored `enabled` that cannot be used (not a boolean), which
+  // `readBackupSettings` reads as `true` on purpose. There the setting is unreadable but the
+  // database is fine, and a backup nobody wanted is a gitignored 0600 file on the user's own
+  // disk, while a silently missing backup is data loss found at the worst moment.
+  const settings = await readBackupSettings(opts.db, log).catch((error: unknown) => {
+    log.error({ reason: describeError(error) }, 'backup settings could not be read; the schedule starts and will try again at each check')
+    return undefined
+  })
   if (settings !== undefined && !settings.enabled) {
     log.info({}, 'backups are off in app_config; no schedule started')
     return { stop: async () => {} }

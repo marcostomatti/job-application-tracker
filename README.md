@@ -109,7 +109,18 @@ running, and takes the user, password and database from `DATABASE_URL` as usual.
 
 The connection is given to `pg_dump` through its `PG*` environment variables, so the password
 is in no command line, and an error from `pg_dump` is shown with the URL and password removed.
-Restore with `pg_restore --dbname <url> backups/<file>`.
+Restore into an empty database with the connection in `PG*` variables and the password at a
+prompt, not in a command line:
+
+```sh
+export PGHOST=<host> PGPORT=<port> PGUSER=<user> PGDATABASE=<database>
+read -rs PGPASSWORD && export PGPASSWORD     # asks for it without echoing it
+pg_restore backups/<file>
+```
+
+Do not write `pg_restore --dbname <url>` here, or anywhere: a URL on a command line is readable by
+every other user on the machine through `ps`, which is why the dump above splits the URL into
+variables, and a `~/.pgpass` file is an equally good place for the password.
 
 ## The HTTP service
 
