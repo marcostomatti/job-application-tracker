@@ -11,7 +11,7 @@ import {
   setDefaultCriteriaSet,
   updateRequirement,
 } from '../../src/data/repositories/criteria.ts'
-import { CriteriaSetConflictError, detour, insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
+import { CriteriaSetConflictError, criteriaSet, detour, insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
 import { layer } from '../../src/data/schema/registries.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import {
@@ -183,15 +183,71 @@ describe('createCriteriaVersion', () => {
     expect(sets.find((row) => row.isDefault)?.version).toBe(1)
   })
 
-  test('takes a name when one is given, and starts it at version plus one of the source', async () => {
+  test('takes a name when one is given, and numbers from that name, not from the source', async () => {
     // Arrange / Act
-    const created = await withMigratedScratchDatabase(async (db) => {
+    const { renamed, again } = await withMigratedScratchDatabase(async (db) => {
       const set = await insertCriteriaSet(db, { name: 'Base', version: 4 })
-      return createCriteriaVersion(db, { fromSetId: set.id, name: 'Renamed' })
+      const renamed = await createCriteriaVersion(db, { fromSetId: set.id, name: 'Renamed' })
+      return { renamed, again: await createCriteriaVersion(db, { fromSetId: set.id, name: 'Renamed' }) }
     })
 
     // Assert
-    expect(created).toMatchObject({ name: 'Renamed', version: 5, applyThreshold: null })
+    expect(renamed).toMatchObject({ name: 'Renamed', version: 1, applyThreshold: null })
+    expect(again).toMatchObject({ name: 'Renamed', version: 2 })
+  })
+
+  test('copying v1 while v2 and v3 exist makes v4, carrying v1 weights and threshold', async () => {
+    // Arrange / Act
+    const { created, copied } = await withMigratedScratchDatabase(async (db) => {
+      const { setId } = await judgedSet(db)
+      const second = await createCriteriaVersion(db, { fromSetId: setId })
+      const secondRequirement = (await getRequirements(db, second.id)).find((row) => row.key === 'a')
+      if (!secondRequirement) throw new Error('v2 has no requirement a')
+      await updateRequirement(db, secondRequirement.id, { weight: 9 })
+      await db.update(criteriaSet).set({ applyThreshold: 0.9 }).where(eq(criteriaSet.id, second.id))
+      await createCriteriaVersion(db, { fromSetId: second.id })
+      const created = await createCriteriaVersion(db, { fromSetId: setId })
+      return { created, copied: await getRequirements(db, created.id) }
+    })
+
+    // Assert
+    expect(created).toMatchObject({ name: 'Mine', version: 4, applyThreshold: 0.6 })
+    expect(copied.find((row) => row.key === 'a')?.weight).toBe(2.5)
+  })
+
+  test('numbers past an archived version too, so a retired number is not reused', async () => {
+    // Arrange / Act
+    const created = await withMigratedScratchDatabase(async (db) => {
+      const first = await insertCriteriaSet(db, { name: 'Line' })
+      await insertCriteriaSet(db, { name: 'Line', version: 2, archivedAt: new Date() })
+      return createCriteriaVersion(db, { fromSetId: first.id })
+    })
+
+    // Assert
+    expect(created.version).toBe(3)
+  })
+
+  test('gives two connections creating a version at the same moment two different numbers', async () => {
+    // Arrange / Act
+    const { outcomes, versions } = await withMigratedScratchDatabase(async (db, sql) => {
+      const url = new URL(process.env.DATABASE_URL ?? '')
+      url.pathname = `/${sql.options.database}`
+      const second = postgres(url.toString(), { max: 1, onnotice: () => {} })
+      try {
+        const other = drizzle(second)
+        const { setId } = await judgedSet(db)
+        const outcomes = await Promise.allSettled(
+          Array.from({ length: 8 }, (_, index) => createCriteriaVersion(index % 2 === 0 ? db : other, { fromSetId: setId })),
+        )
+        return { outcomes, versions: (await listCriteriaSets(db)).map((row) => row.version).sort() }
+      } finally {
+        await second.end()
+      }
+    })
+
+    // Assert
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toEqual([])
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
   })
 
   test('copies a set with no requirements, and a vanilla set with no judgement stays without any', async () => {
@@ -216,23 +272,6 @@ describe('createCriteriaVersion', () => {
 
     // Assert
     expect(created.archivedAt).toBeNull()
-  })
-
-  test('raises a conflict, leaving nothing behind, when that version already exists', async () => {
-    // Arrange / Act
-    const { error, requirementCount } = await withMigratedScratchDatabase(async (db) => {
-      const { setId } = await judgedSet(db)
-      await createCriteriaVersion(db, { fromSetId: setId })
-      const before = await db.select({ total: count() }).from(requirement)
-      const error = await thrownBy(() => createCriteriaVersion(db, { fromSetId: setId }))
-      const after = await db.select({ total: count() }).from(requirement)
-      return { error, requirementCount: [before[0]?.total, after[0]?.total] }
-    })
-
-    // Assert
-    expect(error).toBeInstanceOf(CriteriaSetConflictError)
-    expect(statusFor(error)).toBe(409)
-    expect(requirementCount[0]).toBe(requirementCount[1])
   })
 
   test('refuses a source that does not exist', async () => {
@@ -495,18 +534,49 @@ describe('the other criteria schemas', () => {
   })
 })
 
-describe('what a conflict carries', () => {
-  test('a duplicate version is a ConflictError whose message leaves the driver text on the cause', async () => {
-    // Arrange / Act
-    const error = await withMigratedScratchDatabase(async (db) => {
-      const { setId } = await judgedSet(db)
-      await createCriteriaVersion(db, { fromSetId: setId })
-      return thrownBy(() => createCriteriaVersion(db, { fromSetId: setId }))
+describe('the unique constraint behind createCriteriaVersion', () => {
+  test('turns a version claimed by an uncommitted writer into a ConflictError, with nothing copied', async () => {
+    // Arrange / Act: another connection inserts v2 and holds it open, so the version read cannot see it
+    const { error, requirementCount } = await withMigratedScratchDatabase(async (db, sql) => {
+      const url = new URL(process.env.DATABASE_URL ?? '')
+      url.pathname = `/${sql.options.database}`
+      const writer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+      const observer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+      try {
+        const { setId } = await judgedSet(db)
+        const before = (await db.select({ total: count() }).from(requirement))[0]?.total
+        let attempt: Promise<unknown> = Promise.resolve()
+        await writer.begin(async (transaction) => {
+          await transaction`insert into criteria_set (name, version) values ('Mine', 2)`
+          attempt = thrownBy(() => createCriteriaVersion(db, { fromSetId: setId }))
+          await waitUntilABackendWaitsOnALock(observer)
+        })
+        const error = await attempt
+        const after = (await db.select({ total: count() }).from(requirement))[0]?.total
+        return { error, requirementCount: [before, after] }
+      } finally {
+        await writer.end()
+        await observer.end()
+      }
     })
 
     // Assert
+    expect(error).toBeInstanceOf(CriteriaSetConflictError)
     expect(error).toBeInstanceOf(ConflictError)
+    expect(statusFor(error)).toBe(409)
     expect((error as Error).message).not.toMatch(/insert|select|duplicate key/i)
     expect((error as Error).cause).toBeDefined()
+    expect(requirementCount[0]).toBe(requirementCount[1])
   })
 })
+
+/** Polls until some backend is blocked on a lock, which is the moment the other transaction may commit. */
+async function waitUntilABackendWaitsOnALock(observer: postgres.Sql): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const [row] = await observer`select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`
+    if ((row?.waiting ?? 0) > 0) return
+    await Bun.sleep(20)
+  }
+  throw new Error('no backend ever waited on a lock')
+}

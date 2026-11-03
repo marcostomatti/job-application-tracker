@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray, isNull, type InferSelectModel, type SQL } from 'drizzle-orm'
+import { asc, desc, eq, inArray, isNull, max, type InferSelectModel, type SQL } from 'drizzle-orm'
 
 import { ArchivedError, NotFoundError } from '../../errors.ts'
 import type { RequirementPatch } from '../../schemas/criteria.ts'
@@ -124,27 +124,39 @@ async function copyDetours(db: Db, newIdByOldId: ReadonlyMap<number, number>): P
   if (copies.length > 0) await db.insert(detour).values(copies)
 }
 
+/** The next free version number under a name: one past the highest that exists, archived ones included. */
+async function nextVersionFor(db: Db, name: string): Promise<number> {
+  const [highest] = await db.select({ version: max(criteriaSet.version) }).from(criteriaSet).where(eq(criteriaSet.name, name))
+  return (highest?.version ?? 0) + 1
+}
+
 /**
- * Makes the next version of a criteria set: a new set at the source's version plus one,
- * with the source's requirements, anchors, detours, weights and apply threshold copied in.
- * The weights and the threshold are copied on purpose. A new version of the user's own
- * criteria is a starting point to adjust, and a blank form to refill would throw their
- * judgement away; it is a vanilla pack that ships without any.
+ * Makes a new version of a criteria set: a new set under the same name (or `input.name`),
+ * numbered one past the highest version that name already has, with the source's
+ * requirements, anchors, detours, weights and apply threshold copied in. The number is a
+ * sequence and not a lineage marker (the table records no parent), so copying v1 while v2
+ * exists gives v3 carrying v1's content. The weights and the threshold are copied on
+ * purpose: a new version of the user's own criteria is a starting point to adjust, and a
+ * blank form to refill would throw their judgement away; it is a vanilla pack that ships
+ * without any.
  *
  * The copy is never the default (choosing one is `setDefaultCriteriaSet`'s job) and is never
- * archived, whatever the source was. A version that already exists under that name is a
- * `CriteriaSetConflictError`, and the whole copy rolls back with it. The set and every row
- * under it are written in one transaction, so a failed copy leaves no half-built version.
+ * archived, whatever the source was. Everything is written in one transaction, so a failed
+ * copy leaves no half-built version. The set rows are locked first, so two callers cannot
+ * read the same highest version and claim the same number; the `(name, version)` unique
+ * constraint stays as the backstop and surfaces as `CriteriaSetConflictError`.
  */
 export async function createCriteriaVersion(
   db: Db,
   input: { readonly fromSetId: number; readonly name?: string },
 ): Promise<CriteriaSetRow> {
   return db.transaction(async (tx) => {
+    await lockEverySet(tx)
     const source = await findSet(tx, input.fromSetId)
+    const name = input.name ?? source.name
     const created = await insertCriteriaSet(tx, {
-      name: input.name ?? source.name,
-      version: source.version + 1,
+      name,
+      version: await nextVersionFor(tx, name),
       applyThreshold: source.applyThreshold,
       isDefault: false,
     })
@@ -179,7 +191,8 @@ export async function updateRequirement(
  * Holds a row lock on every criteria set until the transaction ends. The default slot is a
  * partial unique index, so two callers moving it at once would each clear, then each set, and
  * the second set would fail against the index with a raw driver error. With the locks the
- * second caller waits for the first to commit, then clears the first caller's choice. The
+ * second caller waits for the first to commit, then clears the first caller's choice.
+ * `createCriteriaVersion` takes the same locks, so it can number a version without a race. The
  * table holds one row per version of the user's own criteria, so locking all of it is cheap,
  * and the rows are taken in id order so two callers cannot wait on each other.
  */
