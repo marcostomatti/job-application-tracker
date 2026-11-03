@@ -1,4 +1,4 @@
-import { eq, type InferSelectModel } from 'drizzle-orm'
+import { eq, sql, type InferSelectModel } from 'drizzle-orm'
 
 import { NotFoundError } from '../../errors.ts'
 import type { SummaryInput } from '../../schemas/summaries.ts'
@@ -27,6 +27,12 @@ export async function findSummary(db: Db, positionId: number): Promise<PositionS
  * stored. A repost is this same call with a new `sourceHash`: the position stays one row and
  * its summary stays one row. Fields the input leaves out are cleared rather than kept, so
  * nothing from the older posting survives beside the newer text, and `summarisedAt` moves.
+ *
+ * `summarisedAt` is stamped with the database's `now()`, the clock every sibling timestamp
+ * column already uses through `defaultNow()`; a column default does not run on the update
+ * half of an upsert, so it is set explicitly, and by the same clock. An application-side
+ * `new Date()` here would mix two clocks in one table family. `now()` is the start of the
+ * transaction, so two writes inside one transaction carry one stamp.
  */
 export async function writeSummary(db: Db, input: SummaryInput): Promise<PositionSummary> {
   await assertPositionExists(db, input.positionId)
@@ -38,7 +44,7 @@ export async function writeSummary(db: Db, input: SummaryInput): Promise<Positio
     condensed: input.condensed,
     extra: input.extra ?? {},
     sourceHash: input.sourceHash,
-    summarisedAt: new Date(),
+    summarisedAt: sql`now()`,
   }
   const [written] = await db
     .insert(positionSummary)

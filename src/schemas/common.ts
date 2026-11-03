@@ -48,3 +48,27 @@ export function bulkOf<T extends z.ZodType>(
 ): z.ZodObject<{ items: z.ZodArray<T> }, z.core.$strict> {
   return z.strictObject({ items: z.array(item).min(1).max(BULK_MAX) })
 }
+
+/** The one character Postgres cannot store in `text` or `jsonb`. */
+const NUL = '\u0000'
+
+/**
+ * A refinement for free text: refuses NUL, which the database rejects with a driver error
+ * that carries the whole statement. Refused here it is a field-level validation message and
+ * the failing item keeps its index; the caller fixes it by removing the character.
+ */
+export function hasNoNul(value: string): boolean {
+  return !value.includes(NUL)
+}
+
+/** The same check for a JSON value, keys and strings at any depth. */
+export function jsonHasNoNul(value: unknown): boolean {
+  if (typeof value === 'string') return hasNoNul(value)
+  if (Array.isArray(value)) return value.every(jsonHasNoNul)
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).every(([key, inner]) => hasNoNul(key) && jsonHasNoNul(inner))
+  }
+  return true
+}
+
+export const NO_NUL_MESSAGE = 'must not contain a NUL character'

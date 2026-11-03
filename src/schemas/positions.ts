@@ -1,9 +1,12 @@
 import { z } from 'zod'
 
-import { IdSchema, PaginationSchema } from './common.ts'
+import { hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
 
-/** Trimmed and non-empty: a blank name or note says nothing and would only hide a mistake. */
-const text = z.string().trim().min(1)
+/**
+ * Trimmed and non-empty: a blank name or note says nothing and would only hide a mistake. It
+ * also refuses NUL, which Postgres cannot store.
+ */
+const text = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /** A calendar day as `YYYY-MM-DD`, the shape a Postgres `date` column reads and writes. */
 const calendarDay = z.iso.date()
@@ -47,7 +50,7 @@ const editableFields = {
  * Distinguishes two genuinely different roles that share one title at one employer. Blank
  * is its own value, not an absence, so it is trimmed but not required to be non-empty.
  */
-const disambiguator = z.string().trim()
+const disambiguator = z.string().trim().refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
  * What a caller supplies to record one position. The employer is named rather than

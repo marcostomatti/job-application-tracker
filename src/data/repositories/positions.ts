@@ -108,6 +108,41 @@ const POSITION_REFERENCES = [
 type ReferencedIds = Partial<Record<(typeof POSITION_REFERENCES)[number][0], number | null>>
 
 /**
+ * The columns a caller may set directly, on creation or in a patch: the whole list, in one
+ * place. Both writes copy exactly these keys and no others, so a column that is not named
+ * here cannot be written by a wider object that merely carries it at runtime (a TypeScript
+ * type does not stop an extra property on a variable). The role title, its normalised form,
+ * the key and the company are set by the code that owns them, and the three import
+ * timestamps are never set from a caller.
+ */
+const EDITABLE_COLUMNS = [
+  'seenAt',
+  'deadline',
+  'city',
+  'country',
+  'workFormatId',
+  'seniorityId',
+  'applyRouteId',
+  'salaryRaw',
+  'postingAgeRaw',
+  'applicantCountRaw',
+  'applyContact',
+  'clientHidden',
+] as const satisfies readonly (keyof Position)[]
+
+/**
+ * What a patch may additionally set. `priorityRank` is the user's own hand-ranking: it is
+ * listed here, and in no list a creation reads, which is the whole of "no import may write it".
+ */
+const PATCH_ONLY_COLUMNS = ['disambiguator', 'priorityRank'] as const satisfies readonly (keyof Position)[]
+
+/** The listed keys of `source` whose value is present; absent keys are left out, not nulled. */
+function pickDefined<T extends object, K extends keyof T>(source: T, keys: readonly K[]): Partial<Pick<T, K>> {
+  const present = keys.flatMap((key) => (source[key] === undefined ? [] : [[key, source[key]] as const]))
+  return Object.fromEntries(present) as Partial<Pick<T, K>>
+}
+
+/**
  * Refuses a write that names a registry row it may not name. It runs before the write so an
  * archived or missing row is refused with its own error, and checks only ids the call
  * carries: `null` clears a reference and absent leaves it alone.
@@ -147,14 +182,13 @@ function asConflict(error: unknown, describe: { readonly role: string; readonly 
 
 /** The row to insert for one input, given the company it resolved to. */
 function insertValuesOf(input: PositionInput, owner: Company): typeof position.$inferInsert {
-  const { company: _company, roleTitle, positionKey, disambiguator, ...rest } = input
-  const roleNorm = normaliseName(roleTitle)
-  const given = disambiguator ?? ''
+  const roleNorm = normaliseName(input.roleTitle)
+  const given = input.disambiguator ?? ''
   return {
-    ...rest,
-    positionKey: positionKey ?? derivedPositionKey(owner.nameNorm, roleNorm, given),
+    ...pickDefined(input, EDITABLE_COLUMNS),
+    positionKey: input.positionKey ?? derivedPositionKey(owner.nameNorm, roleNorm, given),
     companyId: owner.id,
-    roleTitle,
+    roleTitle: input.roleTitle,
     roleNorm,
     disambiguator: given,
   }
@@ -426,25 +460,42 @@ export async function searchPositions(db: Db, query: PositionQuery): Promise<Pos
 
 /** The columns a patch changes, with the normalised role kept in step with the title. */
 function patchColumns(patch: PositionPatch): Partial<typeof position.$inferInsert> {
-  const { roleTitle, ...rest } = patch
-  const defined = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined))
+  const defined = pickDefined(patch, [...EDITABLE_COLUMNS, ...PATCH_ONLY_COLUMNS])
+  const { roleTitle } = patch
   return roleTitle === undefined ? defined : { ...defined, roleTitle, roleNorm: normaliseName(roleTitle) }
+}
+
+/**
+ * The references in a patch that name a different row from the one stored. Archival blocks a
+ * new reference and not the continued existence of one already stored, so a client that sends
+ * back a whole object with an unchanged, since-archived reference is not refused for it.
+ */
+function changedReferences(patch: PositionPatch, stored: Position): ReferencedIds {
+  return Object.fromEntries(
+    POSITION_REFERENCES.flatMap(([column]) =>
+      patch[column] !== undefined && patch[column] !== stored[column] ? [[column, patch[column]]] : [],
+    ),
+  )
 }
 
 /**
  * Changes some columns of one position and returns the row as stored, as a new object; the
  * patch is not touched. `priorityRank` is accepted here and by no other function, because it
- * is the user's own hand-ranking and no import may write it. A registry reference in the
- * patch must be usable, as on creation. A title or disambiguator that now collides with
+ * is the user's own hand-ranking and no import may write it. Only the columns listed in
+ * `EDITABLE_COLUMNS` and `PATCH_ONLY_COLUMNS` are copied from the patch, so a key outside the
+ * type (the company, the key, a timestamp) is ignored even when the object carries it. A
+ * registry reference that differs from the stored one must be usable, as on creation; one
+ * that is unchanged is not re-checked. A title or disambiguator that now collides with
  * another position at the same employer is a `ConflictError`, and nothing is written.
  *
  * An empty patch changes nothing and returns the row as it is, or `NotFoundError` when there
  * is none.
  */
 export async function updatePosition(db: Db, id: number, patch: PositionPatch): Promise<Position> {
-  await assertReferencesUsable(db, patch)
+  const stored = await readPositionRow(db, id)
   const columns = patchColumns(patch)
-  if (Object.keys(columns).length === 0) return readPositionRow(db, id)
+  if (Object.keys(columns).length === 0) return stored
+  await assertReferencesUsable(db, changedReferences(patch, stored))
   try {
     const [updated] = await db.update(position).set(columns).where(eq(position.id, id)).returning()
     if (!updated) throw new NotFoundError('position', id)

@@ -29,6 +29,7 @@ import {
   PositionPatchSchema,
   PositionQuerySchema,
   type PositionInput,
+  type PositionPatch,
   type PositionQuery,
 } from '../../src/schemas/positions.ts'
 import { SummaryInputSchema } from '../../src/schemas/summaries.ts'
@@ -309,17 +310,40 @@ describe('addPositions', () => {
     expect(added).toMatchObject({ seniorityId: expect.any(Number), workFormatId: expect.any(Number) })
   })
 
-  test('never stores a hand-ranking, whatever else the item carries', async () => {
-    // Arrange / Act
-    const stored = await withMigratedScratchDatabase((db) => addOne(db, role('Acme', 'One')))
+  test('ignores a hand-ranking and import timestamps that a wider object carries at runtime', async () => {
+    // Arrange: a capture path holding more than the type allows; TypeScript lets an extra
+    // property ride on a variable, so the rule has to hold at runtime and not only in the schema
+    const wider = {
+      ...role('Acme', 'One'),
+      priorityRank: 5,
+      firstImportedAt: new Date('2001-01-01T00:00:00Z'),
+      lastImportedAt: new Date('2001-01-01T00:00:00Z'),
+      companyId: 999,
+    } as PositionInput
 
-    // Assert: priority rank is the user's own and starts empty
-    expect(stored.priorityRank).toBeNull()
+    // Act
+    const stored = await withMigratedScratchDatabase(async (db) => {
+      const created = await addOne(db, wider)
+      return { created, read: (await getPosition(db, created.id)).position }
+    })
+
+    // Assert: the ranking is empty and both timestamps are the column default, not 2001
+    const recently = Date.now() - 60_000
+    for (const row of [stored.created, stored.read]) {
+      expect(row.priorityRank).toBeNull()
+      expect(row.lastImportedAt.getTime()).toBeGreaterThan(recently)
+      expect(row.firstImportedAt.getTime()).toBeGreaterThan(recently)
+      expect(row.companyId).not.toBe(999)
+    }
   })
 
-  test('does not wrap a failure that is not about the item', async () => {
-    // Arrange / Act: Postgres cannot store a NUL byte in text, which no item can fix by itself
-    const error = await withMigratedScratchDatabase((db) => thrownBy(() => addPositions(db, [role('Acme', 'a\u0000b')])))
+  test('does not wrap a failure the repository does not recognise', async () => {
+    // Arrange / Act: a malformed date, which the schema would have refused, reaches the
+    // database; the repository classifies only duplicates and vocabulary refusals as the
+    // item's fault and does not guess at the rest
+    const error = await withMigratedScratchDatabase((db) =>
+      thrownBy(() => addPositions(db, [role('Acme', 'One', { seenAt: 'not a date' })])),
+    )
 
     // Assert: it reaches the caller as it is, rather than as a 400 naming an item
     expect(error).toBeDefined()
@@ -372,6 +396,15 @@ describe('the position input schemas', () => {
     // Assert
     expect(bulk.safeParse({ items: items(BULK_MAX) }).success).toBe(true)
     expect(bulk.safeParse({ items: items(BULK_MAX + 1) }).success).toBe(false)
+  })
+
+  test('refuses a NUL character, which Postgres cannot store, before it reaches the driver', () => {
+    // Assert: refused as a validation message, so it never becomes a driver error with SQL in it
+    expect(PositionInputSchema.safeParse({ ...minimal, roleTitle: 'a\u0000b' }).success).toBe(false)
+    expect(PositionInputSchema.safeParse({ ...minimal, company: { name: 'a\u0000b' } }).success).toBe(false)
+    expect(PositionInputSchema.safeParse({ ...minimal, disambiguator: 'a\u0000b' }).success).toBe(false)
+    expect(PositionInputSchema.safeParse({ ...minimal, city: 'a\u0000b' }).success).toBe(false)
+    expect(PositionPatchSchema.safeParse({ applyContact: 'a\u0000b' }).success).toBe(false)
   })
 
   test('refuses a blank company or role, and a date that is not a day', () => {
@@ -465,10 +498,13 @@ describe('getPosition', () => {
       const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'A level' }]))
       const { id } = await addOne(db, role('Acme', 'One', { workFormatId, seniorityId }))
       await db.insert(positionStageEvent).values({ positionId: id, stageId })
+      const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'A reason' }]))
+      await db.insert(positionDisposition).values({ positionId: id, kind: 'set_aside', setAsideReasonId: reasonId })
       await archiveRegistryRow(db, 'stage', stageId)
       await archiveRegistryRow(db, 'phase', phaseId)
       await archiveRegistryRow(db, 'work_format', workFormatId)
       await archiveRegistryRow(db, 'seniority', seniorityId)
+      await archiveRegistryRow(db, 'set_aside_reason', reasonId)
       return getPosition(db, id)
     })
 
@@ -478,6 +514,7 @@ describe('getPosition', () => {
     expect(detail.latestStage?.phase?.label).toBe('A phase')
     expect(detail.references.workFormat?.label).toBe('A format')
     expect(detail.references.seniority?.label).toBe('A level')
+    expect(detail.dispositions[0]?.reasonLabel).toBe('A reason')
   })
 
   test('returns the latest score per criteria set, each with its ratings and penalties', async () => {
@@ -669,6 +706,60 @@ describe('searchPositions', () => {
     expect(row?.stage?.label).toBe(`Tied stage ${TIED_ROWS - 1}`)
   })
 
+  test('still renders the stage and phase labels after both were archived', async () => {
+    // Arrange / Act
+    const rows = await withMigratedScratchDatabase(async (db) => {
+      const phaseId = idOf(await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }]))
+      const stageId = idOf(await addRegistryRows(db, 'stage', [{ key: 's1', label: 'A stage', phaseId }]))
+      const { id } = await addOne(db, role('Acme', 'One'))
+      await db.insert(positionStageEvent).values({ positionId: id, stageId })
+      await archiveRegistryRow(db, 'stage', stageId)
+      await archiveRegistryRow(db, 'phase', phaseId)
+      return searchPositions(db, queryOf())
+    })
+
+    // Assert: archival hides a row from a pick-list, never from a card that sits in it
+    expect(rows[0]?.stage?.label).toBe('A stage')
+    expect(rows[0]?.phase?.label).toBe('A phase')
+  })
+
+  test('shows the same latest score per criteria set as getPosition', async () => {
+    // Arrange / Act: scores written newest first, so id order and date order disagree
+    const { setAId, setBId, detail, forA, forB } = await withMigratedScratchDatabase(async (db) => {
+      const { id } = await addOne(db, role('Acme', 'One'))
+      const sets = await db
+        .insert(criteriaSet)
+        .values([
+          { name: 'set-a', version: 1 },
+          { name: 'set-b', version: 1 },
+        ])
+        .returning()
+      const setAId = idOf(sets, 0)
+      const setBId = idOf(sets, 1)
+      await db.insert(positionScore).values([
+        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-03-01', overall: 0.9 },
+        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-01-01', overall: 0.1 },
+        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-02-01', overall: 0.5 },
+        { positionId: id, criteriaSetId: setBId, scoredAt: '2026-02-15', overall: 0.7 },
+        { positionId: id, criteriaSetId: setBId, scoredAt: '2026-01-15', overall: 0.2 },
+      ])
+      return {
+        setAId,
+        setBId,
+        detail: await getPosition(db, id),
+        forA: await searchPositions(db, queryOf({ criteriaSetId: setAId })),
+        forB: await searchPositions(db, queryOf({ criteriaSetId: setBId })),
+      }
+    })
+
+    // Assert: the board's score and the modal's score are the same row for each set
+    const modal = (setId: number) => detail.scores.find((entry) => entry.score.criteriaSetId === setId)?.score
+    expect(forA[0]?.score?.id).toBe(modal(setAId)?.id as number)
+    expect(forB[0]?.score?.id).toBe(modal(setBId)?.id as number)
+    expect(forA[0]?.score?.overall).toBe(0.9)
+    expect(forB[0]?.score?.overall).toBe(0.7)
+  })
+
   test('filters on recommend-apply against the set asked for, using that set\'s latest score', async () => {
     // Arrange / Act
     const { yes, no, none, row } = await withMigratedScratchDatabase(async (db) => {
@@ -842,8 +933,7 @@ describe('updatePosition', () => {
       return { before: before.position, patch, updated: await updatePosition(db, stored.id, patch) }
     })
 
-    // Assert: a frozen patch would throw on mutation; the old row is a different object, unchanged
-    expect(updated).not.toBe(before)
+    // Assert: a frozen patch would throw on mutation, and the row read before is unchanged
     expect(updated.city).toBe('Porto')
     expect(before.city).toBe('Lisbon')
     expect(patch).toEqual({ city: 'Porto', priorityRank: 2 })
@@ -904,6 +994,60 @@ describe('updatePosition', () => {
     // Assert
     expect(error).toBeInstanceOf(ArchivedError)
     expect(stored.city).toBeNull()
+  })
+
+  test('accepts a whole object whose reference is unchanged but has since been archived', async () => {
+    // Arrange / Act: the web app sends back every field it holds, the seniority included
+    const { updated, stored } = await withMigratedScratchDatabase(async (db) => {
+      const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'Retired later' }]))
+      const { id } = await addOne(db, role('Acme', 'One', { seniorityId }))
+      await archiveRegistryRow(db, 'seniority', seniorityId)
+      const updated = await updatePosition(db, id, { seniorityId, city: 'Porto' })
+      return { updated, stored: (await getPosition(db, id)).position }
+    })
+
+    // Assert: archival blocks a new reference, not one already held
+    expect(updated.city).toBe('Porto')
+    expect(stored.seniorityId).toBe(updated.seniorityId as number)
+  })
+
+  test('refuses a changed reference to an archived row even when another is stored', async () => {
+    // Arrange / Act
+    const { error, stored } = await withMigratedScratchDatabase(async (db) => {
+      const levels = await addRegistryRows(db, 'seniority', [{ label: 'Held' }, { label: 'Retired' }])
+      await archiveRegistryRow(db, 'seniority', idOf(levels, 1))
+      const { id } = await addOne(db, role('Acme', 'One', { seniorityId: idOf(levels, 0) }))
+      const error = await thrownBy(() => updatePosition(db, id, { seniorityId: idOf(levels, 1) }))
+      return { error, stored: (await getPosition(db, id)).position }
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(ArchivedError)
+    expect(stored.seniorityId).not.toBeNull()
+  })
+
+  test('ignores a company, a key and import timestamps that a wider patch carries at runtime', async () => {
+    // Arrange: more than the patch type allows, as a UI object spread into a patch would carry
+    const original = await withMigratedScratchDatabase(async (db) => {
+      const created = await addOne(db, role('Acme', 'One'))
+      const [other] = await addPositions(db, [role('Other Co', 'Two')])
+      const wider = {
+        city: 'Porto',
+        companyId: (other as Position).companyId,
+        positionKey: 'hijacked',
+        firstImportedAt: new Date('2001-01-01T00:00:00Z'),
+        lastImportedAt: new Date('2001-01-01T00:00:00Z'),
+      } as PositionPatch
+      return { created, updated: await updatePosition(db, created.id, wider) }
+    })
+
+    // Assert: the editable column changed, and nothing the type says is not patchable did
+    const { created, updated } = original
+    expect(updated.city).toBe('Porto')
+    expect(updated.companyId).toBe(created.companyId)
+    expect(updated.positionKey).toBe(created.positionKey)
+    expect(updated.firstImportedAt).toEqual(created.firstImportedAt)
+    expect(updated.lastImportedAt).toEqual(created.lastImportedAt)
   })
 
   test('raises NotFoundError for an id with no position', async () => {

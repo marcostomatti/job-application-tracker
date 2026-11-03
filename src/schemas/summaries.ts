@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-import { IdSchema } from './common.ts'
+import { hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
+
+/** Free text Postgres can store: NUL is refused, and the required form also refuses a blank. */
+const freeText = z.string().refine(hasNoNul, NO_NUL_MESSAGE)
+const requiredText = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
  * What a caller supplies to write the summary of one position. A summary is written whole,
@@ -13,12 +17,12 @@ import { IdSchema } from './common.ts'
  */
 export const SummaryInputSchema = z.strictObject({
   positionId: IdSchema,
-  stack: z.array(z.string().trim().min(1)).optional(),
-  description: z.string().nullable().optional(),
-  industry: z.string().nullable().optional(),
-  condensed: z.string().trim().min(1),
-  extra: z.record(z.string(), z.json()).optional(),
-  sourceHash: z.string().trim().min(1),
+  stack: z.array(requiredText).optional(),
+  description: freeText.nullable().optional(),
+  industry: freeText.nullable().optional(),
+  condensed: requiredText,
+  extra: z.record(z.string(), z.json()).refine(jsonHasNoNul, NO_NUL_MESSAGE).optional(),
+  sourceHash: requiredText,
 })
 
 export type SummaryInput = z.infer<typeof SummaryInputSchema>
