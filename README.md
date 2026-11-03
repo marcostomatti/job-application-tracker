@@ -65,44 +65,46 @@ threshold set, and `seed:pack` refuses such a file too.
 ## The MCP server
 
 `bun run mcp` starts the MCP server, which offers 46 tools for recording, scoring and reading
-your search. It reads `DATABASE_URL` from `.env` like the rest of the repository, so run
-`bun run db:up` and `bun run db:migrate` first.
+your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
+repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
+`registered 46 MCP tools` to stderr, which is how you see that every tool module loaded.
 
-It has two transports, chosen by the `MCP_TRANSPORT` environment variable.
+It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
+default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).
 
-**HTTP, the default.** With `MCP_TRANSPORT` unset, the server listens on port 8080 (`PORT`
-changes it) and a health endpoint answers on port 3001 at `/health`. These are the defaults of
-the `@open-tomato/service-mcp` package that runs the server. Use this for anything that
-connects over a network or that you want to check is alive.
+**stdio, the default, for Claude Desktop.** The server talks over its own standard input and
+output, so a client that starts it as a child process (Claude Desktop does) needs no port and
+opens no network socket.
 
 ```sh
 bun run mcp
 ```
 
-**stdio, for Claude Desktop.** With `MCP_TRANSPORT=stdio` the server talks over its own
-standard input and output, so a client that starts it as a child process (Claude Desktop does)
-needs no port. There is no health endpoint in this mode.
+In Claude Desktop's MCP configuration, set the command to `bun`, the arguments to
+`run mcp` (as `["run", "mcp"]`), and the working directory to your clone. There is no health
+endpoint in this mode.
+
+The API key from `bun run setApiKey` does nothing on stdio. There is no request to carry a
+header, so the key is inert, and the control is process-level access: whoever can start the
+process, or reach the client that starts it, can call every tool. Treat stdio as
+unauthenticated and rely on who can run commands as you.
+
+**HTTP, opt-in.** Set `MCP_TRANSPORT=http` and the server listens on port 8080 (`PORT`
+changes it), with a health endpoint on port 3001 at `/health`. Those are the defaults of the
+`@open-tomato/service-mcp` package that runs the server, and the health port has no setting
+here.
 
 ```sh
-MCP_TRANSPORT=stdio bun run mcp
+MCP_TRANSPORT=http bun run mcp
 ```
 
-In Claude Desktop's MCP configuration, set the command to `bun`, the arguments to
-`run mcp` (as `["run", "mcp"]`), the working directory to your clone, and `MCP_TRANSPORT` to
-`stdio` in its environment.
-
-### What the API key does here
-
-The key from `bun run setApiKey` guards the Express HTTP API, where a request carries an
-`Authorization: Bearer` header and the middleware checks it. The MCP server is a separate
-process, and the key does less there than you might expect:
-
-- On **stdio** there is no request to carry a header, so the key is inert. The control is
-  process-level access: whoever can start the process, or reach the client that starts it,
-  can call every tool. Treat stdio as unauthenticated.
-- On the **HTTP transport**, the `@open-tomato/service-mcp` package serves requests with no
-  hook for checking a header, and this repository does not add one. The key is not checked
-  there either, so do not expose port 8080 beyond a machine you trust.
+**No key is checked on this port.** The package has no place to check a header and this
+repository does not add one, so the key from `setApiKey` is not consulted. Anyone who can
+reach the port can call every tool, including the ones that write and the ones that set a
+position aside. The package binds **every network interface**, not only loopback (a socket
+listing shows `*:8080` and `*:3001`), so on a machine joined to a network the port is
+reachable from other machines. Use HTTP only behind a firewall that allows loopback alone, or
+where you put your own authenticating proxy in front of it.
 
 ### Two shapes of error
 
