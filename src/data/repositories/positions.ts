@@ -12,6 +12,7 @@ import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReaso
 import { positionPenalty, positionRating, positionScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
 import type { Db } from './db.ts'
+import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived, findRegistryRow, type RegistryName, type RegistryRowOf } from './registries.ts'
 import { findSummary, type PositionSummary } from './summaries.ts'
 
@@ -135,12 +136,6 @@ const EDITABLE_COLUMNS = [
  * listed here, and in no list a creation reads, which is the whole of "no import may write it".
  */
 const PATCH_ONLY_COLUMNS = ['disambiguator', 'priorityRank'] as const satisfies readonly (keyof Position)[]
-
-/** The listed keys of `source` whose value is present; absent keys are left out, not nulled. */
-function pickDefined<T extends object, K extends keyof T>(source: T, keys: readonly K[]): Partial<Pick<T, K>> {
-  const present = keys.flatMap((key) => (source[key] === undefined ? [] : [[key, source[key]] as const]))
-  return Object.fromEntries(present) as Partial<Pick<T, K>>
-}
 
 /**
  * Refuses a write that names a registry row it may not name. It runs before the write so an

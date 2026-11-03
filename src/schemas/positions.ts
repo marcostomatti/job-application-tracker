@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
+import { booleanOrText, hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
 
 /**
  * Trimmed and non-empty: a blank name or note says nothing and would only hide a mistake. It
@@ -87,12 +87,6 @@ export const PositionPatchSchema = z
   })
 
 export type PositionPatch = z.infer<typeof PositionPatchSchema>
-
-/**
- * A boolean that may arrive as text, because a query string carries strings while an MCP
- * call carries JSON booleans. Only the two words are accepted, so `1` and `yes` are refused.
- */
-const booleanOrText = z.union([z.boolean(), z.enum(['true', 'false']).transform((value) => value === 'true')])
 
 /**
  * Which positions of one kind a search returns, for the two flags that take a row out of the
