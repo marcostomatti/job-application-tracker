@@ -10,22 +10,28 @@ type Outcome = {
   readonly nextCalls: number
   readonly status: number | undefined
   readonly body: unknown
+  readonly headers: Readonly<Record<string, string>>
   readonly logged: readonly { readonly context: object; readonly message: string }[]
 }
 
 /**
  * Drives the handler with a minimal request, response and `next`, and records what it did.
- * `authorization` is the raw header value, or absent when `undefined`.
+ * `authorization` is the raw header value as Node would hand it over, or absent when `undefined`.
  */
-async function run(expected: string | undefined, authorization: string | undefined): Promise<Outcome> {
+async function run(expected: string | undefined, authorization: unknown): Promise<Outcome> {
   let nextCalls = 0
   let status: number | undefined
   let body: unknown
+  const headers: Record<string, string> = {}
   const logged: { context: object; message: string }[] = []
   const log: AuthLog = { error: (context, message) => void logged.push({ context, message }) }
 
   const req = { headers: authorization === undefined ? {} : { authorization } } as unknown as Request
   const res = {
+    set(name: string, value: string) {
+      headers[name] = value
+      return res
+    },
     status(code: number) {
       status = code
       return res
@@ -37,7 +43,7 @@ async function run(expected: string | undefined, authorization: string | undefin
   } as unknown as Response
 
   await requireApiKey(expected, log)(req, res, () => void (nextCalls += 1))
-  return { nextCalls, status, body, logged }
+  return { nextCalls, status, body, headers, logged }
 }
 
 describe('requireApiKey with no key configured', () => {
@@ -45,8 +51,10 @@ describe('requireApiKey with no key configured', () => {
     ['undefined', undefined],
     ['an empty string', ''],
   ])('requireApiKey refuses every request when the key is %s', async (_name, expected) => {
-    const headers = [undefined, '', 'Bearer ', `Bearer ${EXPECTED}`, 'Bearer ', 'Bearer undefined']
-    for (const authorization of headers) {
+    // Six distinct header values: absent, empty, scheme with an empty token, the right key,
+    // the scheme alone, and a token that is the word "undefined".
+    const authorizations = [undefined, '', 'Bearer ', `Bearer ${EXPECTED}`, 'Bearer', 'Bearer undefined']
+    for (const authorization of authorizations) {
       const outcome = await run(expected, authorization)
 
       expect(outcome.status).toBe(503)
@@ -61,11 +69,25 @@ describe('requireApiKey with no key configured', () => {
     expect(outcome.nextCalls).toBe(0)
   })
 
-  test('requireApiKey logs the reason for the 503 where a test can see it', async () => {
-    const outcome = await run(undefined, `Bearer ${EXPECTED}`)
+  test('requireApiKey logs the reason once, when it is created, and not per request', async () => {
+    const logged: { context: object; message: string }[] = []
+    const log: AuthLog = { error: (context, message) => void logged.push({ context, message }) }
 
-    expect(outcome.logged).toHaveLength(1)
-    expect(outcome.logged[0]?.message).toContain('API_KEY')
+    // Act: creating the middleware, before any request exists.
+    const handler = requireApiKey(undefined, log)
+
+    // Assert: the reason is already logged.
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.message).toContain('API_KEY')
+
+    // Act: three refused requests.
+    const res = { status: () => res, json: () => res } as unknown as Response
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await handler({ headers: {} } as unknown as Request, res, () => undefined)
+    }
+
+    // Assert: still the one line.
+    expect(logged).toHaveLength(1)
   })
 
   test('requireApiKey refuses with 503 using the module default logger when none is passed', async () => {
@@ -87,9 +109,10 @@ describe('requireApiKey with no key configured', () => {
       },
     } as unknown as Response
 
-    // Act
+    // Act: the default logger is made, and the reason logged, when the middleware is created.
     try {
-      await requireApiKey(undefined)({ headers: {} } as unknown as Request, res, () => void (nextCalls += 1))
+      const handler = requireApiKey(undefined)
+      await handler({ headers: {} } as unknown as Request, res, () => void (nextCalls += 1))
     } finally {
       if (previous === undefined) delete process.env.LOG_LEVEL
       else process.env.LOG_LEVEL = previous
@@ -117,6 +140,29 @@ describe('requireApiKey with a key configured', () => {
 
     expect(outcome.nextCalls).toBe(1)
     expect(outcome.status).toBeUndefined()
+  })
+
+  test('requireApiKey answers 401 when the header is not a string', async () => {
+    // Node hands over a string for this header, but the guard must not become a truthiness check.
+    for (const authorization of [['x', 'y'], [`Bearer ${EXPECTED}`], 42, {}, null]) {
+      const outcome = await run(EXPECTED, authorization)
+
+      expect(outcome.status).toBe(401)
+      expect(outcome.nextCalls).toBe(0)
+    }
+  })
+
+  test('requireApiKey answers every 401 with a bare Bearer challenge', async () => {
+    for (const authorization of [undefined, 'Bearer ', `Bearer ${EXPECTED}x`]) {
+      const outcome = await run(EXPECTED, authorization)
+
+      expect(outcome.headers).toEqual({ 'WWW-Authenticate': 'Bearer' })
+    }
+  })
+
+  test('requireApiKey sends no challenge on a 503 or when the request passes', async () => {
+    expect((await run(undefined, undefined)).headers).toEqual({})
+    expect((await run(EXPECTED, `Bearer ${EXPECTED}`)).headers).toEqual({})
   })
 
   test('requireApiKey accepts the scheme in any letter case', async () => {

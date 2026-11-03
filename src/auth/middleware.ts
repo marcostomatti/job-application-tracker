@@ -37,9 +37,10 @@ function bearerToken(header: unknown): string | undefined {
  * never used, because with no auth service configured it allows every request.
  *
  * It fails closed: when `expected` is undefined or empty, no key can be right, so every
- * request is refused with 503 and the reason logged. The "if a key is set, check it" form
- * of this check would instead allow everything, which is why that case is decided before
- * any header is read.
+ * request is refused with 503 and the reason logged once, when the middleware is created. The
+ * "if a key is set, check it" form of this check would instead allow everything, which is why
+ * that case is decided before any header is read, and why the handler returned for it never
+ * touches the request at all.
  *
  * Every rejected request gets the same 401 body, so a missing header, a malformed one and a
  * wrong key look alike. Neither a response nor a log line carries the presented value, the
@@ -47,9 +48,12 @@ function bearerToken(header: unknown): string | undefined {
  */
 export function requireApiKey(expected: string | undefined, logger?: AuthLog): RequestHandler {
   if (expected === undefined || expected === '') {
+    // Logged once, here: an unset key is a fact about the configuration, known before any
+    // request arrives, so the operator is told at startup and a retrying caller writes no
+    // line per attempt.
     const log = logger ?? defaultLogger()
+    log.error({}, 'API_KEY is not set; refusing every request')
     return (_req, res) => {
-      log.error({}, 'API_KEY is not set; refusing every request')
       res.status(503).json({ error: 'unavailable' })
     }
   }
@@ -57,7 +61,9 @@ export function requireApiKey(expected: string | undefined, logger?: AuthLog): R
   return (req, res, next) => {
     const presented = bearerToken(req.headers.authorization)
     if (presented === undefined || !verifyApiKey(presented, expected)) {
-      res.status(401).json({ error: 'unauthorized' })
+      // RFC 7235 requires a challenge on a 401. It names the scheme only, so it says nothing
+      // about why this request failed.
+      res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: 'unauthorized' })
       return
     }
     next()
