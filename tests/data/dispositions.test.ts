@@ -12,6 +12,12 @@ import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const DISPOSITION_CHECK = 'position_disposition_kind_reason_check'
+const SET_ASIDE_FK = 'position_disposition_set_aside_reason_id_set_aside_reason_id_fk'
+const REJECTION_FK = 'position_disposition_rejection_reason_id_rejection_reason_id_fk'
+// Explicit ids far above anything an identity column hands out, one per registry, so neither
+// id can exist in the other registry.
+const ONLY_IN_REJECTION_ID = 2_000_000_001
+const ONLY_IN_SET_ASIDE_ID = 2_000_000_002
 
 afterAll(async () => {
   await closeDb()
@@ -129,6 +135,47 @@ describe('dispositions and stage history', () => {
     expect(outcome.saved?.setAsideReasonId).toBeNull()
   })
 
+  test('each reason column points at its own registry, so an id from the other registry is refused', async () => {
+    // Arrange / Act: ids chosen to exist in exactly one registry, so coinciding ids cannot hide a wrong reference
+    const { asideColumnGivenRejectionId, rejectionColumnGivenAsideId, ownIdsAccepted } = await rolledBack(
+      async (tx, token) => {
+        const ids = await seed(tx, token)
+        const [onlyRejection] = await tx
+          .insert(rejectionReason)
+          .overridingSystemValue()
+          .values({ id: ONLY_IN_REJECTION_ID, label: `only-rejection-${token}` })
+          .returning()
+        const [onlyAside] = await tx
+          .insert(setAsideReason)
+          .overridingSystemValue()
+          .values({ id: ONLY_IN_SET_ASIDE_ID, label: `only-aside-${token}` })
+          .returning()
+        const attempt = (values: { kind: string; setAsideReasonId?: number; rejectionReasonId?: number }) =>
+          thrownInSavepoint(tx, (inner) =>
+            inner.insert(positionDisposition).values({ positionId: ids.positionId, ...values }),
+          )
+        const failures = {
+          asideColumnGivenRejectionId: await attempt({ kind: 'set_aside', setAsideReasonId: onlyRejection!.id }),
+          rejectionColumnGivenAsideId: await attempt({ kind: 'rejected', rejectionReasonId: onlyAside!.id }),
+        }
+        // The same ids are fine in the column that owns them, so the refusals above are about the registry
+        const accepted = await tx
+          .insert(positionDisposition)
+          .values([
+            { positionId: ids.positionId, kind: 'set_aside', setAsideReasonId: onlyAside!.id },
+            { positionId: ids.positionId, kind: 'rejected', rejectionReasonId: onlyRejection!.id },
+          ])
+          .returning()
+        return { ...failures, ownIdsAccepted: accepted }
+      },
+    )
+
+    // Assert
+    expect(violationText(asideColumnGivenRejectionId)).toContain(SET_ASIDE_FK)
+    expect(violationText(rejectionColumnGivenAsideId)).toContain(REJECTION_FK)
+    expect(ownIdsAccepted).toHaveLength(2)
+  })
+
   test('a position carries a disposition independently of its stage', async () => {
     // Arrange / Act
     const { dispositions, events, openStage } = await rolledBack(async (tx, token) => {
@@ -157,7 +204,7 @@ describe('dispositions and stage history', () => {
 
   test('stage events are append-only and the latest one is the current stage', async () => {
     // Arrange / Act
-    const { history, current, afterAppend } = await rolledBack(async (tx, token) => {
+    const { history, current, afterAppend, openStageId, repeatingStageId } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const forPosition = eq(positionStageEvent.positionId, ids.positionId)
       await tx.insert(positionStageEvent).values([
@@ -183,21 +230,22 @@ describe('dispositions and stage history', () => {
         history: await tx.select().from(positionStageEvent).where(forPosition).orderBy(asc(positionStageEvent.id)),
         current: first,
         afterAppend: second,
+        openStageId: ids.openStage.id,
+        repeatingStageId: ids.repeatingStage.id,
       }
     })
 
-    // Assert: the old events are all still there, and the newest decides the current stage
+    // Assert: the old events are all still there, and the newest decides the current stage.
+    // The expected list is built from the stage ids the fixture created, not from `history`.
     expect(history).toHaveLength(3)
-    expect(history.map((event) => event.stageId)).toEqual([
-      history[0]!.stageId,
-      history[1]!.stageId,
-      history[0]!.stageId,
-    ])
-    expect(current?.stageId).toBe(history[1]!.stageId)
-    expect(afterAppend?.stageId).toBe(history[0]!.stageId)
+    expect(history.map((event) => event.stageId)).toEqual([openStageId, repeatingStageId, openStageId])
+    expect(current?.stageId).toBe(repeatingStageId)
+    expect(afterAppend?.stageId).toBe(openStageId)
     expect(afterAppend?.id).toBe(history[2]!.id)
   })
 
+  // Documentation, not a guard: the ordering is done by this query's own ORDER BY, so the
+  // test passes against any schema and would not catch a change to the tables.
   test('stage events at the same instant order by id, so the last appended is current', async () => {
     // Arrange / Act: inside one transaction now() is constant, so default timestamps tie
     const { current, ids } = await rolledBack(async (tx, token) => {
