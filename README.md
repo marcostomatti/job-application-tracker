@@ -62,6 +62,34 @@ set exists and changes nothing. The loaded set is not made the default; you choo
 `bun run lint:migrations` rejects any pack in `seeds/vanilla/` with a weight or an apply
 threshold set, and `seed:pack` refuses such a file too.
 
+## Backups
+
+`bun run backup` writes one `pg_dump` of the database into `backups/` and removes older dumps,
+so the directory holds `keep` files and never grows. **A dump is all of your job-search data in
+one file**, which is what this repository is built to keep out of git, so `backups/` and `*.dump`
+are in `.gitignore`. The directory is created readable by you alone, and so is each dump.
+
+```sh
+bun run backup
+ls backups/        # tracker-20261103T090507Z.dump: a sortable UTC time, nothing else
+```
+
+The settings live in `app_config` under `backup`, and the defaults apply until you store one:
+`{ "enabled": true, "keep": 1, "intervalDays": 14 }`. One dump kept, replaced a fortnight later;
+`{ "enabled": false }` turns the schedule off. `bun run backup` is a request, so it dumps even
+when the schedule is off, and it still prunes to `keep`.
+
+`src/backup/schedule.ts` also exports `startBackupSchedule` and `createBackupDependency`, which
+check hourly whether the newest dump is `intervalDays` old and dump if so. Nothing starts them
+yet: `bun run serve` does not make backups.
+
+The binary is `pg_dump`, or the path in `PG_DUMP_BIN`. **Its major version must be at least the
+server's**: the Docker database is Postgres 16, and a `pg_dump` 14 refuses it with
+`aborting because of server version mismatch`. Point `PG_DUMP_BIN` at a 16 or newer binary.
+The connection is given to `pg_dump` through its `PG*` environment variables, so the password
+is in no command line, and an error from `pg_dump` is shown with the URL and password removed.
+Restore with `pg_restore --dbname <url> backups/<file>`.
+
 ## The HTTP service
 
 `bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
