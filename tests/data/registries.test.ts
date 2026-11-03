@@ -19,6 +19,7 @@ import {
   textType,
   workFormat,
 } from '../../src/data/schema/registries.ts'
+import { withMigratedScratchDatabase } from './scratch-database.ts'
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const REGISTRY_TABLE_NAMES = [
@@ -78,16 +79,26 @@ afterAll(async () => {
 
 describe('registries', () => {
   test('every registry is empty after migrating', async () => {
-    // Arrange
-    const db = getDb()
+    // Arrange / Act: migrate into a database nothing else has touched. The shared dev database
+    // proves nothing about the migrations, since a user may have loaded a pack into it.
+    const { counts, discovered } = await withMigratedScratchDatabase(async (db, raw) => {
+      const found = await raw<{ table_name: string }[]>`
+        SELECT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name IN ('label', 'archived_at')
+        GROUP BY table_name HAVING count(*) = 2
+      `
+      return {
+        counts: await Promise.all(
+          ALL_REGISTRIES.map((table) => db.select({ n: count() }).from(table).then((rows) => rows[0]?.n)),
+        ),
+        discovered: found.map((row) => row.table_name).sort(),
+      }
+    })
 
-    // Act
-    const counts = await Promise.all(
-      ALL_REGISTRIES.map((table) => db.select({ n: count() }).from(table).then((rows) => rows[0]?.n)),
-    )
-
-    // Assert
+    // Assert: twelve registries, found in the database as well as listed here, so a thirteenth
+    // added later fails this test until it is accounted for
     expect(ALL_REGISTRIES).toHaveLength(12)
+    expect(discovered).toEqual([...REGISTRY_TABLE_NAMES].sort())
     expect(counts).toEqual(ALL_REGISTRIES.map(() => 0))
   })
 

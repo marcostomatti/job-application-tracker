@@ -60,7 +60,3 @@ set exists and changes nothing. The loaded set is not made the default; you choo
 
 `bun run lint:migrations` rejects any pack in `seeds/vanilla/` with a weight or an apply
 threshold set, and `seed:pack` refuses such a file too.
-
-Running `seed:pack` against the database you test with fills the layer registry, which the
-"every registry is empty after migrating" test expects to be empty. Use a separate database
-for tests if you load a pack.
