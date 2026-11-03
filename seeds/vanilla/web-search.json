@@ -1,0 +1,145 @@
+{
+  "name": "web-search",
+  "version": 1,
+  "apply_threshold": null,
+  "layers": [
+    { "key": "market", "label": "Market" },
+    { "key": "role", "label": "Role" },
+    { "key": "company", "label": "Company" },
+    { "key": "person", "label": "Person" }
+  ],
+  "requirements": [
+    {
+      "key": "market-demand",
+      "layer_key": "market",
+      "kind": "soft",
+      "weight": null,
+      "label": "Other openings like this exist",
+      "anchors": {
+        "0": "This kind of opening is rare, and this one may be the only one in reach",
+        "0.5": "A handful of comparable openings appear over a few months",
+        "1": "Comparable openings appear steadily, so this one is not the only chance"
+      }
+    },
+    {
+      "key": "pay-expectation",
+      "layer_key": "market",
+      "kind": "soft",
+      "weight": null,
+      "label": "Pay meets the expectation you set",
+      "anchors": {
+        "0": "The stated pay is clearly below your expectation",
+        "0.5": "The stated pay is close to your expectation but short of it",
+        "1": "The stated pay meets or exceeds your expectation"
+      }
+    },
+    {
+      "key": "skills-overlap",
+      "layer_key": "role",
+      "kind": "soft",
+      "weight": null,
+      "label": "Your skills overlap with what is asked",
+      "anchors": {
+        "0": "Few of the asked-for skills are ones you have used",
+        "0.5": "About half of the asked-for skills are ones you have used",
+        "1": "Nearly all of the asked-for skills are ones you have used"
+      }
+    },
+    {
+      "key": "scope-fit",
+      "layer_key": "role",
+      "kind": "soft",
+      "weight": null,
+      "label": "The scope is one you want to own",
+      "anchors": {
+        "0": "The day-to-day work is mostly work you would avoid",
+        "0.5": "The day-to-day work is a mix of work you want and work you would avoid",
+        "1": "The day-to-day work is mostly work you want to be doing"
+      }
+    },
+    {
+      "key": "level-fit",
+      "layer_key": "role",
+      "kind": "soft",
+      "weight": null,
+      "label": "The level matches where you are",
+      "anchors": {
+        "0": "The level is well above or well below where you are",
+        "0.5": "The level is one step away from where you are",
+        "1": "The level matches where you are"
+      }
+    },
+    {
+      "key": "room-to-grow",
+      "layer_key": "role",
+      "kind": "soft",
+      "weight": null,
+      "label": "There is room to learn and progress",
+      "anchors": {
+        "0": "Nothing suggests you would learn or progress here",
+        "0.5": "Some learning is likely, with no clear path forward",
+        "1": "There is visible learning and a clear path forward"
+      }
+    },
+    {
+      "key": "purpose",
+      "layer_key": "company",
+      "kind": "soft",
+      "weight": null,
+      "label": "The organisation's purpose is one you can stand behind",
+      "anchors": {
+        "0": "You would be uncomfortable explaining what the organisation does",
+        "0.5": "You are indifferent to what the organisation does",
+        "1": "You would be glad to explain what the organisation does"
+      }
+    },
+    {
+      "key": "stability",
+      "layer_key": "company",
+      "kind": "soft",
+      "weight": null,
+      "label": "The organisation looks likely to last",
+      "anchors": {
+        "0": "There are signs the organisation may not last the year",
+        "0.5": "There are no warning signs, and no strong evidence either way",
+        "1": "There is clear evidence the organisation is established and sustainable"
+      }
+    },
+    {
+      "key": "hiring-process",
+      "layer_key": "company",
+      "kind": "soft",
+      "weight": null,
+      "label": "The hiring process is clear and respects your time",
+      "anchors": {
+        "0": "The steps, timing or expectations are unclear or keep changing",
+        "0.5": "The steps are clear but slow or heavier than they need to be",
+        "1": "The steps are clear, timely and proportionate"
+      }
+    },
+    {
+      "key": "team-and-manager",
+      "layer_key": "person",
+      "kind": "soft",
+      "weight": null,
+      "label": "The people you would work with look like a good match",
+      "anchors": {
+        "0": "What you have seen of the people gives you doubts",
+        "0.5": "You have seen too little of the people to be sure, or the signals are mixed",
+        "1": "What you have seen of the people makes you want to work with them"
+      }
+    },
+    {
+      "key": "practical-fit",
+      "layer_key": "person",
+      "kind": "soft",
+      "weight": null,
+      "label": "The practical terms work for your life",
+      "anchors": {
+        "0": "The practical terms cannot be made to work for you",
+        "0.5": "The practical terms work with some compromise",
+        "1": "The practical terms work as stated"
+      }
+    }
+  ]
+}

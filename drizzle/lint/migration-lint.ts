@@ -642,24 +642,27 @@ export function lintMigrations(dir: string, options: LintOptions = {}): LintFind
   })
 }
 
+const JUDGEMENT = /"(weight|apply_threshold)"\s*:\s*(?!null\b)([^\s,}\]][^,}\]\n]*)/g
+
+/** Lint one pack file. Throws on a file that is not valid JSON. */
+export function lintPackFile(file: string): LintFinding[] {
+  const text = readFileSync(file, 'utf8')
+  try {
+    JSON.parse(text)
+  } catch (error) {
+    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`)
+  }
+  return [...text.matchAll(JUDGEMENT)].map((match) => ({
+    file,
+    line: lineOf(text, match.index),
+    rule: 'pack-carries-judgement' as const,
+    detail: `"${match[1]}" is ${(match[2] as string).trim()}; a vanilla pack carries null`,
+  }))
+}
+
 /** Lint every `.json` pack directly inside `dir`. Throws on a file that is not valid JSON. */
 export function lintVanillaPacks(dir: string): LintFinding[] {
-  const judgement = /"(weight|apply_threshold)"\s*:\s*(?!null\b)([^\s,}\]][^,}\]\n]*)/g
-  return filesWithExtension(dir, '.json').flatMap((name) => {
-    const file = join(dir, name)
-    const text = readFileSync(file, 'utf8')
-    try {
-      JSON.parse(text)
-    } catch (error) {
-      throw new Error(`${file} is not valid JSON: ${(error as Error).message}`)
-    }
-    return [...text.matchAll(judgement)].map((match) => ({
-      file,
-      line: lineOf(text, match.index),
-      rule: 'pack-carries-judgement' as const,
-      detail: `"${match[1]}" is ${(match[2] as string).trim()}; a vanilla pack carries null`,
-    }))
-  })
+  return filesWithExtension(dir, '.json').flatMap((name) => lintPackFile(join(dir, name)))
 }
 
 export type RepoLint = {

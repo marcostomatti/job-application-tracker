@@ -42,3 +42,66 @@ export const ScoreInputSchema = z.object({
   // every recommendation.
   applyThreshold: unitInterval.nullable(),
 })
+
+const nonEmptyText = z.string().trim().min(1)
+
+/**
+ * What a coverage of 0, 0.5 and 1 mean for one requirement. All three are required and
+ * non-empty: an anchor-less requirement can only be read by whoever wrote it, which defeats
+ * shipping the rubric. The database cannot say this (anchors is jsonb), so this is where it is held.
+ */
+export const AnchorsSchema = z.strictObject({
+  '0': nonEmptyText,
+  '0.5': nonEmptyText,
+  '1': nonEmptyText,
+})
+
+/**
+ * A pack is a file other people read, so its keys are snake_case like the columns they land
+ * in, and every object is strict: an unknown key such as a hand-added "importance" would
+ * otherwise be dropped unread. `weight` and `apply_threshold` accept only null, because a set
+ * with weights is judgement by construction and the seed interview supplies them.
+ */
+export const PackRequirementSchema = z.strictObject({
+  key: nonEmptyText,
+  layer_key: nonEmptyText,
+  kind: z.enum(['gate', 'soft']),
+  weight: z.null(),
+  label: nonEmptyText,
+  anchors: AnchorsSchema,
+})
+
+export const PackLayerSchema = z.strictObject({
+  key: nonEmptyText,
+  label: nonEmptyText,
+})
+
+const duplicates = (values: readonly string[]): string[] =>
+  values.filter((value, index) => values.indexOf(value) !== index)
+
+export const VanillaPackSchema = z
+  .strictObject({
+    name: nonEmptyText,
+    version: z.number().int().min(1),
+    apply_threshold: z.null(),
+    layers: z.array(PackLayerSchema),
+    requirements: z.array(PackRequirementSchema).min(1),
+  })
+  .superRefine((pack, ctx) => {
+    const layerKeys = pack.layers.map((entry) => entry.key)
+    for (const key of duplicates(layerKeys)) {
+      ctx.addIssue({ code: 'custom', path: ['layers'], message: `layer "${key}" is declared twice` })
+    }
+    for (const key of duplicates(pack.requirements.map((entry) => entry.key))) {
+      ctx.addIssue({ code: 'custom', path: ['requirements'], message: `requirement "${key}" appears twice` })
+    }
+    pack.requirements.forEach((entry, index) => {
+      if (!layerKeys.includes(entry.layer_key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['requirements', index, 'layer_key'],
+          message: `layer "${entry.layer_key}" is not declared in the pack's layers`,
+        })
+      }
+    })
+  })
