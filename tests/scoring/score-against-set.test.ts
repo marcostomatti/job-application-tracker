@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Rating, Requirement, ScoreInput } from '../../src/entities/scoring.ts'
+import { ScoreInputSchema } from '../../src/schemas/scoring.ts'
 import { scoreAgainstSet } from '../../src/scoring/score-against-set.ts'
 import { FIXTURE_POSITIONS } from '../fixtures/scoring/positions.ts'
 
@@ -142,5 +143,20 @@ describe('scoreAgainstSet', () => {
     expected,
   }) => {
     expect(scoreAgainstSet(positionInput)).toEqual(expected)
+  })
+})
+
+describe('ScoreInputSchema applyThreshold', () => {
+  const withThreshold = (applyThreshold: number | null) =>
+    ScoreInputSchema.safeParse(input({ applyThreshold })).success
+
+  // 1.5 is a typo that would silently stop every recommendation, not a stricter bar.
+  test.each([1.5, -0.1])('rejects a threshold of %p outside 0..1', (threshold) => {
+    expect(withThreshold(threshold)).toBe(false)
+  })
+
+  // 0 recommends anything no gate blocks, 1 wants a perfect score, null is no bar set yet.
+  test.each([0, 1, null])('accepts a threshold of %p', (threshold) => {
+    expect(withThreshold(threshold)).toBe(true)
   })
 })

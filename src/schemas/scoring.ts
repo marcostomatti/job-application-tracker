@@ -37,5 +37,7 @@ export const ScoreInputSchema = z.object({
   detours: z.array(DetourSchema),
   penalties: z.array(PenaltySchema),
   // The overall a role must reach to be worth applying to; null until a bar has been set.
-  applyThreshold: z.number().nullable(),
+  // Bounded like the overall it is compared with, so a typo such as 1.5 cannot silently stop
+  // every recommendation.
+  applyThreshold: unitInterval.nullable(),
 })
