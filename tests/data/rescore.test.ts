@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
@@ -49,34 +49,56 @@ async function addRequest(tx: Tx, criteriaSetId: number, sinceDate: string): Pro
   return row!.id
 }
 
-/** The position ids the view lists for one request, in a stable order. */
-async function pendingFor(tx: Tx, requestId: number): Promise<number[]> {
+/**
+ * The position ids the view lists for one request, in a stable order, limited to positions the
+ * test created. The view joins a request to every position seen on or after its date, so a
+ * position committed to the shared database would otherwise show up as pending too.
+ */
+async function pendingFor(tx: Tx, requestId: number, createdIds: number[]): Promise<number[]> {
   const rows = await tx
     .select()
     .from(pendingRescore)
-    .where(eq(pendingRescore.rescoreRequestId, requestId))
+    .where(and(eq(pendingRescore.rescoreRequestId, requestId), inArray(pendingRescore.positionId, createdIds)))
     .orderBy(asc(pendingRescore.positionId))
   return rows.map((row) => row.positionId)
+}
+
+/** Ids in ascending order, the order `pendingFor` returns them in. */
+function ascending(ids: number[]): number[] {
+  return [...ids].sort((a, b) => a - b)
 }
 
 describe('app config and the pending re-score view', () => {
   test('app_config stores the criteria mode', async () => {
     // Arrange / Act
-    const { versioned, perspective } = await rolledBack(async (tx) => {
-      const read = async (mode: string) => {
+    const { versioned, perspective, structured } = await rolledBack(async (tx) => {
+      const write = async (value: unknown) => {
         await tx
           .insert(appConfig)
-          .values({ key: 'criteria_mode', value: mode })
-          .onConflictDoUpdate({ target: appConfig.key, set: { value: mode } })
+          .values({ key: 'criteria_mode', value })
+          .onConflictDoUpdate({ target: appConfig.key, set: { value } })
         const [row] = await tx.select().from(appConfig).where(eq(appConfig.key, 'criteria_mode'))
         return row
       }
-      return { versioned: await read('versioned'), perspective: await read('perspective') }
+      return {
+        versioned: await write('versioned'),
+        perspective: await write('perspective'),
+        // No CHECK sits on the value: a number or an object is stored as readily as a string
+        structured: await Promise.all(
+          [42, { mode: 'perspective', weights: [1, 2] }].map(async (value, index) => {
+            const key = `shape_${index}`
+            await tx.insert(appConfig).values({ key, value })
+            const [row] = await tx.select().from(appConfig).where(eq(appConfig.key, key))
+            return row
+          }),
+        ),
+      }
     })
 
-    // Assert: the value comes back as stored, and a second write replaces the first
+    // Assert: each value comes back as stored, and a second write to a key replaces the first
     expect(versioned?.value).toBe('versioned')
     expect(perspective?.value).toBe('perspective')
+    expect(structured.map((row) => row?.value)).toEqual([42, { mode: 'perspective', weights: [1, 2] }])
   })
 
   test('pending_rescore lists positions seen on or after since_date with no score for the set', async () => {
@@ -86,7 +108,7 @@ describe('app config and the pending re-score view', () => {
       const requestId = await addRequest(tx, setId, SINCE)
       const onSince = await addPosition(tx, token, 'on-since', SINCE)
       const afterSince = await addPosition(tx, token, 'after-since', AFTER_SINCE)
-      return { pending: await pendingFor(tx, requestId), onSince, afterSince }
+      return { pending: await pendingFor(tx, requestId, [onSince, afterSince]), onSince, afterSince }
     })
 
     // Assert: the boundary day counts, and so does a later day
@@ -106,11 +128,11 @@ describe('app config and the pending re-score view', () => {
         { positionId: scored, criteriaSetId: setId },
         { positionId: scoredElsewhere, criteriaSetId: otherSetId },
       ])
-      return { pending: await pendingFor(tx, requestId), unscored, scoredElsewhere }
+      return { pending: await pendingFor(tx, requestId, [scored, unscored, scoredElsewhere]), unscored, scoredElsewhere }
     })
 
     // Assert: only a score for this request's set removes a position; a score for another set does not
-    expect(pending).toEqual([unscored, scoredElsewhere].sort((a, b) => a - b))
+    expect(pending).toEqual(ascending([unscored, scoredElsewhere]))
   })
 
   test('pending_rescore excludes a position seen before since_date', async () => {
@@ -118,9 +140,9 @@ describe('app config and the pending re-score view', () => {
     const { pending, recent } = await rolledBack(async (tx, token) => {
       const setId = await addCriteriaSet(tx, token, 'Set A')
       const requestId = await addRequest(tx, setId, SINCE)
-      await addPosition(tx, token, 'old', BEFORE_SINCE)
+      const old = await addPosition(tx, token, 'old', BEFORE_SINCE)
       const recent = await addPosition(tx, token, 'recent', SINCE)
-      return { pending: await pendingFor(tx, requestId), recent }
+      return { pending: await pendingFor(tx, requestId, [old, recent]), recent }
     })
 
     // Assert: the day before since_date is out, the day itself is in
@@ -134,18 +156,50 @@ describe('app config and the pending re-score view', () => {
       const requestId = await addRequest(tx, setId, SINCE)
       const target = await addPosition(tx, token, 'target', AFTER_SINCE)
       const other = await addPosition(tx, token, 'other', AFTER_SINCE)
-      const before = await pendingFor(tx, requestId)
+      const created = [target, other]
+      const before = await pendingFor(tx, requestId, created)
       const [requestRow] = await tx.select().from(rescoreRequest).where(eq(rescoreRequest.id, requestId))
       await tx.insert(positionScore).values({ positionId: target, criteriaSetId: setId })
-      const after = await pendingFor(tx, requestId)
+      const after = await pendingFor(tx, requestId, created)
       const [requestRowAfter] = await tx.select().from(rescoreRequest).where(eq(rescoreRequest.id, requestId))
       return { before: { ids: before, target }, after, other, requestRow, requestRowAfter }
     })
 
     // Assert: the scored position leaves, the other stays, and the request row itself is untouched
-    expect(before.ids).toEqual([before.target, other].sort((a, b) => a - b))
+    expect(before.ids).toEqual(ascending([before.target, other]))
     expect(after).toEqual([other])
     expect(requestRowAfter).toEqual(requestRow)
+  })
+
+  test('each request lists only its own positions and judges them against its own set', async () => {
+    // Arrange / Act: two requests on two sets, both reaching the same positions by date
+    const result = await rolledBack(async (tx, token) => {
+      const setA = await addCriteriaSet(tx, token, 'Set A')
+      const setB = await addCriteriaSet(tx, token, 'Set B')
+      const requestA = await addRequest(tx, setA, SINCE)
+      const requestB = await addRequest(tx, setB, AFTER_SINCE)
+      const scoredForA = await addPosition(tx, token, 'scored-for-a', AFTER_SINCE)
+      const scoredForB = await addPosition(tx, token, 'scored-for-b', AFTER_SINCE)
+      const neither = await addPosition(tx, token, 'neither', AFTER_SINCE)
+      const onlyReachedByA = await addPosition(tx, token, 'only-reached-by-a', SINCE)
+      await tx.insert(positionScore).values([
+        { positionId: scoredForA, criteriaSetId: setA },
+        { positionId: scoredForB, criteriaSetId: setB },
+      ])
+      const created = [scoredForA, scoredForB, neither, onlyReachedByA]
+      return {
+        forA: await pendingFor(tx, requestA, created),
+        forB: await pendingFor(tx, requestB, created),
+        scoredForA,
+        scoredForB,
+        neither,
+        onlyReachedByA,
+      }
+    })
+
+    // Assert: a score for one request's set clears that request only, and the date is each request's own
+    expect(result.forA).toEqual(ascending([result.scoredForB, result.neither, result.onlyReachedByA]))
+    expect(result.forB).toEqual(ascending([result.scoredForA, result.neither]))
   })
 
   test('the migration passes the lint', () => {

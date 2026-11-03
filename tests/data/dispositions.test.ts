@@ -15,7 +15,9 @@ const DISPOSITION_CHECK = 'position_disposition_kind_reason_check'
 const SET_ASIDE_FK = 'position_disposition_set_aside_reason_id_set_aside_reason_id_fk'
 const REJECTION_FK = 'position_disposition_rejection_reason_id_rejection_reason_id_fk'
 // Explicit ids far above anything an identity column hands out, one per registry, so neither
-// id can exist in the other registry.
+// id can exist in the other registry. The rows carrying them never commit: the test inserts
+// them inside `rolledBack`, so they cannot collide with data or with each other across runs.
+// Keep them inside that wrapper.
 const ONLY_IN_REJECTION_ID = 2_000_000_001
 const ONLY_IN_SET_ASIDE_ID = 2_000_000_002
 
