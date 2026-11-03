@@ -34,6 +34,9 @@ function digest(value: string): Buffer {
  * the comparison and looks only at the configured key, so it leaks nothing about it. It is a
  * second guard behind `requireApiKey`'s own refusal of an unset key, because the digests of
  * two empty strings are equal and a caller that skipped that guard would otherwise be open.
+ * The guard is on `expected` and not on `presented` on purpose: a leading
+ * `if (!presented) return false` would be an early return on the presented value, which is
+ * the one property this function must not lose.
  */
 export function verifyApiKey(presented: string, expected: string): boolean {
   const digestsMatch = timingSafeEqual(digest(presented), digest(expected))

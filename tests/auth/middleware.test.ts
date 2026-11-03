@@ -68,6 +68,39 @@ describe('requireApiKey with no key configured', () => {
     expect(outcome.logged[0]?.message).toContain('API_KEY')
   })
 
+  test('requireApiKey refuses with 503 using the module default logger when none is passed', async () => {
+    // Arrange: the default logger is made on first use and reads LOG_LEVEL then, so the level
+    // is silenced for this call to keep the test output clean. Only the response is asserted.
+    const previous = process.env.LOG_LEVEL
+    process.env.LOG_LEVEL = 'silent'
+    let status: number | undefined
+    let body: unknown
+    let nextCalls = 0
+    const res = {
+      status(code: number) {
+        status = code
+        return res
+      },
+      json(payload: unknown) {
+        body = payload
+        return res
+      },
+    } as unknown as Response
+
+    // Act
+    try {
+      await requireApiKey(undefined)({ headers: {} } as unknown as Request, res, () => void (nextCalls += 1))
+    } finally {
+      if (previous === undefined) delete process.env.LOG_LEVEL
+      else process.env.LOG_LEVEL = previous
+    }
+
+    // Assert
+    expect(status).toBe(503)
+    expect(body).toEqual({ error: 'unavailable' })
+    expect(nextCalls).toBe(0)
+  })
+
   test('the 503 body and its log line carry nothing about the presented token', async () => {
     const presented = 'presented-'.concat('c'.repeat(20))
     const outcome = await run(undefined, `Bearer ${presented}`)
