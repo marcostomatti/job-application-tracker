@@ -25,8 +25,14 @@ export type DetourCoverageInput = z.infer<typeof DetourCoverageInputSchema>
  * What the scoring pass concluded about one requirement of the set. `coverage` is required but
  * nullable: `null` is "not rated", which is different from `0` ("rated, and not covered"), and
  * a caller who leaves the field out has most likely forgotten it, so it is refused rather than
- * read as either. A requirement the call does not mention at all is also not rated. `detours`
- * says how well the position covers each way round this requirement; a detour left out is not rated.
+ * read as either. A requirement the call does not mention at all is also not rated.
+ *
+ * `detours` says how well the position covers each way round this requirement; a detour left
+ * out is not rated. A detour coverage qualifies a rating of the same requirement, so it needs
+ * that rating to exist: a caller with no direct assessment of the requirement but a detour to
+ * report sends the rating with `coverage: null` and the detour beside it. The requirement then
+ * counts as rated by the detour, at its coverage times what the detour keeps. Without the rating
+ * the database refuses the coverage.
  */
 export const RatingInputSchema = z.strictObject({
   requirementId: IdSchema,

@@ -43,6 +43,17 @@ describe('error messages', () => {
     expect(error.message).not.toContain('select')
   })
 
+  test('ConflictError takes its own message, keeps the cause off it, and still names the field and key', () => {
+    const cause = new Error('driver detail')
+    const error = new ConflictError('criteria set', '3', { message: 'a rating names a requirement outside it', cause })
+    expect(error.message).toBe('a rating names a requirement outside it')
+    expect(error.cause).toBe(cause)
+    expect(error).toMatchObject({ field: 'criteria set', key: '3', name: 'ConflictError' })
+    expect(statusFor(error)).toBe(409)
+    expect(new ConflictError('a', 'b').message).toBe('a b already exists')
+    expect('cause' in new ConflictError('a', 'b')).toBe(false)
+  })
+
   test('ConflictError names the key and not the cause', () => {
     const error = new ConflictError('position_key', 'acme-dev')
     expect(error.message).toBe('position_key acme-dev already exists')

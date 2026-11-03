@@ -18,14 +18,20 @@ export class NotFoundError extends Error {
   }
 }
 
-/** A thing the caller tried to create already exists under this key. */
+/**
+ * The caller's request conflicts with what is stored: most often a thing it tried to create
+ * already exists under this key, which is what the default message says. A conflict of another
+ * kind, such as a rating that names something outside the set it was made under, passes its own
+ * `message`, because "already exists" would be false for it. `field` and `key` still say what
+ * collided. `cause` keeps the driver fault and is never part of the message.
+ */
 export class ConflictError extends Error {
   constructor(
     readonly field: string,
     readonly key: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { message?: string },
   ) {
-    super(`${field} ${key} already exists`, options)
+    super(options?.message ?? `${field} ${key} already exists`, options)
     this.name = 'ConflictError'
   }
 }

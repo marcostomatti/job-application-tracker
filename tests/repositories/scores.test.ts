@@ -392,6 +392,29 @@ describe('scorePosition', () => {
     expect(lifted.overall).toBeCloseTo(0.5, 10)
   })
 
+  test('a requirement with no direct rating counts as rated once a detour with coverage is given', async () => {
+    // Arrange / Act
+    const { unrated, byDetour, stored } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
+      const unrated = await scorePosition(db, { ...base, ratings: [supported(arranged.a, null), supported(arranged.b, 1)] })
+      const byDetour = await scorePosition(db, {
+        ...base,
+        ratings: [viaDetours(supported(arranged.a, null), { detourId: arranged.halfDetour, coverage: 0.8 }), supported(arranged.b, 1)],
+      })
+      return { unrated, byDetour, stored: await db.select().from(positionRating).where(eq(positionRating.requirementId, arranged.a)) }
+    })
+
+    // Assert: with a unrated, overall is b alone (1); with a detour, a counts as 0.8 x 0.5 = 0.4,
+    // so overall is (3 x 0.4 + 1 x 1) / 4 and the floor and ceiling meet
+    expect(unrated.overall).toBeCloseTo(1, 10)
+    expect(unrated.floor).toBeCloseTo(0.25, 10)
+    expect(byDetour.overall).toBeCloseTo(0.55, 10)
+    expect(byDetour.floor).toBeCloseTo(0.55, 10)
+    expect(byDetour.ceiling).toBeCloseTo(0.55, 10)
+    expect(stored[0]?.coverage).toBeNull()
+  })
+
   test('a detour with a discount of 0 contributes its full coverage', async () => {
     // Arrange / Act
     const score = await withMigratedScratchDatabase(async (db) => {
@@ -536,7 +559,8 @@ describe('a criteria set that has been archived', () => {
     // Assert
     expect(scoreError).toBeInstanceOf(ArchivedError)
     expect(requestError).toBeInstanceOf(ArchivedError)
-    expect(scoreError).toMatchObject({ entity: 'criteria_set' })
+    expect(scoreError).toMatchObject({ entity: 'criteria set' })
+    expect((scoreError as Error).message).toBe(`criteria set ${(scoreError as ArchivedError).id} is archived`)
     expect(statusFor(scoreError)).toBe(409)
     expect(scores).toBe(0)
     expect(pending[0]?.n).toBe(0)

@@ -55,7 +55,7 @@ export async function findCriteriaSet(db: Db, id: number): Promise<CriteriaSetRo
  */
 export async function findUsableCriteriaSet(db: Db, id: number): Promise<CriteriaSetRow> {
   const found = await findCriteriaSet(db, id)
-  if (found.archivedAt !== null) throw new ArchivedError('criteria_set', id)
+  if (found.archivedAt !== null) throw new ArchivedError('criteria set', id)
   return found
 }
 

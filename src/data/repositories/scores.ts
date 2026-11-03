@@ -216,14 +216,6 @@ async function replaceRatingsAndPenalties(db: Db, score: StoredScore, input: Sco
   await insertPenalties(db, score, input.penalties)
 }
 
-/** What the caller sees when a rating or a detour coverage names a row the score's set or requirement does not hold. */
-class MembershipConflictError extends ConflictError {
-  constructor(field: string, key: string, detail: string, options: ErrorOptions) {
-    super(field, key, options)
-    this.message = detail
-  }
-}
-
 const REQUIREMENT_OUTSIDE_SET = 'position_rating_set_requirement_fk'
 const DETOUR_OF_OTHER_REQUIREMENT = 'position_rating_detour_detour_fk'
 
@@ -235,20 +227,16 @@ const DETOUR_OF_OTHER_REQUIREMENT = 'position_rating_detour_detour_fk'
  */
 function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown {
   if (isForeignKeyViolation(error, REQUIREMENT_OUTSIDE_SET)) {
-    return new MembershipConflictError(
-      'criteria set',
-      String(input.criteriaSetId),
-      `a rating names a requirement that is not in criteria set ${input.criteriaSetId}`,
-      { cause: error },
-    )
+    return new ConflictError('criteria set', String(input.criteriaSetId), {
+      message: `a rating names a requirement that is not in criteria set ${input.criteriaSetId}`,
+      cause: error,
+    })
   }
   if (isForeignKeyViolation(error, DETOUR_OF_OTHER_REQUIREMENT)) {
-    return new MembershipConflictError(
-      'requirement detour',
-      `in one of the ${input.ratings.length} ratings this call carried`,
-      'a detour coverage names a detour that does not belong to the requirement it is rated under',
-      { cause: error },
-    )
+    return new ConflictError('requirement detour', `in one of the ${input.ratings.length} ratings this call carried`, {
+      message: 'a detour coverage names a detour that does not belong to the requirement it is rated under',
+      cause: error,
+    })
   }
   return error
 }
