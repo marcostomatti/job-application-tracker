@@ -61,3 +61,54 @@ set exists and changes nothing. The loaded set is not made the default; you choo
 
 `bun run lint:migrations` rejects any pack in `seeds/vanilla/` with a weight or an apply
 threshold set, and `seed:pack` refuses such a file too.
+
+## The MCP server
+
+`bun run mcp` starts the MCP server, which offers 46 tools for recording, scoring and reading
+your search. It reads `DATABASE_URL` from `.env` like the rest of the repository, so run
+`bun run db:up` and `bun run db:migrate` first.
+
+It has two transports, chosen by the `MCP_TRANSPORT` environment variable.
+
+**HTTP, the default.** With `MCP_TRANSPORT` unset, the server listens on port 8080 (`PORT`
+changes it) and a health endpoint answers on port 3001 at `/health`. These are the defaults of
+the `@open-tomato/service-mcp` package that runs the server. Use this for anything that
+connects over a network or that you want to check is alive.
+
+```sh
+bun run mcp
+```
+
+**stdio, for Claude Desktop.** With `MCP_TRANSPORT=stdio` the server talks over its own
+standard input and output, so a client that starts it as a child process (Claude Desktop does)
+needs no port. There is no health endpoint in this mode.
+
+```sh
+MCP_TRANSPORT=stdio bun run mcp
+```
+
+In Claude Desktop's MCP configuration, set the command to `bun`, the arguments to
+`run mcp` (as `["run", "mcp"]`), the working directory to your clone, and `MCP_TRANSPORT` to
+`stdio` in its environment.
+
+### What the API key does here
+
+The key from `bun run setApiKey` guards the Express HTTP API, where a request carries an
+`Authorization: Bearer` header and the middleware checks it. The MCP server is a separate
+process, and the key does less there than you might expect:
+
+- On **stdio** there is no request to carry a header, so the key is inert. The control is
+  process-level access: whoever can start the process, or reach the client that starts it,
+  can call every tool. Treat stdio as unauthenticated.
+- On the **HTTP transport**, the `@open-tomato/service-mcp` package serves requests with no
+  hook for checking a header, and this repository does not add one. The key is not checked
+  there either, so do not expose port 8080 beyond a machine you trust.
+
+### Two shapes of error
+
+A tool that fails inside the service returns `{ "error": { "name": "...", "message": "..." } }`
+in its result, with the result's `isError` flag set. A call whose arguments do not match the
+tool's input schema never reaches the service: the MCP SDK rejects it itself and returns its
+own validation message as plain text, with `isError` set but no `error` object. A client that
+parses tool results has to handle both. The SDK produces the second shape, so this repository
+cannot make it match the first.
