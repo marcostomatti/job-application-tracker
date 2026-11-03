@@ -11,7 +11,11 @@ const registryColumns = () => ({
   archivedAt: timestamp('archived_at', { withTimezone: true }),
 })
 
-/** A stable handle the user chooses for a row; code may look rows up by it, never by label. */
+/**
+ * A stable handle the user chooses for a row, for imports and seed packs to refer to it.
+ * Code must not branch on a specific key value: that would put the user's vocabulary in code,
+ * which is what flags such as `isShortlist` and `isApplied` exist to prevent.
+ */
 const keyColumn = () => text().notNull().unique()
 
 const sortColumn = () => integer().notNull().default(0)
