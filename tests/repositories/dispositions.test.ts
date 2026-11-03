@@ -1,0 +1,848 @@
+import { describe, expect, test } from 'bun:test'
+import { asc, count, eq, sql } from 'drizzle-orm'
+import postgres from 'postgres'
+
+import type { DrizzleClient } from '../../src/data/client.ts'
+import * as repositoryModule from '../../src/data/repositories/dispositions.ts'
+import {
+  appendStageEvent,
+  currentStage,
+  isApplied,
+  listSetAside,
+  moveIfRecommended,
+  recordRejection,
+  setAside,
+} from '../../src/data/repositories/dispositions.ts'
+import { addPositions, type Position } from '../../src/data/repositories/positions.ts'
+import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
+import { positionDisposition, positionStageEvent } from '../../src/data/schema/dispositions.ts'
+import { ArchivedError, NotFoundError, statusFor } from '../../src/errors.ts'
+import {
+  RecordRejectionInputSchema,
+  SetAsideInputSchema,
+  StageEventBulkSchema,
+  StageEventInputSchema,
+} from '../../src/schemas/dispositions.ts'
+import type { RegistryRowInputOf } from '../../src/schemas/registries.ts'
+import { thrownBy } from '../data/rolled-back.ts'
+import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
+
+const DISPOSITION_CHECK = 'position_disposition_kind_reason_check'
+
+/** The id at `index`, or a loud failure: an absent row would otherwise read as a pass. */
+function idOf(rows: readonly { readonly id: number }[], index = 0): number {
+  const id = rows[index]?.id
+  if (id === undefined) throw new Error(`the arrangement produced no row at index ${index}`)
+  return id
+}
+
+async function addPosition(db: DrizzleClient, title = 'Staff Engineer'): Promise<Position> {
+  const [added] = await addPositions(db, [{ company: { name: `${title} Co` }, roleTitle: title }])
+  if (!added) throw new Error('the arrangement stored no position')
+  return added
+}
+
+async function addStage(db: DrizzleClient, key: string, flags: Omit<RegistryRowInputOf<'stage'>, 'key' | 'label'> = {}): Promise<number> {
+  return idOf(await addRegistryRows(db, 'stage', [{ key, label: `Stage ${key}`, ...flags }]))
+}
+
+async function addPhase(db: DrizzleClient, key: string, flags: Omit<RegistryRowInputOf<'phase'>, 'key' | 'label'> = {}): Promise<number> {
+  return idOf(await addRegistryRows(db, 'phase', [{ key, label: `Phase ${key}`, ...flags }]))
+}
+
+async function eventCount(db: DrizzleClient, positionId?: number): Promise<number> {
+  const [found] = await db
+    .select({ n: count() })
+    .from(positionStageEvent)
+    .where(positionId === undefined ? undefined : eq(positionStageEvent.positionId, positionId))
+  return found?.n ?? 0
+}
+
+/** A shortlist phase holding one open stage, which is all the move rule needs to fire. */
+async function shortlistWithOneStage(db: DrizzleClient): Promise<{ phaseId: number; stageId: number }> {
+  const phaseId = await addPhase(db, 'shortlist', { isShortlist: true })
+  return { phaseId, stageId: await addStage(db, 'queued', { phaseId }) }
+}
+
+/**
+ * How many events the tie-break test writes under one instant: enough that storage order and
+ * id order part ways when the scan is sequential.
+ */
+const TIED_EVENTS = 10
+
+describe('the module surface', () => {
+  test('the module exports no way to update or delete a stage event', () => {
+    // Arrange / Act
+    const api = Object.keys(repositoryModule)
+
+    // Assert: the append-only rule is the shape of the API, since no trigger enforces it
+    expect(api.filter((name) => /update|delete|remove/i.test(name) && /stage/i.test(name))).toEqual([])
+    expect(api.filter((name) => /update|delete|remove/i.test(name))).toEqual([])
+  })
+})
+
+describe('appendStageEvent', () => {
+  test('stores the event with its stage, its note and an instant of its own', async () => {
+    // Arrange / Act
+    const { event, stored } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'screen')
+      const at = new Date('2026-03-01T10:00:00Z')
+      const written = await appendStageEvent(db, { positionId: target.id, stageId, occurredAt: at, note: 'phone screen' })
+      return { event: written, stored: await db.select().from(positionStageEvent) }
+    })
+
+    // Assert
+    expect(stored).toEqual([event])
+    expect(event.note).toBe('phone screen')
+    expect(event.occurredAt.toISOString()).toBe('2026-03-01T10:00:00.000Z')
+  })
+
+  test('stores an event with no stage and dates it when it is recorded', async () => {
+    // Arrange / Act: the stage registry ships empty, so a null stage is the normal fresh-install state
+    const { event, before, after } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const earlier = new Date()
+      const written = await appendStageEvent(db, { positionId: target.id, stageId: null })
+      return { event: written, before: earlier, after: new Date() }
+    })
+
+    // Assert
+    expect(event.stageId).toBeNull()
+    expect(event.note).toBeNull()
+    expect(event.occurredAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000)
+    expect(event.occurredAt.getTime()).toBeLessThanOrEqual(after.getTime() + 1000)
+  })
+
+  test('refuses an archived stage, an unknown stage and an unknown position, writing nothing', async () => {
+    // Arrange / Act
+    const { archived, unknownStage, unknownPosition, events } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'old')
+      await archiveRegistryRow(db, 'stage', stageId)
+      const liveStageId = await addStage(db, 'live')
+      return {
+        archived: await thrownBy(() => appendStageEvent(db, { positionId: target.id, stageId })),
+        unknownStage: await thrownBy(() => appendStageEvent(db, { positionId: target.id, stageId: 999_999 })),
+        unknownPosition: await thrownBy(() => appendStageEvent(db, { positionId: 999_999, stageId: liveStageId })),
+        events: await eventCount(db),
+      }
+    })
+
+    // Assert
+    expect(archived).toBeInstanceOf(ArchivedError)
+    expect(unknownStage).toBeInstanceOf(NotFoundError)
+    expect(unknownPosition).toBeInstanceOf(NotFoundError)
+    expect(statusFor(unknownPosition)).toBe(404)
+    expect(events).toBe(0)
+  })
+
+  test('a repeatable stage can occur twice, and both rows are counted', async () => {
+    // Arrange / Act: nothing in the table makes position and stage unique
+    const { occurrences, latest } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const interview = await addStage(db, 'interview', { isRepeatable: true })
+      await appendStageEvent(db, { positionId: target.id, stageId: interview, note: 'round one' })
+      await appendStageEvent(db, { positionId: target.id, stageId: interview, note: 'round two' })
+      const rows = await db
+        .select()
+        .from(positionStageEvent)
+        .where(eq(positionStageEvent.stageId, interview))
+        .orderBy(asc(positionStageEvent.id))
+      return { occurrences: rows.length, latest: await currentStage(db, target.id) }
+    })
+
+    // Assert
+    expect(occurrences).toBe(2)
+    expect(latest?.event.note).toBe('round two')
+  })
+})
+
+describe('currentStage', () => {
+  test('returns null when the position has no event', async () => {
+    // Arrange / Act
+    const found = await withMigratedScratchDatabase(async (db) => currentStage(db, (await addPosition(db)).id))
+
+    // Assert
+    expect(found).toBeNull()
+  })
+
+  test('returns the latest event by time, not the last one written', async () => {
+    // Arrange / Act: the later-dated event is written first, so the highest id is not the latest
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const later = await addStage(db, 'later')
+      const earlier = await addStage(db, 'earlier')
+      await appendStageEvent(db, { positionId: target.id, stageId: later, occurredAt: new Date('2026-03-02T00:00:00Z') })
+      await appendStageEvent(db, { positionId: target.id, stageId: earlier, occurredAt: new Date('2026-03-01T00:00:00Z') })
+      return currentStage(db, target.id)
+    })
+
+    // Assert
+    expect(found?.stage.label).toBe('Stage later')
+  })
+
+  test('breaks a tie between events at one instant by id, under a sequential scan', async () => {
+    // Arrange / Act: with the (position, time, id) index the highest id comes back on its own,
+    // which would hide a missing `id desc`; a sequential scan returns storage order, so only
+    // the ORDER BY decides among ten events sharing one timestamp.
+    const { found, expected } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageIds = await Promise.all(
+        Array.from({ length: TIED_EVENTS }, (_, index) => addStage(db, `tie-${index}`)),
+      )
+      await db.execute(sql`set enable_indexscan = off`)
+      await db.execute(sql`set enable_bitmapscan = off`)
+      const at = new Date('2026-02-01T09:00:00Z')
+      await db.insert(positionStageEvent).values(stageIds.map((stageId) => ({ positionId: target.id, stageId, occurredAt: at })))
+      return { found: await currentStage(db, target.id), expected: stageIds[TIED_EVENTS - 1] }
+    })
+
+    // Assert
+    expect(found?.stage.id).toBe(expected as number)
+  })
+
+  test('returns null when the latest event has a null stage, even if an earlier one had a stage', async () => {
+    // Arrange / Act
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'earlier')
+      await appendStageEvent(db, { positionId: target.id, stageId, occurredAt: new Date('2026-03-01T00:00:00Z') })
+      await appendStageEvent(db, { positionId: target.id, stageId: null, occurredAt: new Date('2026-03-02T00:00:00Z') })
+      return currentStage(db, target.id)
+    })
+
+    // Assert
+    expect(found).toBeNull()
+  })
+
+  test('still returns a stage archived after the event was recorded, with its flags', async () => {
+    // Arrange / Act
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'filed', { isTraction: true, isApplied: true })
+      await appendStageEvent(db, { positionId: target.id, stageId })
+      await archiveRegistryRow(db, 'stage', stageId)
+      return currentStage(db, target.id)
+    })
+
+    // Assert: an archived row still renders its label
+    expect(found?.stage.label).toBe('Stage filed')
+    expect(found?.stage.archivedAt).not.toBeNull()
+    expect(found?.stage.isApplied).toBe(true)
+    expect(found?.stage.isTraction).toBe(true)
+  })
+})
+
+describe('isApplied', () => {
+  test('is false for a position with no event', async () => {
+    // Arrange / Act
+    const applied = await withMigratedScratchDatabase(async (db) => isApplied(db, (await addPosition(db)).id))
+
+    // Assert
+    expect(applied).toBe(false)
+  })
+
+  test('is false when the latest stage is null', async () => {
+    // Arrange / Act: a null stage is the normal state of a fresh install, not an applied one
+    const applied = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await appendStageEvent(db, { positionId: target.id, stageId: null })
+      return isApplied(db, target.id)
+    })
+
+    // Assert
+    expect(applied).toBe(false)
+  })
+
+  test('is false when the latest stage does not carry is_applied', async () => {
+    // Arrange / Act
+    const applied = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await appendStageEvent(db, { positionId: target.id, stageId: await addStage(db, 'screen') })
+      return isApplied(db, target.id)
+    })
+
+    // Assert
+    expect(applied).toBe(false)
+  })
+
+  test('is true when the latest stage carries is_applied, even if it is archived by now', async () => {
+    // Arrange / Act
+    const applied = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'filed', { isApplied: true })
+      await appendStageEvent(db, { positionId: target.id, stageId })
+      await archiveRegistryRow(db, 'stage', stageId)
+      return isApplied(db, target.id)
+    })
+
+    // Assert
+    expect(applied).toBe(true)
+  })
+
+  test('is false when an earlier event was applied but the latest is not', async () => {
+    // Arrange / Act
+    const applied = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const filed = await addStage(db, 'filed', { isApplied: true })
+      const other = await addStage(db, 'other')
+      await appendStageEvent(db, { positionId: target.id, stageId: filed, occurredAt: new Date('2026-03-01T00:00:00Z') })
+      await appendStageEvent(db, { positionId: target.id, stageId: other, occurredAt: new Date('2026-03-02T00:00:00Z') })
+      return isApplied(db, target.id)
+    })
+
+    // Assert
+    expect(applied).toBe(false)
+  })
+
+  test('breaks a tie between events at one instant by id, under a sequential scan', async () => {
+    // Arrange / Act: nine events at one instant carry no flag and the highest id is the applied one,
+    // so a missing `id desc` under a sequential scan reads the lowest id, which is not applied
+    const applied = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const plain = await Promise.all(Array.from({ length: TIED_EVENTS - 1 }, (_, index) => addStage(db, `plain-${index}`)))
+      const filed = await addStage(db, 'filed', { isApplied: true })
+      await db.execute(sql`set enable_indexscan = off`)
+      await db.execute(sql`set enable_bitmapscan = off`)
+      const at = new Date('2026-02-01T09:00:00Z')
+      await db
+        .insert(positionStageEvent)
+        .values([...plain, filed].map((stageId) => ({ positionId: target.id, stageId, occurredAt: at })))
+      return isApplied(db, target.id)
+    })
+
+    // Assert
+    expect(applied).toBe(true)
+  })
+})
+
+describe('setAside and recordRejection', () => {
+  test('setAside stores a set-aside reason and no rejection reason', async () => {
+    // Arrange / Act
+    const { disposition, reasonId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      return { disposition: await setAside(db, { positionId: target.id, setAsideReasonId: reasonId, note: 'two hours each way' }), reasonId }
+    })
+
+    // Assert
+    expect(disposition.kind).toBe('set_aside')
+    expect(disposition.setAsideReasonId).toBe(reasonId)
+    expect(disposition.rejectionReasonId).toBeNull()
+    expect(disposition.note).toBe('two hours each way')
+  })
+
+  test('recordRejection stores a rejection reason and no set-aside reason', async () => {
+    // Arrange / Act
+    const { disposition, reasonId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const reasonId = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
+      return { disposition: await recordRejection(db, { positionId: target.id, rejectionReasonId: reasonId }), reasonId }
+    })
+
+    // Assert
+    expect(disposition.kind).toBe('rejected')
+    expect(disposition.rejectionReasonId).toBe(reasonId)
+    expect(disposition.setAsideReasonId).toBeNull()
+    expect(disposition.note).toBeNull()
+  })
+
+  test('neither touches the position stage', async () => {
+    // Arrange / Act
+    const { events, stage } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const asideReason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const rejection = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
+      await setAside(db, { positionId: target.id, setAsideReasonId: asideReason })
+      await recordRejection(db, { positionId: target.id, rejectionReasonId: rejection })
+      return { events: await eventCount(db), stage: await currentStage(db, target.id) }
+    })
+
+    // Assert
+    expect(events).toBe(0)
+    expect(stage).toBeNull()
+  })
+
+  test('refuses an archived reason, an unknown reason and an unknown position, writing nothing', async () => {
+    // Arrange / Act
+    const results = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const retired = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Retired' }]))
+      await archiveRegistryRow(db, 'set_aside_reason', retired)
+      const live = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'Live' }]))
+      await archiveRegistryRow(db, 'rejection_reason', idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'Gone' }])))
+      return {
+        archivedAside: await thrownBy(() => setAside(db, { positionId: target.id, setAsideReasonId: retired })),
+        unknownAside: await thrownBy(() => setAside(db, { positionId: target.id, setAsideReasonId: 999_999 })),
+        unknownRejection: await thrownBy(() => recordRejection(db, { positionId: target.id, rejectionReasonId: 999_999 })),
+        unknownPosition: await thrownBy(() => recordRejection(db, { positionId: 999_999, rejectionReasonId: live })),
+        stored: (await db.select({ n: count() }).from(positionDisposition))[0]?.n,
+      }
+    })
+
+    // Assert
+    expect(results.archivedAside).toBeInstanceOf(ArchivedError)
+    expect(results.unknownAside).toBeInstanceOf(NotFoundError)
+    expect(results.unknownRejection).toBeInstanceOf(NotFoundError)
+    expect(results.unknownPosition).toBeInstanceOf(NotFoundError)
+    expect(results.stored).toBe(0)
+  })
+
+  test('a reason a caller bypassing the schema leaves out is a typed error with no SQL in it', async () => {
+    // Arrange / Act: the schema makes the reason required, so only a caller that skipped it can send null
+    const error = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      return thrownBy(() => setAside(db, { positionId: target.id, setAsideReasonId: null as unknown as number }))
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+    expect((error as Error).message).not.toMatch(/insert|select|violates|constraint/i)
+  })
+
+  test('the database still refuses a row that carries the wrong reason for its kind', async () => {
+    // Arrange / Act: written straight to the table, past the two typed signatures
+    const { aside, rejected, both } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const asideReason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const rejection = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
+      const attempt = (values: typeof positionDisposition.$inferInsert) => thrownBy(() => db.insert(positionDisposition).values(values))
+      return {
+        aside: await attempt({ positionId: target.id, kind: 'set_aside', rejectionReasonId: rejection }),
+        rejected: await attempt({ positionId: target.id, kind: 'rejected', setAsideReasonId: asideReason }),
+        both: await attempt({ positionId: target.id, kind: 'rejected', setAsideReasonId: asideReason, rejectionReasonId: rejection }),
+      }
+    })
+
+    // Assert: the guarantee is the database's, so the check name is on the fault's cause
+    for (const error of [aside, rejected, both]) {
+      expect(String((error as { cause?: { constraint_name?: string } }).cause?.constraint_name)).toBe(DISPOSITION_CHECK)
+    }
+  })
+})
+
+describe('listSetAside', () => {
+  test('is empty when nothing was set aside', async () => {
+    // Arrange / Act
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      await addPosition(db)
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups).toEqual([])
+  })
+
+  test('groups by reason and leaves rejected positions out', async () => {
+    // Arrange / Act
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const far = await addPosition(db, 'Far')
+      const pay = await addPosition(db, 'Pay')
+      const rejectedOnly = await addPosition(db, 'Rejected only')
+      await addPosition(db, 'Untouched')
+      const tooFar = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const lowPay = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Low pay' }]))
+      const noReply = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
+      await setAside(db, { positionId: far.id, setAsideReasonId: tooFar })
+      await setAside(db, { positionId: pay.id, setAsideReasonId: lowPay })
+      await recordRejection(db, { positionId: rejectedOnly.id, rejectionReasonId: noReply })
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups.map((group) => [group.reasonLabel, group.positions.map((row) => row.position.roleTitle)])).toEqual([
+      ['Too far', ['Far']],
+      ['Low pay', ['Pay']],
+    ])
+    expect(groups.every((group) => group.positions.every((row) => row.setAside))).toBe(true)
+  })
+
+  test('puts a position in the group of its latest set-aside reason only', async () => {
+    // Arrange / Act
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const first = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'First thought' }]))
+      const second = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Second thought' }]))
+      await setAside(db, { positionId: target.id, setAsideReasonId: first })
+      await setAside(db, { positionId: target.id, setAsideReasonId: second })
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups.map((group) => group.reasonLabel)).toEqual(['Second thought'])
+    expect(groups[0]?.positions).toHaveLength(1)
+  })
+
+  test('keeps a position that was later rejected, under the reason it was set aside for', async () => {
+    // Arrange / Act: set-aside and rejection are separate axes, so a rejection does not erase a set-aside
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const reason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const rejection = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
+      await setAside(db, { positionId: target.id, setAsideReasonId: reason })
+      await recordRejection(db, { positionId: target.id, rejectionReasonId: rejection })
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups.map((group) => group.reasonLabel)).toEqual(['Too far'])
+  })
+
+  test('still names a reason archived after it was used, and carries each position stage', async () => {
+    // Arrange / Act
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const reason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const stageId = await addStage(db, 'screen')
+      await appendStageEvent(db, { positionId: target.id, stageId })
+      await setAside(db, { positionId: target.id, setAsideReasonId: reason })
+      await archiveRegistryRow(db, 'set_aside_reason', reason)
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups[0]?.reasonLabel).toBe('Too far')
+    expect(groups[0]?.positions[0]?.stage?.label).toBe('Stage screen')
+  })
+
+  test('lists every set-aside position, past one page of the search it is built on', async () => {
+    // Arrange / Act
+    const { total, listed } = await withMigratedScratchDatabase(async (db) => {
+      const reason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      const created = await addPositions(
+        db,
+        Array.from({ length: 205 }, (_, index) => ({ company: { name: `Bulk Co ${index}` }, roleTitle: 'Engineer' })),
+      )
+      await db.insert(positionDisposition).values(created.map((row) => ({ positionId: row.id, kind: 'set_aside', setAsideReasonId: reason })))
+      const groups = await listSetAside(db)
+      return { total: created.length, listed: groups.flatMap((group) => group.positions).length }
+    })
+
+    // Assert
+    expect(listed).toBe(total)
+  })
+
+  test('includes a client-hidden position, because the user set it aside themselves', async () => {
+    // Arrange / Act
+    const groups = await withMigratedScratchDatabase(async (db) => {
+      const [hidden] = await addPositions(db, [{ company: { name: 'Hidden Co' }, roleTitle: 'Engineer', clientHidden: true }])
+      const reason = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
+      await setAside(db, { positionId: (hidden as Position).id, setAsideReasonId: reason })
+      return listSetAside(db)
+    })
+
+    // Assert
+    expect(groups[0]?.positions.map((row) => row.position.clientHidden)).toEqual([true])
+  })
+})
+
+describe('moveIfRecommended', () => {
+  test('appends an event in the shortlist phase when a score recommends applying', async () => {
+    // Arrange / Act
+    const { moved, now, phaseStageId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const { stageId } = await shortlistWithOneStage(db)
+      const moved = await moveIfRecommended(db, { positionId: target.id, recommendApply: true })
+      return { moved, now: await currentStage(db, target.id), phaseStageId: stageId }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(phaseStageId)
+    expect(now?.stage.id).toBe(phaseStageId)
+  })
+
+  test('moves a position whose only event has a null stage', async () => {
+    // Arrange / Act: a null stage is not applied, so the gate must let it through
+    const { moved, applied } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await appendStageEvent(db, { positionId: target.id, stageId: null })
+      await shortlistWithOneStage(db)
+      const applied = await isApplied(db, target.id)
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), applied }
+    })
+
+    // Assert
+    expect(applied).toBe(false)
+    expect(moved).not.toBeNull()
+  })
+
+  test('writes nothing when the score does not recommend applying', async () => {
+    // Arrange / Act
+    const { moved, events } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await shortlistWithOneStage(db)
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: false }), events: await eventCount(db) }
+    })
+
+    // Assert
+    expect(moved).toBeNull()
+    expect(events).toBe(0)
+  })
+
+  test('writes nothing when the position is already applied', async () => {
+    // Arrange / Act
+    const { moved, events, stage } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      await shortlistWithOneStage(db)
+      const filed = await addStage(db, 'filed', { isApplied: true })
+      await appendStageEvent(db, { positionId: target.id, stageId: filed })
+      return {
+        moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }),
+        events: await eventCount(db),
+        stage: await currentStage(db, target.id),
+      }
+    })
+
+    // Assert
+    expect(moved).toBeNull()
+    expect(events).toBe(1)
+    expect(stage?.stage.label).toBe('Stage filed')
+  })
+
+  test('returns null and writes nothing when no phase carries is_shortlist', async () => {
+    // Arrange / Act: a fresh install has no phases at all, and a registry with some still has none flagged
+    const { onEmpty, onUnflagged, events } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const onEmpty = await moveIfRecommended(db, { positionId: target.id, recommendApply: true })
+      const phaseId = await addPhase(db, 'plain')
+      await addStage(db, 'somewhere', { phaseId })
+      return {
+        onEmpty,
+        onUnflagged: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }),
+        events: await eventCount(db),
+      }
+    })
+
+    // Assert
+    expect(onEmpty).toBeNull()
+    expect(onUnflagged).toBeNull()
+    expect(events).toBe(0)
+  })
+
+  test('returns null when the shortlist phase has no stage, or only terminal or archived ones', async () => {
+    // Arrange / Act
+    const results = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const phaseId = await addPhase(db, 'shortlist', { isShortlist: true })
+      const run = () => moveIfRecommended(db, { positionId: target.id, recommendApply: true })
+      const noStage = await run()
+      await addStage(db, 'closed', { phaseId, isTerminal: true })
+      const onlyTerminal = await run()
+      await archiveRegistryRow(db, 'stage', await addStage(db, 'retired', { phaseId }))
+      const onlyArchived = await run()
+      return { noStage, onlyTerminal, onlyArchived, events: await eventCount(db) }
+    })
+
+    // Assert
+    expect(results.noStage).toBeNull()
+    expect(results.onlyTerminal).toBeNull()
+    expect(results.onlyArchived).toBeNull()
+    expect(results.events).toBe(0)
+  })
+
+  test('skips a terminal stage when picking the shortlist stage', async () => {
+    // Arrange / Act: the terminal stage sorts first, so only the flag keeps it from being chosen
+    const { moved, openId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const phaseId = await addPhase(db, 'shortlist', { isShortlist: true })
+      await addStage(db, 'closed', { phaseId, sort: 1, isTerminal: true })
+      const openId = await addStage(db, 'open', { phaseId, sort: 2 })
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), openId }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(openId)
+  })
+
+  test('picks the lowest sort, not the first registered, and ignores stages of other phases', async () => {
+    // Arrange / Act
+    const { moved, lowestId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const phaseId = await addPhase(db, 'shortlist', { isShortlist: true })
+      const otherPhase = await addPhase(db, 'other')
+      await addStage(db, 'second', { phaseId, sort: 20 })
+      await addStage(db, 'elsewhere', { phaseId: otherPhase, sort: 1 })
+      const lowestId = await addStage(db, 'first', { phaseId, sort: 10 })
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), lowestId }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(lowestId)
+  })
+
+  test('breaks a tie between equally sorted stages by id, whatever order storage returns them in', async () => {
+    // Arrange / Act: updating the first stage rewrites its row at the end of the table, so a
+    // sequential scan returns it last and only the `id` in the ORDER BY puts it first again
+    const { moved, firstId } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const phaseId = await addPhase(db, 'shortlist', { isShortlist: true })
+      const firstId = await addStage(db, 'a', { phaseId, sort: 5 })
+      await addStage(db, 'b', { phaseId, sort: 5 })
+      await addStage(db, 'c', { phaseId, sort: 5 })
+      await db.execute(sql`update stage set label = 'Renamed' where id = ${firstId}`)
+      await db.execute(sql`set enable_indexscan = off`)
+      await db.execute(sql`set enable_bitmapscan = off`)
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), firstId }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(firstId)
+  })
+
+  test('prefers the lower-sorted of two shortlist phases, and skips an archived one', async () => {
+    // Arrange / Act
+    const { moved, inFirst } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosition(db)
+      const archivedPhase = await addPhase(db, 'old', { isShortlist: true, sort: 1 })
+      await addStage(db, 'in-old', { phaseId: archivedPhase })
+      await archiveRegistryRow(db, 'phase', archivedPhase)
+      const second = await addPhase(db, 'second', { isShortlist: true, sort: 30 })
+      const first = await addPhase(db, 'first', { isShortlist: true, sort: 20 })
+      await addStage(db, 'in-second', { phaseId: second, sort: 1 })
+      const inFirst = await addStage(db, 'in-first', { phaseId: first, sort: 9 })
+      return { moved: await moveIfRecommended(db, { positionId: target.id, recommendApply: true }), inFirst }
+    })
+
+    // Assert
+    expect(moved?.stageId).toBe(inFirst)
+  })
+
+  test('refuses an unknown position even when nothing would be written', async () => {
+    // Arrange / Act
+    const error = await withMigratedScratchDatabase(async (db) => {
+      await shortlistWithOneStage(db)
+      return thrownBy(() => moveIfRecommended(db, { positionId: 999_999, recommendApply: true }))
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+  })
+})
+
+/** Polls until some backend is blocked on a lock, which is the moment the other transaction may commit. */
+async function waitUntilABackendWaitsOnALock(observer: postgres.Sql): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const [row] = await observer`select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`
+    if ((row?.waiting ?? 0) > 0) return
+    await Bun.sleep(20)
+  }
+  throw new Error('no backend ever waited on a lock')
+}
+
+/** Two more connections to the scratch database: one that holds a transaction open, one that watches. */
+async function withSecondConnections<T>(
+  sql: postgres.Sql,
+  body: (writer: postgres.Sql, observer: postgres.Sql) => Promise<T>,
+): Promise<T> {
+  const url = new URL(process.env.DATABASE_URL ?? '')
+  url.pathname = `/${sql.options.database}`
+  const writer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+  const observer = postgres(url.toString(), { max: 1, onnotice: () => {} })
+  try {
+    return await body(writer, observer)
+  } finally {
+    await writer.end()
+    await observer.end()
+  }
+}
+
+describe('the position lock', () => {
+  test('a re-score move waits for a transaction that is applying, then sees the application and moves nothing', async () => {
+    // Arrange / Act: the writer takes the position's row and files an application, uncommitted
+    const { moved, events } = await withMigratedScratchDatabase(async (db, sql) => {
+      const target = await addPosition(db)
+      await shortlistWithOneStage(db)
+      const filed = await addStage(db, 'filed', { isApplied: true })
+      return withSecondConnections(sql, async (writer, observer) => {
+        let attempt: Promise<unknown> = Promise.resolve()
+        await writer.begin(async (transaction) => {
+          await transaction`select id from position where id = ${target.id} for no key update`
+          await transaction`insert into position_stage_event (position_id, stage_id) values (${target.id}, ${filed})`
+          attempt = moveIfRecommended(db, { positionId: target.id, recommendApply: true })
+          await waitUntilABackendWaitsOnALock(observer)
+        })
+        return { moved: await attempt, events: await eventCount(db, target.id) }
+      })
+    })
+
+    // Assert: without the lock the move would have read "not applied" and filed over the application
+    expect(moved).toBeNull()
+    expect(events).toBe(1)
+  })
+
+  test('appendStageEvent waits for a transaction holding the position, then writes after it', async () => {
+    // Arrange / Act
+    const { notes } = await withMigratedScratchDatabase(async (db, sql) => {
+      const target = await addPosition(db)
+      const stageId = await addStage(db, 'screen')
+      return withSecondConnections(sql, async (writer, observer) => {
+        let attempt: Promise<unknown> = Promise.resolve()
+        await writer.begin(async (transaction) => {
+          await transaction`select id from position where id = ${target.id} for no key update`
+          await transaction`insert into position_stage_event (position_id, stage_id, note) values (${target.id}, ${stageId}, 'first')`
+          attempt = appendStageEvent(db, { positionId: target.id, stageId, note: 'second' })
+          await waitUntilABackendWaitsOnALock(observer)
+        })
+        await attempt
+        const rows = await db.select().from(positionStageEvent).orderBy(asc(positionStageEvent.id))
+        return { notes: rows.map((row) => row.note) }
+      })
+    })
+
+    // Assert
+    expect(notes).toEqual(['first', 'second'])
+  })
+})
+
+describe('the input schemas', () => {
+  test('a stage event needs its stage stated, even as null, and reads an offset instant as a Date', () => {
+    // Arrange / Act
+    const withNull = StageEventInputSchema.safeParse({ positionId: 1, stageId: null })
+    const missing = StageEventInputSchema.safeParse({ positionId: 1 })
+    const dated = StageEventInputSchema.parse({ positionId: '1', stageId: '2', occurredAt: '2026-03-01T10:00:00+01:00' })
+    const bareLocal = StageEventInputSchema.safeParse({ positionId: 1, stageId: null, occurredAt: '2026-03-01T10:00:00' })
+
+    // Assert
+    expect(withNull.success).toBe(true)
+    expect(missing.success).toBe(false)
+    expect(dated.occurredAt?.toISOString()).toBe('2026-03-01T09:00:00.000Z')
+    expect(bareLocal.success).toBe(false)
+  })
+
+  test('refuses an unknown field, a blank note and a NUL in a note', () => {
+    // Arrange / Act
+    const results = [
+      StageEventInputSchema.safeParse({ positionId: 1, stageId: null, kind: 'x' }),
+      StageEventInputSchema.safeParse({ positionId: 1, stageId: null, note: '   ' }),
+      SetAsideInputSchema.safeParse({ positionId: 1, setAsideReasonId: 1, note: 'a\u0000b' }),
+    ]
+
+    // Assert
+    expect(results.map((result) => result.success)).toEqual([false, false, false])
+  })
+
+  test('the two disposition schemas each take only their own reason', () => {
+    // Arrange / Act
+    const results = [
+      SetAsideInputSchema.safeParse({ positionId: 1, rejectionReasonId: 1 }),
+      SetAsideInputSchema.safeParse({ positionId: 1, setAsideReasonId: 1, rejectionReasonId: 1 }),
+      RecordRejectionInputSchema.safeParse({ positionId: 1, setAsideReasonId: 1 }),
+      RecordRejectionInputSchema.safeParse({ positionId: 1, rejectionReasonId: 1 }),
+    ]
+
+    // Assert
+    expect(results.map((result) => result.success)).toEqual([false, false, false, true])
+  })
+
+  test('the bulk form is capped and non-empty', () => {
+    // Arrange / Act
+    const empty = StageEventBulkSchema.safeParse({ items: [] })
+    const one = StageEventBulkSchema.safeParse({ items: [{ positionId: 1, stageId: null }] })
+
+    // Assert
+    expect(empty.success).toBe(false)
+    expect(one.success).toBe(true)
+  })
+})
