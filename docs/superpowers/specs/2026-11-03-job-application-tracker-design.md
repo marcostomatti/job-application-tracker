@@ -129,7 +129,7 @@ guess wearing a price tag).
 | Built on the published `@open-tomato` service packages, including the Express adapter for §11.2 | handoff brief |
 | Zod schemas are the single source for MCP tool definitions and HTTP routes | MVP brief |
 | Bun runtime; `package.json` currently carries only `@types/bun` | repo state |
-| React organised `atoms` → `molecules` → `organisms` → `templates` → `pages` | `/Users/marcos/projects/components-library/src` |
+| React organised `atoms` → `molecules` → `organisms` → `templates` → `pages` | the `components-library` project's `src/` |
 | Component rules from `component-breakdown/skills/component-from-design/SKILL.md` — CVA variants, never per-instance Tailwind; one Storybook story per variant; visual baselines untracked and per-machine | relayed brief, finding 1 |
 | Source files under 800 lines, functions under 50, immutable updates, no deep nesting | `~/.claude/rules/common/coding-style.md` |
 | 80% test coverage, TDD | `~/.claude/rules/common/testing.md` |
@@ -890,7 +890,7 @@ default ships in its place.
 ## 13. The web app
 
 React, organised `atoms` → `molecules` → `organisms` → `templates` →
-`pages`, following `/Users/marcos/projects/components-library/src`
+`pages`, following the `components-library` project's `src/`
 without building a component library.
 
 Component rules come from
