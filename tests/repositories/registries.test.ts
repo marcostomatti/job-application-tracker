@@ -5,6 +5,7 @@ import {
   addRegistryRows,
   archiveRegistryRow,
   assertNotArchived,
+  findRegistryRow,
   listRegistry,
   REGISTRY_TABLES,
 } from '../../src/data/repositories/registries.ts'
@@ -166,6 +167,56 @@ describe('archival is not deletion', () => {
   })
 })
 
+describe('findRegistryRow', () => {
+  test('returns a row that is still in use', async () => {
+    // Arrange / Act
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const added = await addRegistryRows(db, 'route', [{ label: 'In use' }])
+      return findRegistryRow(db, 'route', idOf(added))
+    })
+
+    // Assert
+    expect(found.label).toBe('In use')
+    expect(found.archivedAt).toBeNull()
+  })
+
+  test('returns an archived row, because a stored reference to it still has to render', async () => {
+    // Arrange / Act: no flag to remember, which is the point of reading by id this way
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const added = await addRegistryRows(db, 'route', [{ label: 'Retired' }])
+      const id = idOf(added)
+      await archiveRegistryRow(db, 'route', id)
+      return findRegistryRow(db, 'route', id)
+    })
+
+    // Assert: the label renders, and the row says it is archived rather than going missing
+    expect(found.label).toBe('Retired')
+    expect(found.archivedAt).not.toBeNull()
+  })
+
+  test('throws NotFoundError for an id that was never there', async () => {
+    // Arrange / Act
+    const error = await withMigratedScratchDatabase((db) =>
+      thrownBy(() => findRegistryRow(db, 'route', 8765)),
+    )
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+  })
+
+  test('keeps the extra columns of a wider registry', async () => {
+    // Arrange / Act
+    const found = await withMigratedScratchDatabase(async (db) => {
+      const added = await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase', isShortlist: true }])
+      return findRegistryRow(db, 'phase', idOf(added))
+    })
+
+    // Assert
+    expect(found.key).toBe('p1')
+    expect(found.isShortlist).toBe(true)
+  })
+})
+
 describe('assertNotArchived', () => {
   test('passes for a row that is still in use', async () => {
     // Arrange / Act
@@ -247,7 +298,26 @@ describe('addRegistryRows', () => {
     expect((error as Error).cause).toBeDefined()
   })
 
-  test('counts the keys rather than listing them when a long bulk call conflicts', async () => {
+  test('names a few conflicting candidates as candidates, not as offenders', async () => {
+    // Arrange / Act: three keys, one of which already exists
+    const error = await withMigratedScratchDatabase(async (db) => {
+      await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }])
+      return thrownBy(() =>
+        addRegistryRows(db, 'phase', [
+          { key: 'p1', label: 'One' },
+          { key: 'p2', label: 'Two' },
+          { key: 'p3', label: 'Three' },
+        ]),
+      )
+    })
+
+    // Assert: Postgres reports one violated constraint, so two of the three are innocent
+    // and the message may not say otherwise
+    expect(error).toBeInstanceOf(ConflictError)
+    expect((error as ConflictError).key).toBe('one of: p1, p2, p3')
+  })
+
+  test('counts the rows rather than listing them when a long bulk call conflicts', async () => {
     // Arrange / Act: more keys than a message should list, the first of which already exists
     const error = await withMigratedScratchDatabase(async (db) => {
       await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }])
@@ -258,9 +328,9 @@ describe('addRegistryRows', () => {
       return thrownBy(() => addRegistryRows(db, 'phase', many))
     })
 
-    // Assert: Postgres reports the constraint and not the row, so the message says so
+    // Assert: a list of six keys no reader would scan becomes the count
     expect(error).toBeInstanceOf(ConflictError)
-    expect((error as ConflictError).key).toBe('one of the 6 values this call carried')
+    expect((error as ConflictError).key).toBe('in one of the 6 rows this call carried')
   })
 
   test('rethrows a failure that is not the key conflict, unchanged', async () => {
@@ -314,6 +384,14 @@ describe('the bulk envelope', () => {
     // Assert
     expect(atTheCap.success).toBe(true)
     expect(empty.success).toBe(false)
+  })
+
+  test('refuses a key beside items, as the items themselves refuse a stray field', () => {
+    // Act: a caller that believed the envelope took a limit would otherwise lose it silently
+    const parsed = bulkOf(REGISTRY_SCHEMAS.route).safeParse({ items: [{ label: 'x' }], limit: 10 })
+
+    // Assert
+    expect(parsed.success).toBe(false)
   })
 })
 
@@ -375,5 +453,10 @@ describe('the shared input schemas', () => {
     expect(PaginationSchema.safeParse({ limit: 0 }).success).toBe(false)
     expect(PaginationSchema.safeParse({ limit: PAGE_LIMIT_MAX + 1 }).success).toBe(false)
     expect(PaginationSchema.safeParse({ offset: -1 }).success).toBe(false)
+  })
+
+  test('PaginationSchema refuses a field it does not have, rather than dropping it', () => {
+    // Act / Assert: a misspelled or invented page option is a mistake worth reporting
+    expect(PaginationSchema.safeParse({ limit: 10, page: 3 }).success).toBe(false)
   })
 })

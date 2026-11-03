@@ -85,10 +85,14 @@ const REGISTRY_REFERENCES: Partial<Record<RegistryName, Readonly<Record<string, 
  * The table shape the query builder is given. Drizzle types a query against one concrete
  * table, and a table picked at run time out of a record of twelve is a union of twelve,
  * which its builders will not take. So every query here is typed against the narrowest
- * registry — the three shared columns and nothing else — and each result is cast back to
- * the named registry's own row type. Four casts is the price: the table going in, the
- * values going in, and the rows coming out of each statement. None of it reaches a caller,
- * who gets `RegistryRowOf<N>` with that registry's own columns.
+ * registry — the three shared columns and nothing else.
+ *
+ * The casts that buys come in three kinds, and every one of them is in this file:
+ * the table going into a builder (`tableFor`), the values going into an insert
+ * (`QueryTableInsert`), and each row coming back out, cast to the row type of the table
+ * actually queried. None of it reaches a caller, who gets `RegistryRowOf<N>` with that
+ * registry's own columns. They are sound because the table the cast names and the table
+ * the statement ran against are the same one, chosen by `name` a line earlier.
  */
 type QueryTable = (typeof REGISTRY_TABLES)['route']
 
@@ -100,25 +104,29 @@ function tableFor(name: RegistryName): QueryTable {
 }
 
 /**
- * The unique key column of one registry, read off the table definition so no constraint
- * name is assembled from a string. Three of the twelve have one — `phase`, `stage` and
- * `layer` — and the other nine have no column that can collide, so they get undefined.
+ * The unique columns of one registry, read off the table definition so no constraint name
+ * is assembled from a string. Today `key` on `phase`, `stage` and `layer` is the only one,
+ * and the other nine registries have no column that can collide. Every unique column is
+ * collected rather than the first, so a registry that later gains a second one still
+ * matches its own violation instead of falling through as an internal error.
  */
-type KeyConstraint = { readonly property: string; readonly constraint: string }
+type UniqueColumn = { readonly property: string; readonly constraint: string }
 
-function keyConstraintOf(name: RegistryName): KeyConstraint | undefined {
-  for (const [property, column] of Object.entries(REGISTRY_TABLES[name])) {
-    const unique = column instanceof Column && column.isUnique ? column.uniqueName : undefined
-    if (unique) return { property, constraint: unique }
-  }
-  return undefined
+function uniqueColumnsOf(name: RegistryName): readonly UniqueColumn[] {
+  return Object.entries(REGISTRY_TABLES[name]).flatMap(([property, column]) =>
+    column instanceof Column && column.isUnique && column.uniqueName
+      ? [{ property, constraint: column.uniqueName }]
+      : [],
+  )
 }
 
 /**
- * The key value a conflict names. Postgres reports the constraint and not the row, so one
- * row names its key exactly, a handful name all of them, and a long bulk call says how
- * many it carried — a message listing 500 keys helps nobody, and naming one of them as
- * the offender would be a guess the driver's answer does not support.
+ * What a conflict names. Postgres reports the violated constraint and not the row, so a
+ * message can only narrow the values the call carried and must claim no more than that:
+ * a single value is the offender, a handful are candidates of which exactly one collided,
+ * and a longer call gets the row count, because a list of keys no reader would scan is
+ * worth less than the count. A call whose rows carry no such value at all — which only a
+ * caller bypassing the registry's schema can produce — reads as the count too.
  */
 const KEYS_NAMED_IN_A_CONFLICT = 5
 
@@ -126,8 +134,12 @@ function conflictingKeys(rows: readonly Readonly<Record<string, unknown>>[], pro
   const keys = [
     ...new Set(rows.map((row) => row[property]).filter((value): value is string => typeof value === 'string')),
   ]
-  if (keys.length <= KEYS_NAMED_IN_A_CONFLICT) return keys.join(', ')
-  return `one of the ${keys.length} values this call carried`
+  const [only] = keys
+  if (only !== undefined && keys.length === 1) return only
+  if (keys.length === 0 || keys.length > KEYS_NAMED_IN_A_CONFLICT) {
+    return `in one of the ${rows.length} rows this call carried`
+  }
+  return `one of: ${keys.join(', ')}`
 }
 
 /** The order a pick-list reads in: the user's `sort` where the registry has one, then id. */
@@ -153,6 +165,26 @@ export async function listRegistry<N extends RegistryName>(
     .where(opts.includeArchived ? undefined : isNull(table.archivedAt))
     .orderBy(...orderOf(name))
   return rows as RegistryRowOf<N>[]
+}
+
+/**
+ * One registry row by id, whatever its archival state. This is the read that renders a
+ * stored reference — the stage a position is in, the route a lead came through, a label
+ * beside an id — and a row archived after it was referenced still has to render, so the
+ * archival state is reported on the row rather than deciding whether there is one. The
+ * correct read is therefore the default, with no flag for a caller to remember; it is
+ * `listRegistry` that hides archived rows, because that is the pick-list a write chooses
+ * from. An id with no row is a `NotFoundError`.
+ */
+export async function findRegistryRow<N extends RegistryName>(
+  db: Db,
+  name: N,
+  id: number,
+): Promise<RegistryRowOf<N>> {
+  const table = tableFor(name)
+  const [found] = await db.select().from(table).where(eq(table.id, id))
+  if (!found) throw new NotFoundError(name, id)
+  return found as RegistryRowOf<N>
 }
 
 /**
@@ -217,9 +249,9 @@ export async function addRegistryRows<N extends RegistryName>(
       .returning()
     return created as RegistryRowOf<N>[]
   } catch (error) {
-    const key = keyConstraintOf(name)
-    if (key && isUniqueViolation(error, key.constraint)) {
-      throw new ConflictError(`${name} ${key.property}`, conflictingKeys(given, key.property), {
+    const collided = uniqueColumnsOf(name).find((column) => isUniqueViolation(error, column.constraint))
+    if (collided) {
+      throw new ConflictError(`${name} ${collided.property}`, conflictingKeys(given, collided.property), {
         cause: error,
       })
     }
@@ -246,8 +278,7 @@ export async function archiveRegistryRow<N extends RegistryName>(
     .returning()
   if (archived) return archived as RegistryRowOf<N>
 
-  // Nothing was updated, so the row is either already archived or was never there.
-  const [existing] = await db.select().from(table).where(eq(table.id, id))
-  if (!existing) throw new NotFoundError(name, id)
-  return existing as RegistryRowOf<N>
+  // Nothing was updated, so the row is either already archived or was never there, and
+  // the read that tells those apart is the one that returns an archived row as it is.
+  return findRegistryRow(db, name, id)
 }

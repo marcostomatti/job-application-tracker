@@ -23,8 +23,12 @@ const numberOrNumericText = z.union([z.number(), z.string().regex(/^\d+$/).trans
 /** A row's primary key: a positive whole number, however the surface received it. */
 export const IdSchema = numberOrNumericText.pipe(z.number().int().positive())
 
-/** Where a list starts and how much of it a caller gets. */
-export const PaginationSchema = z.object({
+/**
+ * Where a list starts and how much of it a caller gets. Strict, like every other input
+ * schema here: a misspelled or invented page option is a mistake worth reporting, and a
+ * caller who cannot see the option list is the one least able to notice a dropped field.
+ */
+export const PaginationSchema = z.strictObject({
   limit: numberOrNumericText.pipe(z.number().int().min(1).max(PAGE_LIMIT_MAX)).default(PAGE_LIMIT_DEFAULT),
   offset: numberOrNumericText.pipe(z.number().int().min(0)).default(0),
 })
@@ -35,7 +39,12 @@ export type Pagination = z.infer<typeof PaginationSchema>
  * The envelope every bulk operation takes: the single form's item schema, in a
  * bounded, non-empty array. One wrapper means the MCP tool and the HTTP route for a
  * bulk write cannot disagree about the cap or about what an empty call means.
+ *
+ * The envelope is as strict as the items it carries. A caller that sent `limit` beside
+ * `items`, believing the envelope paginated, would otherwise lose it without a word.
  */
-export function bulkOf<T extends z.ZodType>(item: T): z.ZodObject<{ items: z.ZodArray<T> }> {
-  return z.object({ items: z.array(item).min(1).max(BULK_MAX) })
+export function bulkOf<T extends z.ZodType>(
+  item: T,
+): z.ZodObject<{ items: z.ZodArray<T> }, z.core.$strict> {
+  return z.strictObject({ items: z.array(item).min(1).max(BULK_MAX) })
 }
