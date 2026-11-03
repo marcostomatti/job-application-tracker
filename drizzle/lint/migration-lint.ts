@@ -33,7 +33,8 @@ export type { LintFinding, LintOptions, LintRule } from './types'
  * Known limits, left unscanned on purpose: CREATE DOMAIN and CREATE POLICY
  * bodies, `UPDATE ... SET x = 'literal'` (a backfill is allowed), a view's
  * implicit alias with no AS, a view column list (`CREATE VIEW "v" ("x") AS`),
- * CTE names, `SELECT ... INTO newtable`, and a denied word glued into a longer
+ * CTE names, `SELECT ... INTO newtable` (a different statement shape from
+ * CREATE TABLE AS), and a denied word glued into a longer
  * word inside a comment (comments are matched on whole words only). Functions, procedures, triggers
  * and DO blocks are forbidden outright instead (see `routineFindings`).
  */
@@ -63,7 +64,7 @@ function vocabularyLiterals(
 ): Literal[] {
   const offending: Literal[] = []
   for (const literal of text.slice(from, to).matchAll(LITERAL)) {
-    const value = literal[1] ?? literal[3] ?? ''
+    const value = literal[1] ?? literal[2] ?? literal[4] ?? ''
     if (!isAllowed(value)) offending.push({ value, index: from + literal.index })
   }
   return offending
@@ -96,12 +97,12 @@ function closedSetFindings(code: string, stringless: string, file: string): Lint
       findings.push(...vocabularyFinding(file, code, construct, offending))
     }
   }
-  const literalStart = String.raw`(?=['$])`
+  const literalStart = String.raw`(?=[eE]?['$])`
   const values: [RegExp, string][] = [
     [new RegExp(String.raw`\bADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?${literalStart}`, 'gi'), 'ADD VALUE'],
     [
       new RegExp(
-        String.raw`\bRENAME\s+VALUE\s+(?:'[^']*'|${DOLLAR_TAG}[^$]*${DOLLAR_TAG})\s+TO\s+${literalStart}`,
+        String.raw`\bRENAME\s+VALUE\s+(?:[eE]?'[^']*'|${DOLLAR_TAG}[^$]*${DOLLAR_TAG})\s+TO\s+${literalStart}`,
         'gi',
       ),
       'RENAME VALUE',
@@ -146,19 +147,44 @@ type Span = { construct: string; from: number; to: number }
 const CREATE_MODIFIERS = String.raw`(?:(?:OR\s+REPLACE|GLOBAL|LOCAL|TEMP|TEMPORARY|UNLOGGED|RECURSIVE|UNIQUE|MATERIALIZED)\s+)*`
 const CREATE_INDEX = new RegExp(String.raw`\bCREATE\s+${CREATE_MODIFIERS}INDEX\b`, 'gi')
 const CREATE_VIEW = new RegExp(String.raw`\bCREATE\s+${CREATE_MODIFIERS}VIEW\b`, 'gi')
-const CREATE_TABLE_AS = new RegExp(
-  String.raw`\bCREATE\s+${CREATE_MODIFIERS}TABLE\b[^;]*?\bAS\s+(?:SELECT|WITH|VALUES)\b`,
-  'gi',
-)
+const CREATE_TABLE = new RegExp(String.raw`\bCREATE\s+${CREATE_MODIFIERS}TABLE\b`, 'gi')
 
 type DerivedStatement = { kind: 'VIEW' | 'CREATE TABLE AS'; from: number; to: number }
 
-/** Statements whose body is a query: `CREATE VIEW` and `CREATE TABLE ... AS SELECT`. */
+/**
+ * Whether a CREATE TABLE statement is `... AS <query>`: the first `AS` outside
+ * every parenthesis (so a column's `GENERATED ALWAYS AS (...)` is not one),
+ * followed by `SELECT`, `WITH`, `VALUES`, `EXECUTE` or a parenthesised query.
+ */
+function isTableAsQuery(text: string, from: number, to: number): boolean {
+  let depth = 0
+  let i = from
+  while (i < to) {
+    const char = text[i] as string
+    if (char === "'" || char === '"') {
+      i = endOfQuoted(text, i, char)
+      continue
+    }
+    if (char === '(') depth += 1
+    else if (char === ')') depth -= 1
+    else if (depth === 0 && /^AS\b/i.test(text.slice(i, i + 3)) && !/\w/.test(text[i - 1] ?? '')) {
+      return /^AS\s*(?:\(|(?:SELECT|WITH|VALUES|EXECUTE)\b)/i.test(text.slice(i, i + 40))
+    }
+    i += 1
+  }
+  return false
+}
+
+/** Statements whose body is a query: `CREATE VIEW` and `CREATE TABLE ... AS <query>`. */
 function derivedStatements(stringless: string): DerivedStatement[] {
   const found: DerivedStatement[] = []
-  for (const [pattern, kind] of [[CREATE_VIEW, 'VIEW'], [CREATE_TABLE_AS, 'CREATE TABLE AS']] as const) {
-    for (const match of stringless.matchAll(pattern)) {
-      found.push({ kind, from: match.index, to: endOfStatement(stringless, match.index) })
+  for (const match of stringless.matchAll(CREATE_VIEW)) {
+    found.push({ kind: 'VIEW', from: match.index, to: endOfStatement(stringless, match.index) })
+  }
+  for (const match of stringless.matchAll(CREATE_TABLE)) {
+    const to = endOfStatement(stringless, match.index)
+    if (isTableAsQuery(stringless, match.index + match[0].length, to)) {
+      found.push({ kind: 'CREATE TABLE AS', from: match.index, to })
     }
   }
   return found
@@ -376,7 +402,7 @@ function seedFindings(code: string, file: string): LintFinding[] {
   }
   for (const statement of derivedStatements(code)) {
     const body = code.slice(statement.from, statement.to)
-    if (statement.kind === 'CREATE TABLE AS' && (!/\bFROM\b/i.test(body) || /\bAS\s+VALUES\b/i.test(body))) {
+    if (statement.kind === 'CREATE TABLE AS' && (!/\bFROM\b/i.test(body) || /\bAS\s*\(?\s*VALUES\b/i.test(body))) {
       findings.push({
         file,
         line: lineOf(code, statement.from),

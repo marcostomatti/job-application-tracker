@@ -413,4 +413,32 @@ describe('migration lint', () => {
     expect(result.problems).toEqual([])
     expect(result.findings).toEqual([])
   })
+
+  test('scans a parenthesised or EXECUTE body of CREATE TABLE ... AS, and leaves an ordinary table alone', () => {
+    const bad = lintMigrations(isolate('evade-ctas-forms.sql'))
+    const legit = lintMigrations(isolate('clean-ctas-forms.sql'))
+
+    expect(bad.map((finding) => finding.rule)).toEqual([
+      'vocabulary-in-check',
+      'registry-seed',
+      'vocabulary-in-check',
+      'registry-seed',
+      'named-column',
+    ])
+    expect(bad.map((finding) => finding.line)).toEqual([1, 1, 2, 2, 3])
+    // includes a table whose column is GENERATED ALWAYS AS (...): that AS is not a derived table
+    expect(legit).toEqual([])
+  })
+
+  test('honours a backslash escape inside an E string, keeps scanning after it, and still reads its vocabulary', () => {
+    const findings = lintMigrations(isolate('e-string-escape.sql'))
+
+    expect(findings.map((finding) => finding.rule)).toEqual(['vocabulary-in-check', 'registry-seed'])
+    expect(findings.map((finding) => finding.line)).toEqual([1, 3])
+    expect(findings[0]?.detail).toContain('Icelandic')
+  })
+
+  test('explains E strings when a backslash-quote leaves a plain string open', () => {
+    expect(() => lintMigrations(isolate('unterminated-backslash-quote.sql'))).toThrow(/E'.*backslash/)
+  })
 })

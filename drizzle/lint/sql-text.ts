@@ -21,8 +21,17 @@ export type SplitSql = {
 export const DOLLAR_TAG = String.raw`\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$`
 const IDENTIFIER_CHAR = /[A-Za-z0-9_$\u0080-\uFFFF]/
 export const DOLLAR_TAG_AT_START = new RegExp(`^${DOLLAR_TAG}`)
-export const COMMENT_ON_OPENER = new RegExp(String.raw`\bCOMMENT\s+ON\s+[^;'$]*?\bIS\s+('|${DOLLAR_TAG})`, 'gi')
-export const LITERAL = new RegExp(String.raw`'((?:[^']|'')*)'|(${DOLLAR_TAG})([\s\S]*?)\2`, 'g')
+export const COMMENT_ON_OPENER = new RegExp(String.raw`\bCOMMENT\s+ON\s+[^;'$]*?\bIS\s+[eE]?('|${DOLLAR_TAG})`, 'gi')
+/**
+ * A string literal: an `E'...'` string (where a backslash escapes the next
+ * character), a plain `'...'` string (where only a doubled quote does), or a
+ * dollar-quoted string. Groups: 1 the E string's text, 2 the plain text, 3 the
+ * dollar tag, 4 the dollar-quoted text.
+ */
+export const LITERAL = new RegExp(
+  String.raw`(?<![\w$])[eE]'((?:[^'\\]|\\[\s\S]|'')*)'|'((?:[^']|'')*)'|(${DOLLAR_TAG})([\s\S]*?)\3`,
+  'g',
+)
 
 export const IDENTIFIER = String.raw`"[^"]+"|\w+`
 
@@ -33,7 +42,11 @@ export const blank = (char: string): string => (char === '\n' ? '\n' : ' ')
 
 /** An error naming what was left open and where, so a run that read nothing past it cannot pass. */
 function unterminated(what: string, sql: string, index: number): Error {
-  return new Error(`unterminated ${what} on line ${lineOf(sql, index)}`)
+  const hint =
+    what === 'string'
+      ? " (write E'...' if it uses a backslash escape such as \\', because in a plain '...' string only a doubled quote escapes a quote)"
+      : ''
+  return new Error(`unterminated ${what} on line ${lineOf(sql, index)}${hint}`)
 }
 
 /**
@@ -82,11 +95,22 @@ export function splitCodeAndComments(sql: string): SplitSql {
   return { code, comments }
 }
 
-/** Where a quoted run ends and whether its closing quote was found; a doubled quote is an escaped quote. */
+/** Whether the quote at `start` opens an `E'...'` string, inside which a backslash escapes the next character. */
+function opensEscapeString(text: string, start: number): boolean {
+  return /[eE]/.test(text[start - 1] ?? '') && !IDENTIFIER_CHAR.test(text[start - 2] ?? '')
+}
+
+/**
+ * Where a quoted run ends and whether its closing quote was found. A doubled
+ * quote is an escaped quote; inside an `E'...'` string so is `\'`.
+ */
 export function scanQuoted(text: string, start: number, quote: string): { end: number; closed: boolean } {
+  const backslashEscapes = quote === "'" && opensEscapeString(text, start)
   let i = start + 1
   while (i < text.length) {
-    if (text[i] === quote) {
+    if (backslashEscapes && text[i] === '\\') {
+      i += 2
+    } else if (text[i] === quote) {
       if (text[i + 1] === quote) i += 2
       else return { end: i + 1, closed: true }
     } else i += 1
@@ -109,6 +133,7 @@ export function dollarTagAt(text: string, index: number): string | undefined {
 
 /** Index just past the string literal opened at `open`: single-quoted or dollar-quoted. */
 export function endOfLiteral(text: string, open: number): number {
+  if (/[eE]/.test(text[open] ?? '') && text[open + 1] === "'") return endOfQuoted(text, open + 1, "'")
   const tag = dollarTagAt(text, open)
   if (!tag) return endOfQuoted(text, open, "'")
   const close = text.indexOf(tag, open + tag.length)
