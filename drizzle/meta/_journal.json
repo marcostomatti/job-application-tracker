@@ -50,6 +50,13 @@
       "when": 1793707166819,
       "tag": "0006_provenance_utc_today",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793707352798,
+      "tag": "0007_config_rescore",
+      "breakpoints": true
     }
   ]
 }
