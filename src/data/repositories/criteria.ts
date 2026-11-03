@@ -192,12 +192,17 @@ export async function updateRequirement(
  * partial unique index, so two callers moving it at once would each clear, then each set, and
  * the second set would fail against the index with a raw driver error. With the locks the
  * second caller waits for the first to commit, then clears the first caller's choice.
- * `createCriteriaVersion` takes the same locks, so it can number a version without a race. The
+ * `createCriteriaVersion` takes the same locks, so it can number a version without a race.
+ *
+ * The lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`: nothing here changes a key, and `FOR
+ * UPDATE` would block every concurrent insert that references `criteria_set` (a requirement,
+ * a score), because such an insert takes `FOR KEY SHARE` on the row it points at. This lock
+ * still excludes other callers of itself, which is all it is for. The
  * table holds one row per version of the user's own criteria, so locking all of it is cheap,
  * and the rows are taken in id order so two callers cannot wait on each other.
  */
 async function lockEverySet(db: Db): Promise<void> {
-  await db.select({ id: criteriaSet.id }).from(criteriaSet).orderBy(asc(criteriaSet.id)).for('update')
+  await db.select({ id: criteriaSet.id }).from(criteriaSet).orderBy(asc(criteriaSet.id)).for('no key update')
 }
 
 /**

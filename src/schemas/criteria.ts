@@ -40,9 +40,12 @@ export const RequirementPatchSchema = z
 export type RequirementPatch = z.infer<typeof RequirementPatchSchema>
 
 /**
- * A request for the next version of a criteria set. The version number is never supplied:
- * it is the source's plus one, so two callers cannot disagree about what "next" means.
- * `name` renames the line of descent; left out, the copy keeps the source's name.
+ * A request for a new version of a criteria set. The version number is never supplied: it is
+ * one past the highest version that the target name already has, so two callers cannot
+ * disagree about what "next" means. `fromSetId` says whose content is copied, not where the
+ * number comes from, because the table records no parent. `name` picks the name the copy is
+ * filed under; left out, it is the source's name. A name with no versions yet starts at v1,
+ * so a renamed copy is v1 under the new name.
  */
 export const CriteriaVersionInputSchema = z.strictObject({
   fromSetId: IdSchema,

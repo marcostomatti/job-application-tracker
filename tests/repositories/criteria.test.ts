@@ -239,7 +239,7 @@ describe('createCriteriaVersion', () => {
         const outcomes = await Promise.allSettled(
           Array.from({ length: 8 }, (_, index) => createCriteriaVersion(index % 2 === 0 ? db : other, { fromSetId: setId })),
         )
-        return { outcomes, versions: (await listCriteriaSets(db)).map((row) => row.version).sort() }
+        return { outcomes, versions: (await listCriteriaSets(db)).map((row) => row.version).sort((a, b) => a - b) }
       } finally {
         await second.end()
       }

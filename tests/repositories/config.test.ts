@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
+import { ZodError } from 'zod'
 
 import type { DrizzleClient } from '../../src/data/client.ts'
 import {
@@ -14,6 +15,7 @@ import {
   BackupSettingsSchema,
   CriteriaModeSchema,
 } from '../../src/schemas/config.ts'
+import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
 type Logged = { readonly context: object; readonly message: string }
@@ -131,6 +133,25 @@ describe('readMode', () => {
     expect(stored.length).toBeLessThan(200)
   })
 
+  test('works with the module default logger when none is passed', async () => {
+    // Arrange / Act: only the result is asserted. The default logger is made on first use and
+    // reads LOG_LEVEL then, so the level is silenced for this call to keep the test output clean.
+    const previous = process.env.LOG_LEVEL
+    process.env.LOG_LEVEL = 'silent'
+    const mode = await withMigratedScratchDatabase(async (db) => {
+      try {
+        await handEdit(db, 'criteria_mode', '"sideways"')
+        return await readMode(db)
+      } finally {
+        if (previous === undefined) delete process.env.LOG_LEVEL
+        else process.env.LOG_LEVEL = previous
+      }
+    })
+
+    // Assert
+    expect(mode).toBe('versioned')
+  })
+
   test('is repaired by the next setMode, which replaces the odd value', async () => {
     // Arrange
     const { logger, logged } = spyLogger()
@@ -210,7 +231,7 @@ describe('readBackupSettings and setBackupSettings', () => {
     expect(logged).toEqual([])
   })
 
-  test('keeps enabled: false when another field is invalid, so a typo cannot switch backups back on', async () => {
+  test('keeps a valid enabled: false when another field is invalid', async () => {
     // Arrange
     const { logger, logged } = spyLogger()
 
@@ -224,6 +245,70 @@ describe('readBackupSettings and setBackupSettings', () => {
     expect(read).toEqual({ enabled: false, keep: 1, intervalDays: 14 })
     expect(logged).toHaveLength(1)
     expect(logged[0]?.context).toMatchObject({ key: 'backup', fields: ['keep', 'intervalDays'] })
+  })
+
+  test.each([
+    ['the text "false"', '"false"'],
+    ['the number 0', '0'],
+  ])('reads an invalid enabled (%s) as on and logs the field, because running is the safe direction', async (_label, literal) => {
+    // Arrange
+    const { logger, logged } = spyLogger()
+
+    // Act
+    const read = await withMigratedScratchDatabase(async (db) => {
+      await handEdit(db, 'backup', `{"enabled": ${literal}}`)
+      return readBackupSettings(db, logger)
+    })
+
+    // Assert
+    expect(read.enabled).toBe(true)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.context).toMatchObject({ key: 'backup', fields: ['enabled'] })
+  })
+
+  test('stores exactly the three settings when handed a wider object', async () => {
+    // Arrange
+    const wide = { keep: 2, directory: '/somewhere', extra: { nested: true } }
+
+    // Act
+    const { stored, returned } = await withMigratedScratchDatabase(async (db) => {
+      const returned = await setBackupSettings(db, wide as never)
+      const rows = await db.execute(sql`select value from app_config where key = 'backup'`)
+      return { stored: [...rows][0]?.value, returned }
+    })
+
+    // Assert
+    expect(stored).toEqual({ enabled: true, keep: 2, intervalDays: 14 })
+    expect(returned).toEqual(stored as typeof returned)
+  })
+
+  test('refuses a keep of 0 or NaN that skipped the patch schema, and stores nothing', async () => {
+    // Arrange / Act
+    const { zero, notANumber, rows } = await withMigratedScratchDatabase(async (db) => {
+      const zero = await thrownBy(() => setBackupSettings(db, { keep: 0 }))
+      const notANumber = await thrownBy(() => setBackupSettings(db, { keep: Number.NaN }))
+      return { zero, notANumber, rows: [...(await db.execute(sql`select 1 from app_config where key = 'backup'`))] }
+    })
+
+    // Assert
+    expect(zero).toBeInstanceOf(ZodError)
+    expect(notANumber).toBeInstanceOf(ZodError)
+    expect(rows).toEqual([])
+  })
+
+  test('hands out a copy of the defaults, so mutating a result cannot change the next read', async () => {
+    // Arrange / Act
+    const { first, second } = await withMigratedScratchDatabase(async (db) => {
+      const first = (await readBackupSettings(db)) as { keep: number }
+      first.keep = 99
+      return { first, second: await readBackupSettings(db) }
+    })
+
+    // Assert
+    expect(first.keep).toBe(99)
+    expect(second.keep).toBe(1)
+    expect(BACKUP_DEFAULTS.keep).toBe(1)
+    expect(Object.isFrozen(BACKUP_DEFAULTS)).toBe(true)
   })
 
   test.each([

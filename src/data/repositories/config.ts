@@ -11,6 +11,7 @@ import {
 } from '../../schemas/config.ts'
 import { appConfig } from '../schema/config.ts'
 import type { Db } from './db.ts'
+import { pickDefined } from './pick-defined.ts'
 
 /** The `app_config` keys this module owns. */
 const MODE_KEY = 'criteria_mode'
@@ -24,14 +25,23 @@ const BACKUP_KEY = 'backup'
  */
 export type FallbackLog = { warn(context: object, message: string): void }
 
-const defaultLogger: FallbackLog = createLogger('app-config')
+let cachedLogger: FallbackLog | undefined
+
+/** The module's own logger, made on first use so importing this file starts no logger. */
+function defaultLogger(): FallbackLog {
+  cachedLogger ??= createLogger('app-config')
+  return cachedLogger
+}
 
 /**
  * Backups on, one dump kept (each replaces the last rather than accumulating) and a
  * fortnight apart. Backups are the one place this layer carries a default, because `backup`
  * settings are the app's own behaviour and not the user's judgement.
  */
-export const BACKUP_DEFAULTS: BackupSettings = { enabled: true, keep: 1, intervalDays: 14 }
+export const BACKUP_DEFAULTS: Readonly<BackupSettings> = Object.freeze({ enabled: true, keep: 1, intervalDays: 14 })
+
+/** The columns of the stored settings a patch may name, in one place. */
+const BACKUP_FIELDS = ['enabled', 'keep', 'intervalDays'] as const satisfies readonly (keyof BackupSettings)[]
 
 /** The longest stored string a log line repeats; a hand-edited value can be any length. */
 const LOGGED_VALUE_MAX = 80
@@ -63,7 +73,7 @@ async function writeStored(db: Db, key: string, value: unknown): Promise<void> {
  * is logged, because a board that will not render is worse than a board in the default mode.
  * An absent key is the normal state of a fresh install and is not logged.
  */
-export async function readMode(db: Db, logger: FallbackLog = defaultLogger): Promise<CriteriaMode> {
+export async function readMode(db: Db, logger: FallbackLog = defaultLogger()): Promise<CriteriaMode> {
   const stored = await readStored(db, MODE_KEY)
   if (!stored) return DEFAULT_CRITERIA_MODE
   const parsed = CriteriaModeSchema.safeParse(stored.value)
@@ -81,7 +91,9 @@ type FieldReading<K extends keyof BackupSettings> = { readonly value: BackupSett
 /**
  * One backup field from a stored object: the stored value when it fits, the default when it
  * is absent (`valid`) or does not fit (not `valid`). Reading field by field means one bad
- * field cannot cost the others, and above all cannot turn a stored `enabled: false` back on.
+ * field cannot cost the others, so a valid stored `enabled: false` survives a bad `keep`.
+ * A bad `enabled` itself reads as `true`, on purpose: for a backup, running when the setting
+ * cannot be read is the data-safe failure, and the log names the field.
  */
 function readField<K extends keyof BackupSettings>(stored: Readonly<Record<string, unknown>>, key: K): FieldReading<K> {
   if (!(key in stored)) return { value: BACKUP_DEFAULTS[key], valid: true }
@@ -101,12 +113,12 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
  * yields that field's default, and both are logged. A fresh install, with nothing stored,
  * yields the defaults silently.
  */
-export async function readBackupSettings(db: Db, logger: FallbackLog = defaultLogger): Promise<BackupSettings> {
+export async function readBackupSettings(db: Db, logger: FallbackLog = defaultLogger()): Promise<Readonly<BackupSettings>> {
   const stored = await readStored(db, BACKUP_KEY)
-  if (!stored) return BACKUP_DEFAULTS
+  if (!stored) return { ...BACKUP_DEFAULTS }
   if (!isRecord(stored.value)) {
     logger.warn({ key: BACKUP_KEY, stored: describeStored(stored.value) }, 'unusable backup settings in app_config; using the defaults')
-    return BACKUP_DEFAULTS
+    return { ...BACKUP_DEFAULTS }
   }
   const readings = {
     enabled: readField(stored.value, 'enabled'),
@@ -123,19 +135,22 @@ export async function readBackupSettings(db: Db, logger: FallbackLog = defaultLo
 /**
  * Changes the named backup settings and keeps the rest as they read now, then stores and
  * returns the whole. `{ enabled: false }` is therefore the one setting that turns backups
- * off. Stored whole, so a later reader never meets a half-written object.
+ * off. The write is built from the three named fields only, so a wider object that carries
+ * another key at runtime cannot add it to the stored jsonb, and the merged whole is parsed
+ * against `BackupSettingsSchema` before it is stored, so a `keep` of 0 or `NaN` that skipped
+ * the patch schema is refused here (a `ZodError`) instead of stored.
+ *
+ * The read, the merge and the write are not locked: two concurrent patches read the same
+ * stored object and the later write wins, losing the other's change. That is accepted for a
+ * single-user app and recorded here so it is not discovered later.
  */
 export async function setBackupSettings(
   db: Db,
   patch: BackupSettingsPatch,
-  logger: FallbackLog = defaultLogger,
+  logger: FallbackLog = defaultLogger(),
 ): Promise<BackupSettings> {
-  const merged: BackupSettings = { ...(await readBackupSettings(db, logger)), ...definedOnly(patch) }
+  const current = await readBackupSettings(db, logger)
+  const merged = BackupSettingsSchema.parse({ ...current, ...pickDefined(patch, BACKUP_FIELDS) })
   await writeStored(db, BACKUP_KEY, merged)
   return merged
-}
-
-/** A patch without its `undefined` fields, so spreading it cannot overwrite a stored value with nothing. */
-function definedOnly(patch: BackupSettingsPatch): Partial<BackupSettings> {
-  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined))
 }
