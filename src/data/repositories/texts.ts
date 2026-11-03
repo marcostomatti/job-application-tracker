@@ -61,7 +61,15 @@ async function readNewest(db: Db, label: string): Promise<TextAsset | undefined>
  * input names one (`null` clears it). Only a type the input newly names is checked against
  * archival, so a type archived since the text was written does not block editing the text.
  *
- * Nothing locks the label. Two callers that both read version 1 both try to write version 2,
+ * Nothing locks the label, and that is the opposite of `createCriteriaVersion`, whose shape is
+ * the same (read the highest version, insert one past it, a unique constraint behind). The
+ * difference is what the loser should experience. A criteria version is an independent copy, so
+ * queueing the callers and giving each its own number is right. A text asset is one document
+ * being edited: a caller that silently received version 3, built on someone else's version 2,
+ * would have an edit quietly layered onto wording it never saw. So the loser is told, and
+ * re-reads.
+ *
+ * Two callers that both read version 1 both try to write version 2,
  * and the unique index on `(label, version)` lets one through: the other waits on it, then
  * fails and is reported as a `ConflictError`, with the driver fault on `cause` and none of
  * its statement in the message. That failure means someone else edited the text first, so the

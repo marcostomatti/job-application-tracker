@@ -148,7 +148,9 @@ export async function recordSearchRun(db: Db, input: SearchRunInput): Promise<Se
 /**
  * How many positions each route reached. A position is counted once under every route it was
  * reached through, so one reached by a board and by a friend is in both rows, and one reached
- * by the same board twice is in that row once. Touches with no route form a row with a null
+ * by the same board twice is in that row once. The column therefore does not sum to the number
+ * of positions: it answers "how many positions did each route bring me", which is not "how many
+ * positions are there". Touches with no route form a row with a null
  * route, and touches with no position are left out, since they have reached nothing yet. Every
  * touch counts whatever its date: a mistyped day does not change which door it was. The label
  * is joined without an archival filter, so a route archived after positions came through it
