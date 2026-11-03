@@ -30,3 +30,12 @@ export const PenaltySchema = z.object({
   // A signed adjustment to the normalised score, never positive: -0.25 takes a quarter off.
   amount: z.number().max(0),
 })
+
+export const ScoreInputSchema = z.object({
+  requirements: z.array(RequirementSchema),
+  ratings: z.array(RatingSchema),
+  detours: z.array(DetourSchema),
+  penalties: z.array(PenaltySchema),
+  // The overall a role must reach to be worth applying to; null until a bar has been set.
+  applyThreshold: z.number().nullable(),
+})

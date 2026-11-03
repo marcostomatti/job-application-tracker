@@ -119,4 +119,49 @@ describe('computeOverall', () => {
 
     expect(result).toEqual({ overall: null, floor: 0, ceiling: 1 })
   })
+
+  // Each of these leaves no positive soft weight to normalise against.
+  const NO_USABLE_WEIGHT: ReadonlyArray<readonly [string, Requirement[]]> = [
+    ['an empty requirement list', []],
+    ['only gates', [requirement('g1', 1, 'gate'), requirement('g2', 2, 'gate')]],
+    ['every weight 0', [requirement('a', 0), requirement('b', 0)]],
+    ['a mix of null and zero weights', [requirement('a', null), requirement('b', 0)]],
+    ['only a negative weight', [requirement('a', -1)]],
+  ]
+
+  test.each(NO_USABLE_WEIGHT)('returns all null for %s', (_name, requirements) => {
+    const result = computeOverall(
+      requirements,
+      requirements.map((r) => rating(r.key, 1)),
+      [],
+      [],
+    )
+
+    expect(result).toEqual({ overall: null, floor: null, ceiling: null })
+  })
+
+  test('ignores a negative weight next to a positive one', () => {
+    // With the negative weight counted, the total weight halves and the points cancel to 0.
+    const result = computeOverall(
+      [requirement('a', 1), requirement('b', -0.5)],
+      [rating('a', 0.5), rating('b', 1)],
+      [],
+      [],
+    )
+
+    expect(result.overall).toBe(0.5)
+    expect(result.floor).toBe(0.5)
+    expect(result.ceiling).toBe(0.5)
+  })
+
+  test('uses only the numeric weights when some are null', () => {
+    const result = computeOverall(
+      [requirement('a', 1), requirement('b', null)],
+      [rating('a', 0.5), rating('b', 1)],
+      [],
+      [],
+    )
+
+    expect(result.overall).toBe(0.5)
+  })
 })
