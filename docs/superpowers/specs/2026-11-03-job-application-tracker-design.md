@@ -821,7 +821,7 @@ Grouped by what they touch:
 
 > **Amended 2026-11-04: tools found missing once an agent drove the
 > service.** Registries gain `registry_update` (§7.1). A **companies**
-> group holds `company_update` and `company_merge` (§7.4). Positions
+> group holds `company_update` and `company_merge` (§7.4). Postings
 > gain `posting_question_add`, `posting_question_add_bulk`,
 > `posting_question_answer` and `posting_question_list`, and
 > `posting_get` returns a posting's questions. Texts gain `text_link`
