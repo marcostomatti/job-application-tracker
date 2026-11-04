@@ -334,7 +334,7 @@ describe('the service with a login and no API_KEY', () => {
       await writeFile(join(bundle, 'index.html'), '<title>tracker app</title>')
       const service = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: bundle })
 
-      const page = await fetch(`${service.origin}/tokens`)
+      const page = await fetch(`${service.origin}/stats`)
       const body = await page.text()
       await service.stop()
 
