@@ -2,16 +2,11 @@ import { eq, sql, type InferSelectModel } from 'drizzle-orm'
 
 import { NotFoundError } from '../../errors.ts'
 import type { SummaryInput } from '../../schemas/summaries.ts'
-import { posting, postingSummary } from '../schema/postings.ts'
+import { postingSummary } from '../schema/postings.ts'
 import type { Db } from './db.ts'
+import { assertPostingExists } from './posting-exists.ts'
 
 export type PostingSummary = InferSelectModel<typeof postingSummary>
-
-/** Refuses a posting id with no posting, so a summary is never written to or read for nothing. */
-async function assertPostingExists(db: Db, postingId: number): Promise<void> {
-  const [found] = await db.select({ id: posting.id }).from(posting).where(eq(posting.id, postingId))
-  if (!found) throw new NotFoundError('posting', postingId)
-}
 
 /**
  * The stored summary of a posting that is known to exist, or null when none was written.

@@ -7,6 +7,7 @@ import { postingDisposition, postingStageEvent } from '../schema/dispositions.ts
 import { posting } from '../schema/postings.ts'
 import { phase as phaseTable, setAsideReason, stage as stageTable } from '../schema/registries.ts'
 import type { Db } from './db.ts'
+import { assertPostingExists } from './posting-exists.ts'
 import { pickDefined } from './pick-defined.ts'
 import { SET_ASIDE_KIND, searchPostings, type PostingListRow } from './postings.ts'
 import { assertNotArchived, type RegistryRowOf } from './registries.ts'
@@ -43,11 +44,6 @@ const REJECTED_KIND = 'rejected'
  */
 const STAGE_EVENT_OPTIONAL_COLUMNS = ['note'] as const satisfies readonly (keyof StageEventInput)[]
 const DISPOSITION_OPTIONAL_COLUMNS = ['note'] as const satisfies readonly (keyof SetAsideInput & keyof RecordRejectionInput)[]
-
-async function assertPostingExists(db: Db, postingId: number): Promise<void> {
-  const [found] = await db.select({ id: posting.id }).from(posting).where(eq(posting.id, postingId))
-  if (!found) throw new NotFoundError('posting', postingId)
-}
 
 /**
  * Takes the posting's row so that two writers about one posting's stage run one after the
