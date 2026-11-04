@@ -157,6 +157,73 @@ export const RegistryAddBulkSchema = z.discriminatedUnion('registry', [
   manyRowsFor('work_format', REGISTRY_SCHEMAS.work_format),
 ])
 
+/**
+ * Why a patch may not carry a `key`: other rows and imports name a row by it, so renaming one
+ * would quietly repoint them. A new key is a new row, and the old one is archived.
+ */
+export const KEY_IS_FIXED =
+  'a key cannot change, because other rows and imports refer to a row by it; add a row with the new key and archive this one'
+
+/** A `key` in a patch, refused with the message above rather than as an unrecognised field. */
+const fixedKey = z.never({ error: KEY_IS_FIXED }).optional()
+
+const patchLabel = label.optional()
+
+/**
+ * What a patch may change in each registry: the label, the sort where the registry has one, the
+ * flags, and a stage's phase. Every field is optional, and a field the registry does not have is
+ * refused, as on an add.
+ */
+export const REGISTRY_PATCH_SCHEMAS = {
+  apply_route: z.strictObject({ label: patchLabel }),
+  artefact_kind: z.strictObject({ label: patchLabel }),
+  layer: z.strictObject({ key: fixedKey, label: patchLabel, sort }),
+  penalty_kind: z.strictObject({ label: patchLabel }),
+  phase: z.strictObject({ key: fixedKey, label: patchLabel, sort, isShortlist: z.boolean().optional() }),
+  rejection_reason: z.strictObject({ label: patchLabel }),
+  route: z.strictObject({ label: patchLabel }),
+  seniority: z.strictObject({ label: patchLabel, sort }),
+  set_aside_reason: z.strictObject({ label: patchLabel }),
+  stage: z.strictObject({
+    key: fixedKey,
+    label: patchLabel,
+    sort,
+    phaseId: IdSchema.nullable().optional(),
+    isTerminal: z.boolean().optional(),
+    isRepeatable: z.boolean().optional(),
+    isTraction: z.boolean().optional(),
+    isApplied: z.boolean().optional(),
+  }),
+  text_type: z.strictObject({ label: patchLabel }),
+  work_format: z.strictObject({ label: patchLabel }),
+} satisfies Record<RegistrySchemaName, z.ZodType>
+
+/** What a caller may change in a row of the registry `N`. */
+export type RegistryPatchOf<N extends RegistrySchemaName> = z.infer<(typeof REGISTRY_PATCH_SCHEMAS)[N]>
+
+/** A patch for one row of one registry; the registry name picks the patch's schema. */
+function patchFor<N extends RegistrySchemaName>(
+  name: N,
+): z.ZodObject<{ registry: z.ZodLiteral<N>; id: typeof IdSchema; patch: (typeof REGISTRY_PATCH_SCHEMAS)[N] }, z.core.$strict> {
+  return z.strictObject({ registry: z.literal(name), id: IdSchema, patch: REGISTRY_PATCH_SCHEMAS[name] })
+}
+
+/** The row to change, named by registry and id, and the patch to apply to it. */
+export const RegistryUpdateSchema = z.discriminatedUnion('registry', [
+  patchFor('apply_route'),
+  patchFor('artefact_kind'),
+  patchFor('layer'),
+  patchFor('penalty_kind'),
+  patchFor('phase'),
+  patchFor('rejection_reason'),
+  patchFor('route'),
+  patchFor('seniority'),
+  patchFor('set_aside_reason'),
+  patchFor('stage'),
+  patchFor('text_type'),
+  patchFor('work_format'),
+])
+
 /** The row to retire, named by registry and id. */
 export const RegistryArchiveSchema = z.strictObject({
   registry: RegistryNameSchema,

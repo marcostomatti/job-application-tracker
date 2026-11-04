@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { BULK_MAX } from '../../../src/schemas/common.ts'
-import { REGISTRY_NAMES, REGISTRY_SCHEMAS } from '../../../src/schemas/registries.ts'
+import { KEY_IS_FIXED, REGISTRY_NAMES, REGISTRY_PATCH_SCHEMAS, REGISTRY_SCHEMAS } from '../../../src/schemas/registries.ts'
 import { registryTools } from '../../../src/mcp/tools/registries.ts'
 import { connectTools, failureText, untouchableDb, useSharedScratchDatabase } from './harness.ts'
 
@@ -16,6 +16,7 @@ describe('the registries group', () => {
       'registry_add_bulk',
       'registry_archive',
       'registry_list',
+      'registry_update',
     ])
   })
 
@@ -27,6 +28,50 @@ describe('the registries group', () => {
     const listed: string[] = [...REGISTRY_NAMES]
 
     expect(listed.sort()).toEqual(Object.keys(REGISTRY_SCHEMAS).sort())
+  })
+
+  test('every registry has a patch schema, so registry_update reaches all of them', () => {
+    expect(Object.keys(REGISTRY_PATCH_SCHEMAS).sort()).toEqual(Object.keys(REGISTRY_SCHEMAS).sort())
+  })
+
+  test('registry_update changes a stage flag in place and keeps the row its id', async () => {
+    const client = await connectTools(registryTools, database())
+    const added = await client.call('registry_add', {
+      registry: 'stage',
+      row: { key: `gated-${crypto.randomUUID()}`, label: 'Closed by a gate', isTerminal: true, isApplied: true },
+    })
+    const { id } = added.body as Row
+
+    const updated = await client.call('registry_update', { registry: 'stage', id, patch: { isApplied: false } })
+
+    expect(updated.body).toMatchObject({ id, isApplied: false, isTerminal: true, label: 'Closed by a gate' })
+  })
+
+  test('registry_update refuses a key, and the refusal names the add-and-archive fix', async () => {
+    const client = await connectTools(registryTools, untouchableDb())
+
+    const outcome = await client.call('registry_update', { registry: 'phase', id: 1, patch: { key: 'renamed' } })
+
+    expect(outcome.failed).toBe(true)
+    expect(failureText(outcome)).toContain(KEY_IS_FIXED)
+  })
+
+  test('registry_update refuses a field the registry does not have', async () => {
+    const client = await connectTools(registryTools, untouchableDb())
+
+    const routeFlag = await client.call('registry_update', { registry: 'route', id: 1, patch: { isApplied: true } })
+    const seniorityKey = await client.call('registry_update', { registry: 'seniority', id: 1, patch: { key: 'x' } })
+
+    expect([routeFlag.failed, seniorityKey.failed]).toEqual([true, true])
+  })
+
+  test('registry_update on an unknown id is a not-found error', async () => {
+    const client = await connectTools(registryTools, database())
+
+    const outcome = await client.call('registry_update', { registry: 'route', id: 999_999, patch: { label: 'Nobody' } })
+
+    expect(outcome.failed).toBe(true)
+    expect(failureText(outcome)).toContain('route 999999 does not exist')
   })
 
   test('registry_add stores one row and registry_list returns it', async () => {

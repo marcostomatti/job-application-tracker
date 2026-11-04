@@ -1,5 +1,11 @@
-import { addRegistryRows, archiveRegistryRow, listRegistry } from '../../data/repositories/registries.ts'
-import { RegistryAddBulkSchema, RegistryAddSchema, RegistryArchiveSchema, RegistryListQuerySchema } from '../../schemas/registries.ts'
+import { addRegistryRows, archiveRegistryRow, listRegistry, updateRegistryRow } from '../../data/repositories/registries.ts'
+import {
+  RegistryAddBulkSchema,
+  RegistryAddSchema,
+  RegistryArchiveSchema,
+  RegistryListQuerySchema,
+  RegistryUpdateSchema,
+} from '../../schemas/registries.ts'
 import type { z } from 'zod'
 
 import type { Db } from '../../data/repositories/db.ts'
@@ -51,6 +57,18 @@ export const registryTools: ToolDefinition[] = [
       'Use this to set up a vocabulary in one step instead of repeated registry_add calls.',
     input: RegistryAddBulkSchema,
     run: async (args, db) => addRegistryRows(db, args.registry, args.items),
+  }),
+  defineTool({
+    name: 'registry_update',
+    title: 'Change a registry row',
+    description:
+      'Changes ONE existing registry row in place and returns it. The row keeps its id, so every posting, stage event and import that names it now reads the change. ' +
+      'patch takes any of: label; sort (seniority, layer, phase and stage); isShortlist (phase); phaseId and the flags isTerminal, isRepeatable, isTraction and isApplied (stage). ' +
+      'Fields left out are unchanged, and an empty patch changes nothing. A field the chosen registry does not have is refused. ' +
+      'key cannot change, because other rows and imports refer to a row by it: to give a row a new key, add a row with registry_add and retire this one with registry_archive. ' +
+      'A phaseId that differs from the stored one must name a phase that is not archived. An archived row may be changed and stays archived. An unknown id is a not-found error.',
+    input: RegistryUpdateSchema,
+    run: async (args, db) => updateRegistryRow(db, args.registry, args.id, args.patch),
   }),
   defineTool({
     name: 'registry_archive',
