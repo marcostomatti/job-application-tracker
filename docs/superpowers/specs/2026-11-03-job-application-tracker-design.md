@@ -268,6 +268,17 @@ Each has `id`, `label`, `archived_at` unless noted.
 No registry is referenced by a NOT NULL column, because a template
 installs with all of them empty.
 
+> **Amended 2026-11-04: a stage's flags belong to the stage, never to
+> its phase.** `is_applied`, `is_traction`, `is_terminal` and
+> `is_repeatable` are set on each stage and are not derived from the
+> phase it sits in. A stage meaning "closed by a gate" sits in a
+> resolved phase although nothing was ever sent, so a derivation from
+> the phase marks it applied. A vanilla pack that ships a stage registry
+> sets all four flags explicitly on every stage key. `registry_update`
+> (§11.1) changes a row's label, sort, flags and a stage's phase in
+> place; a `key` never changes, because other rows and imports refer to
+> it, so a new key is an add plus an archive.
+
 ### 7.2 Criteria sets, requirements, detours
 
 A **criteria set** is the versioned unit. A version is not a column on a
@@ -397,6 +408,35 @@ file lives in a bucket or a drive, and the row points at it. One
 `artefact` table with a `kind` registry, not one table per kind, because
 the mechanics are identical across kinds.
 
+> **Amended 2026-11-04: a company can be renamed and merged.**
+> `company_update` changes `name`, recomputing `name_norm`, and
+> `name_unresolved`. A new name whose `name_norm` another company holds
+> is a conflict, and the fix is a merge. `company_merge` moves every
+> posting of the losing company to the winning one and deletes the
+> loser, in one transaction, and reports how many postings moved. A role
+> both companies hold under one `role_norm` and `disambiguator` stops
+> the merge before anything is written. The winner keeps its own `name`
+> and `name_unresolved`, because the flag describes the name and the
+> name kept is the winner's. Provenance that an import folded into a
+> name, such as "via recruiter", belongs on the posting as an `origin`
+> through a `route` row (§7.7), not in the company's name.
+>
+> **Added 2026-11-04: questions to ask about one posting.**
+>
+> ```
+> posting_question
+>   id, posting_id, question (text),
+>   answer (text, null), answered_at (null), created_at
+>   UNIQUE (posting_id, question)
+> ```
+>
+> A question is written by hand, about one role, with the answer that
+> came back. It is a different thing from `limiter_is_unknown` (§7.3),
+> which is derived from an unrated requirement. Answers are the user's:
+> adding a question the posting already has returns the stored row
+> unchanged, so an import run twice neither duplicates a question nor
+> overwrites its answer, and only `posting_question_answer` changes one.
+
 ### 7.5 The second axis: disposition
 
 A lead passed on after a second look is neither resolved nor rejected —
@@ -475,6 +515,10 @@ text_asset
   id, text_type_id, label, body (text), version (int), created_at
   -- bodies are personal by default and never ship
 
+text_asset_posting                 -- added 2026-11-04
+  text_asset_id, posting_id, linked_at
+  PRIMARY KEY (text_asset_id, posting_id)
+
 rescore_request
   id, criteria_set_id, since_date (date), created_at, completed_at (null)
 
@@ -487,6 +531,12 @@ A position is **pending re-score** for a request when its `seen_at` is on
 or after `since_date` and it has no `position_score` for that
 `criteria_set_id`. Derived by view, not stored, so the pending set cannot
 drift out of sync.
+
+> **Added 2026-11-04: which text was used for which posting.**
+> `text_asset_posting` links one version of a text to one posting: the
+> link names the version row, because that is the wording that was sent.
+> Linking twice is a no-op. `text_list` takes a `posting_id` and then
+> lists exactly the versions linked to that posting.
 
 ### 7.9 Market claims and evidence (§10's schema)
 
@@ -592,6 +642,27 @@ is. A career decision resting on that would be resting on a calibration
 artefact. The mitigation is anchor text as a required field on every
 requirement, plus the per-layer coverage bar so a suspiciously scarce
 layer is visible.
+
+> **Added 2026-11-04: reading a final score on another scale.** Every
+> tool that returns a final score takes an optional `scale`: `ratio`
+> (the default and the stored unit, 0..1, unrounded), `stars` (0..5, one
+> decimal), `percent` (0..100, whole numbers) or `basic` (0.00..10.00,
+> two decimals). It scales `overall`, `floor`, `ceiling` and any
+> `apply_threshold` the response carries. A rating's `coverage`,
+> `limiter_coverage` and penalty amounts stay 0..1, because they are
+> individual ratings and adjustments, not the final score. A score and
+> a threshold go through the same rounding, which never reverses their
+> order but can show two close values as equal; `recommend_apply` is
+> always computed from the stored values, and no tool accepts a scaled
+> value as input, so no round trip can change a recommendation. The
+> conversion lives in one module, and the web app's scale selector
+> offers the same four values.
+>
+> A letter grade is left out. The usual letter scale passes at 0.60,
+> while an apply decision sits wherever the user's threshold is, often
+> well above that, so a score just short of the threshold would read as
+> a failing letter. Letters for job fit need boundaries anchored to the
+> threshold, which is a separate design question nobody needs yet.
 
 ### 8.1 Pipeline-level reads
 
@@ -747,6 +818,17 @@ Grouped by what they touch:
    reposted.
 10. **Claims and series** — add a claim, attach evidence, run an
     importer, read a claim with its channel count and threshold state.
+
+> **Amended 2026-11-04: tools found missing once an agent drove the
+> service.** Registries gain `registry_update` (§7.1). A **companies**
+> group holds `company_update` and `company_merge` (§7.4). Positions
+> gain `posting_question_add`, `posting_question_add_bulk`,
+> `posting_question_answer` and `posting_question_list`, and
+> `posting_get` returns a posting's questions. Texts gain `text_link`
+> and `text_link_bulk`, and `text_list` filters by posting (§7.8). The
+> score reads, `posting_get`, `posting_search` and `criteria_sets` take
+> `scale` (§8). These are MCP tools only: §11.2's route table is
+> unchanged, and the web plan adds a route when a screen needs one.
 
 ### 11.2 The internal HTTP layer
 
@@ -1060,6 +1142,7 @@ Steps 10 to 12 are parallelisable with 9 once step 5 lands.
 | 2026-11-03 | Pin the published `@open-tomato` packages from npm, per §5 |
 | 2026-11-03 | Express serving a bundled React UI, not Next.js with SSR, per §11.2 |
 | 2026-11-04 | `position` renamed to `posting` throughout, so the service can reach beyond jobs |
+| 2026-11-04 | Final scores readable as ratio, stars, percent or basic; letter grades left out (§8) |
 
 ## 19. Settled by the design session, flagged for checking
 
