@@ -205,6 +205,18 @@ describe('updateRegistryRow', () => {
     expect(error).toBeInstanceOf(NotFoundError)
   })
 
+  test('refuses to move a stage onto a phase that does not exist, as not-found', async () => {
+    // Arrange / Act
+    const error = await withMigratedScratchDatabase(async (db) => {
+      const [stage] = await addRegistryRows(db, 'stage', [{ key: 'orphan_bound', label: 'Orphan bound' }])
+      if (!stage) throw new Error('the arrangement stored no stage')
+      return thrownBy(() => updateRegistryRow(db, 'stage', stage.id, { phaseId: 999_999 }))
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+  })
+
   test('refuses to move a stage onto an archived phase and changes nothing', async () => {
     // Arrange / Act
     const { error, stored } = await withMigratedScratchDatabase(async (db) => {

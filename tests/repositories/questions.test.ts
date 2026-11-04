@@ -7,7 +7,8 @@ import { addPostings, getPosting } from '../../src/data/repositories/postings.ts
 import { addQuestion, answerQuestion, listQuestions } from '../../src/data/repositories/questions.ts'
 import { postingQuestion } from '../../src/data/schema/questions.ts'
 import { NotFoundError } from '../../src/errors.ts'
-import { PostingQuestionAnswerSchema, PostingQuestionInputSchema } from '../../src/schemas/questions.ts'
+import { PostingQuestionAnswerSchema, PostingQuestionInputSchema, QUESTION_MAX } from '../../src/schemas/questions.ts'
+import { inOneTransaction } from '../../src/mcp/bulk.ts'
 import { thrownBy, violationText } from '../data/rolled-back.ts'
 import { useSharedScratchDatabase } from '../mcp/tools/harness.ts'
 
@@ -90,6 +91,21 @@ describe('addQuestion', () => {
     expect(await listQuestions(database(), postingId)).toHaveLength(1)
   })
 
+  test('one question twice in one transaction is stored once, as a bulk call carrying it twice would', async () => {
+    // Arrange
+    const postingId = await newPostingId('Asked twice in one call')
+    const item = { postingId, question: 'Relocation?' }
+
+    // Act
+    const [first, second] = await inOneTransaction(database(), [item, { ...item, answer: 'later' }], (tx, entry) =>
+      addQuestion(tx, entry),
+    )
+
+    // Assert
+    expect(second).toEqual(first)
+    expect(await listQuestions(database(), postingId)).toHaveLength(1)
+  })
+
   test('an unknown posting is a not-found error', async () => {
     // Act
     const error = await thrownBy(() => addQuestion(database(), { postingId: 999_999, question: 'Anyone there?' }))
@@ -169,6 +185,8 @@ describe('the question schemas', () => {
   test('refuse a blank question and a blank answer', () => {
     // Assert
     expect(PostingQuestionInputSchema.safeParse({ postingId: 1, question: '   ' }).success).toBe(false)
+    expect(PostingQuestionInputSchema.safeParse({ postingId: 1, question: 'q'.repeat(QUESTION_MAX) }).success).toBe(true)
+    expect(PostingQuestionInputSchema.safeParse({ postingId: 1, question: 'q'.repeat(QUESTION_MAX + 1) }).success).toBe(false)
     expect(PostingQuestionAnswerSchema.safeParse({ questionId: 1, answer: '' }).success).toBe(false)
     expect(PostingQuestionAnswerSchema.safeParse({ questionId: 1, answer: 'x', answeredAt: 'now' }).success).toBe(false)
   })

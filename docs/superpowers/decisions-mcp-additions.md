@@ -64,13 +64,22 @@ The spec amendments are dated blockquotes in §7.1, §7.4, §7.8, §8 and §11.1
     resolved company, or rename the winner afterwards.
 15. **No alias is kept for the losing spelling.** A later import under that spelling creates
     the company again. An alias table is the fix, and it is left until an import needs it.
+15a. **A posting keeps its `posting_key` through a rename or a merge.** The key is the posting's
+    identity, built once from the company's spelling at capture, and exports and imports refer to
+    a posting by it. So after a merge, a re-import of a role under the removed spelling is refused
+    as a duplicate of the posting that moved, rather than stored twice; the refusal names the old
+    key. Cost if wrong: a recompute in both tools, and a rewrite of every exported key.
+15b. **A merge locks both companies first**, in id order, so a posting added under either one
+    waits for the merge instead of landing on a deleted company, and two merges of one pair
+    queue. A posting that still reaches the removed company is a conflict that says to merge again.
 16. **"Via recruiter" needs no schema change.** It is a `route` row and an `origin` through it.
     Whether the operator's route registry already has such a row is in their data, which this
     change does not read; `registry_add` adds one if not.
 
 ## Posting questions
 
-17. **One table, `posting_question`, unique on `(posting_id, question)`.** An add whose
+17. **One table, `posting_question`, unique on `(posting_id, question)`**, and a question is at
+    most 1000 characters, because the unique key's btree entries are capped at about 2.7 KB. An add whose
     question the posting already has returns the stored row unchanged, so a repeated import
     neither duplicates a question nor touches its answer. An answer may arrive with the
     question, which is how an import carries questions already answered.

@@ -84,21 +84,21 @@ describe('scaleScore', () => {
   })
 
   test('keeps recommendApply as stored, even where the shown overall would read the other way', () => {
-    // Arrange: stored just under a 0.70 bar, shown as 70 once rounded
-    const under = { ...stored, overall: 0.6951, recommendApply: false }
+    // Arrange: stored just under a 0.60 bar, shown as 60 once rounded
+    const under = { ...stored, overall: 0.5951, recommendApply: false }
 
     // Act
     const shown = scaleScore(under, 'percent')
 
     // Assert
-    expect(shown).toMatchObject({ overall: 70, recommendApply: false })
+    expect(shown).toMatchObject({ overall: 60, recommendApply: false })
   })
 })
 
 describe('scaleCriteriaSet', () => {
   test('scales the apply threshold with the same rounding as the score', () => {
     // Assert
-    expect(scaleCriteriaSet({ name: 'set', applyThreshold: 0.7 }, 'stars')).toEqual({ name: 'set', applyThreshold: 3.5 })
+    expect(scaleCriteriaSet({ name: 'set', applyThreshold: 0.6 }, 'stars')).toEqual({ name: 'set', applyThreshold: 3 })
     expect(scaleCriteriaSet({ name: 'set', applyThreshold: null }, 'basic')).toEqual({ name: 'set', applyThreshold: null })
   })
 })

@@ -184,6 +184,26 @@ describe('mergeCompanies', () => {
     expect(result.postingsMoved).toBe(1)
   })
 
+  test('runs as a savepoint inside a transaction the caller holds, and rolls back with it', async () => {
+    // Arrange
+    const into = await companyWith('Savepoint Into', ['Savepoint kept'])
+    const from = await companyWith('Savepoint From', ['Savepoint moved'])
+
+    // Act: merge inside an outer transaction, then roll the outer one back
+    const error = await thrownBy(() =>
+      database().transaction(async (tx) => {
+        const result = await mergeCompanies(tx, { intoCompanyId: into.id, fromCompanyId: from.id })
+        expect(result.postingsMoved).toBe(1)
+        throw new Error('roll the outer transaction back')
+      }),
+    )
+
+    // Assert
+    expect((error as Error).message).toBe('roll the outer transaction back')
+    expect(await companyIdsOf(from.postingIds)).toEqual([from.id])
+    expect((await findCompany(database(), from.id)).id).toBe(from.id)
+  })
+
   test('an unknown company at either side is a not-found error and nothing moves', async () => {
     // Arrange
     const real = await companyWith('Merge Real Co', ['Real role'])
