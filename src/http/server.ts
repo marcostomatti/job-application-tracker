@@ -1,13 +1,15 @@
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { createDependency, createService, type ServiceHandle } from '@open-tomato/service-express'
 import { createLogger } from '@open-tomato/service-logger'
 import { sql } from 'drizzle-orm'
 import express from 'express'
 
+import { requireApiAccess } from '../auth/access.ts'
 import { GENERATED_KEY_LENGTH } from '../auth/api-key.ts'
-import { requireApiKey } from '../auth/middleware.ts'
+import { parseAuthConfig, type AuthConfig } from '../auth/config.ts'
+import { authRouter } from '../auth/routes.ts'
 import { DEFAULT_BACKUP_DIR, startBackupSchedule, type BackupWiring } from '../backup/schedule.ts'
 import { closeDb, getDb } from '../data/client.ts'
 import { mountRoutes } from './routes/index.ts'
@@ -25,8 +27,11 @@ const MAX_PORT = 65_535
  */
 const RATE_LIMIT = { max: 1_000, windowMs: 60_000 } as const
 
-/** Where the built web app will be, once the web plan produces it. Absent today. */
+/** Where `bun run build:web` writes the web app. */
 const DEFAULT_WEB_DIST = resolve(import.meta.dir, '../web/dist')
+
+/** The paths the web app draws itself, each answered with its `index.html`. */
+const APP_PATHS = ['/login', '/tokens', '/stats']
 
 export interface StartOptions {
   /** The port to listen on. Defaults to `PORT`, then 3000. Ignored under `NODE_ENV=test`, which binds an ephemeral one. */
@@ -41,26 +46,28 @@ export interface StartOptions {
   readonly backup?: BackupWiring
 }
 
-/** Thrown before anything is opened when no API key is configured. Its message carries no key. */
+/** Thrown before anything is opened when neither an API key nor a login is configured. Its message carries no key. */
 export class MissingApiKeyError extends Error {
   constructor() {
     super(
-      'API_KEY is not set, so the service will not start. Run `bun run setApiKey --burn-after-reading` ' +
-        'to write one into .env.',
+      'Neither API_KEY nor AUTH_MODE is set, so nothing could open /api and the service will not start. Run ' +
+        '`bun run setApiKey --burn-after-reading` to write an API_KEY into .env, or set AUTH_MODE (see "Signing in" in the README).',
     )
     this.name = 'MissingApiKeyError'
   }
 }
 
 /**
- * The key clients must present. The service refuses to start without one, and does not run
- * open, because `createService` listens on every network interface and takes no host: with
- * no key, the 23 routes (writes included) would be reachable from any machine on the network.
+ * The key clients may present, or `undefined` when only a login (and the tokens it mints) opens
+ * `/api`. With neither, the service refuses to start, and never runs open, because
+ * `createService` listens on every network interface and takes no host: with nothing checked,
+ * every route (writes included) would be reachable from any machine on the network.
  */
-function requiredApiKey(env: NodeJS.ProcessEnv): string {
+function configuredApiKey(env: NodeJS.ProcessEnv, auth: AuthConfig): string | undefined {
   const key = env.API_KEY
-  if (key === undefined || key === '') throw new MissingApiKeyError()
-  return key
+  const hasKey = key !== undefined && key !== ''
+  if (!hasKey && auth.mode === 'none') throw new MissingApiKeyError()
+  return hasKey ? key : undefined
 }
 
 /** Refuses anything but a whole number from 1 to 65,535. `what` names the setting in the message. */
@@ -142,14 +149,18 @@ function startBackups(db: ReturnType<typeof getDb>, wiring: BackupWiring | undef
 
 /**
  * Starts the internal HTTP service: the chassis (health, body parser, rate limit, error
- * handler), the API key on `/api`, the 23 routes, and the web bundle when one exists.
+ * handler), the `/auth` routes, the credential check on `/api`, the 23 routes, and the web
+ * bundle when one exists.
  *
- * Auth is only `requireApiKey`. `auth` is left unset and `ctx.requireAuth` is never mounted,
+ * Auth is only `requireApiAccess` (the API key, a minted token, or a session cookie). The
+ * chassis's `auth` is left unset and `ctx.requireAuth` is never mounted,
  * because with no auth service configured the chassis's `requireAuth` allows every request.
  * `cors` is unset too: the app and the API share one origin and one port.
  */
 export async function startService(opts: StartOptions = {}): Promise<ServiceHandle> {
-  const apiKey = requiredApiKey(process.env)
+  // Both are read before anything opens, so a wrong setting stops the start with its own message.
+  const auth = parseAuthConfig(process.env)
+  const apiKey = configuredApiKey(process.env, auth)
   const port = resolvePort(opts.port, process.env)
   const webDist = opts.webDist ?? DEFAULT_WEB_DIST
   const db = getDb()
@@ -160,16 +171,19 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
     rateLimit: RATE_LIMIT,
     dependencies: [postgresDependency(db)],
     register: (app, { logger }) => {
-      if (isShorterThanGenerated(apiKey)) {
+      if (apiKey !== undefined && isShorterThanGenerated(apiKey)) {
         logger.warn(
           'API_KEY is shorter than the keys `bun run setApiKey` makes, and the service listens on every ' +
             'network interface; run `bun run setApiKey --burn-after-reading` to replace it with a strong one.',
         )
       }
-      app.use('/api', requireApiKey(apiKey))
+      app.use('/auth', authRouter(db, auth))
+      app.use('/api', requireApiAccess(db, apiKey))
       mountRoutes(app, db)
       if (existsSync(webDist)) {
         app.use(express.static(webDist))
+        // The app routes in the browser, so a reload on /tokens or /stats gets the page and not a 404.
+        app.get(APP_PATHS, (_req, res) => res.sendFile(join(webDist, 'index.html')))
       } else {
         logger.info({ webDist: 'absent' }, 'no web bundle found; serving the API only')
       }
