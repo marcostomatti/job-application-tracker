@@ -179,6 +179,13 @@ other user on the machine through `ps`, which is why the dump splits the URL int
 database name is not a credential, so `--dbname="$PGDATABASE"` is safe. A `~/.pgpass` file is an
 equally good place for the password.
 
+## Open Notebook, an optional companion
+
+[Open Notebook](https://github.com/lfnovo/open-notebook) is a self-hosted notebook you can run
+next to the tracker for the long text the tracker does not keep: full postings, company
+research, interview notes. The tracker does not depend on it. What it is, what you gain, what it
+costs and how to set it up are in [docs/open-notebook.md](docs/open-notebook.md).
+
 ## The HTTP service
 
 `bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
