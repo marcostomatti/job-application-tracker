@@ -403,17 +403,20 @@ describe('the criteria and configuration routes', () => {
 
   test('PATCH a requirement runs its ownership check and its write on the transaction, never on the outer handle', async () => {
     const { setId, requirementId } = await arrangeSet(database(), 'Transactional edit')
-    const QUERY_VERBS = new Set<string | symbol>(['select', 'insert', 'update', 'delete'])
+    // `execute` is raw SQL (the server's own probe uses it) and `query` is the relational API, so
+    // either one would bypass the schema-typed verbs. `query` is an object and not a function, so
+    // reading anything off it is what must fail.
+    const QUERY_VERBS = new Set<string | symbol>(['select', 'insert', 'update', 'delete', 'execute'])
+    const refuse = (property: string | symbol): never => {
+      throw new Error(`a query was issued on the outer handle: ${String(property)}`)
+    }
     let transactions = 0
     // The outer handle refuses every query, so a read or a write moved off the transaction fails
     // the request (a 500) instead of passing unnoticed. Only `transaction` is let through.
     const outer = new Proxy(database(), {
       get(target, property, receiver) {
-        if (QUERY_VERBS.has(property)) {
-          return (): never => {
-            throw new Error(`a query was issued on the outer handle: ${String(property)}`)
-          }
-        }
+        if (QUERY_VERBS.has(property)) return (): never => refuse(property)
+        if (property === 'query') return new Proxy({}, { get: (_target, table) => refuse(`query.${String(table)}`) })
         const value: unknown = Reflect.get(target, property, receiver)
         if (property !== 'transaction' || typeof value !== 'function') return value
         return (...args: unknown[]): unknown => {

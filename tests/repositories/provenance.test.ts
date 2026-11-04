@@ -226,9 +226,12 @@ describe('getFirstTouch', () => {
     })
   })
 
-  test('skips a future-dated origin even when it has the lower id and the earlier recorded_at', async () => {
+  test('a future-dated origin entered first does not displace a real touch dated today, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      // Arrange: the typo was entered first, so every tie-break would prefer it to the real touch
+      // Arrange: the typo was entered first (lower id, earlier recorded_at). `touchedOn` is the
+      // leading sort key, so the typo loses on the first comparison and this test does not
+      // isolate the cutoff: the future-only fixtures above, where no other row exists, carry that.
+      // What it checks is that entry order never lets a mistyped date win over a real one.
       const target = await addPosition(db)
       const typo = await recordOrigin(db, { positionId: target.id, touchedOn: '2126-10-28' })
       const real = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })

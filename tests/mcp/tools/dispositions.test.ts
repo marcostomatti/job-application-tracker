@@ -260,10 +260,13 @@ describe('the dispositions group', () => {
     const reasonId = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Rejected later: reason' }]))
     const rejectionReasonId = idOf(await addRegistryRows(database(), 'rejection_reason', [{ label: 'Rejected later: theirs' }]))
     const positionId = await newPositionId('Set aside then rejected')
-    await client.call('position_set_aside', { positionId, setAsideReasonId: reasonId })
-    await client.call('position_reject', { positionId, rejectionReasonId })
+    const setAside = await client.call('position_set_aside', { positionId, setAsideReasonId: reasonId })
+    const rejected = await client.call('position_reject', { positionId, rejectionReasonId })
 
     const outcome = await client.call('set_aside_list', {})
+
+    // Both writes must have succeeded, or the group below proves nothing about a rejection
+    expect([setAside.failed, rejected.failed]).toEqual([false, false])
 
     const group = (outcome.body as Array<{ reasonId: number; positions: Array<{ position: { id: number } }> }>).find(
       (candidate) => candidate.reasonId === reasonId,

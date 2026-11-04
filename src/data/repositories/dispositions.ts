@@ -202,7 +202,9 @@ async function findShortlistStageId(db: Db): Promise<number | null> {
  * another transaction between them cannot be moved back to the shortlist.
  *
  * With `recommendApply` false it returns null without reading the position, so an unknown
- * position is reported only when the call would have moved it. That is not an inconsistency
+ * position is reported only when `recommendApply` is true (`lockPosition` throws before the
+ * applied and stage checks, so with it true a missing position raises even when nothing would
+ * have moved). That is not an inconsistency
  * with `currentStage` and `isApplied`, which raise for a missing position: here the null is
  * an answer about the input (there is nothing to do, whatever state the position is in), not a
  * claim about the position, so it need not verify the row and does not pay a read to do so.
