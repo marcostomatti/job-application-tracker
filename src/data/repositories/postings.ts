@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, sql, type InferSelectModel, type SQL } fro
 import { alias } from 'drizzle-orm/pg-core'
 
 import { BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
-import type { PostingInput, PostingPatch, PostingQuery } from '../../schemas/postings.ts'
+import type { PostingFilter, PostingInput, PostingPatch } from '../../schemas/postings.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
 import { postingDisposition, postingStageEvent } from '../schema/dispositions.ts'
@@ -11,6 +11,7 @@ import { origin } from '../schema/provenance.ts'
 import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReason, stage as stageTable } from '../schema/registries.ts'
 import { postingPenalty, postingRating, postingScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
+import { readQuestionsOf, type PostingQuestion } from './questions.ts'
 import { nonSupersededSetIds } from './criteria.ts'
 import type { Db } from './db.ts'
 import { isItemFault } from './item-fault.ts'
@@ -74,6 +75,7 @@ export type PostingDetail = {
   readonly scores: readonly ScoreDetail[]
   readonly dispositions: readonly DispositionDetail[]
   readonly origins: readonly OriginDetail[]
+  readonly questions: readonly PostingQuestion[]
 }
 
 /**
@@ -355,12 +357,12 @@ async function readOrigins(db: Db, postingId: number): Promise<OriginDetail[]> {
  * The detail modal's read: the posting with its company, its summary, its latest stage
  * event, the latest score under each criteria set that is not superseded (the same sets
  * `getBestScores` keeps, so the modal and the "+n" chip count the same lenses), its
- * dispositions and its origins. Every
+ * dispositions, its origins and its questions. Every
  * registry label is read whatever its archival state, so nothing renders blank.
  */
 export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
   const row = await readPostingRow(db, id)
-  const [company, references, summary, latestStage, scores, dispositions, origins] = await Promise.all([
+  const [company, references, summary, latestStage, scores, dispositions, origins, questions] = await Promise.all([
     findCompany(db, row.companyId),
     readReferences(db, row),
     findSummary(db, id),
@@ -368,8 +370,9 @@ export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
     readLatestScores(db, id),
     readDispositions(db, id),
     readOrigins(db, id),
+    readQuestionsOf(db, id),
   ])
-  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins }
+  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins, questions }
 }
 
 /**
@@ -389,7 +392,7 @@ function latestStageEventId(): SQL {
 }
 
 /** The criteria set a search reads scores from: the one named, else the active default. */
-function criteriaSetFor(query: PostingQuery): SQL {
+function criteriaSetFor(query: PostingFilter): SQL {
   if (query.criteriaSetId !== undefined) return sql`${query.criteriaSetId}`
   return sql`(select ${criteriaSet.id} from ${criteriaSet} where ${criteriaSet.isDefault} and ${criteriaSet.archivedAt} is null)`
 }
@@ -451,7 +454,7 @@ function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefi
  * to `recommendApply` with none named, the standing score that gives the answer (`answeringScoreId`),
  * so a row never displays a score that denies why it was listed. Otherwise the default set's latest.
  */
-function displayedScoreId(query: PostingQuery): SQL {
+function displayedScoreId(query: PostingFilter): SQL {
   if (query.criteriaSetId === undefined && query.recommendApply !== undefined) return answeringScoreId(query.recommendApply)
   return latestScoreId(criteriaSetFor(query))
 }
@@ -462,7 +465,7 @@ function isSetAside(): SQL<boolean> {
 }
 
 /** The WHERE conditions a query asks for; a filter it leaves out adds none. */
-function conditionsOf(query: PostingQuery): SQL[] {
+function conditionsOf(query: PostingFilter): SQL[] {
   const conditions: SQL[] = []
   if (query.companyId !== undefined) conditions.push(eq(posting.companyId, query.companyId))
   if (query.phaseId !== undefined) conditions.push(eq(stageTable.phaseId, query.phaseId))
@@ -492,7 +495,7 @@ function conditionsOf(query: PostingQuery): SQL[] {
  * (the best-scoring one when several do), not the default set's, so a listed row never shows a
  * score that contradicts why it is listed. With no `recommendApply` either, it is the default set's.
  */
-export async function searchPostings(db: Db, query: PostingQuery): Promise<PostingListRow[]> {
+export async function searchPostings(db: Db, query: PostingFilter): Promise<PostingListRow[]> {
   const rows = await db
     .select({
       posting,

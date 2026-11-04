@@ -2,12 +2,15 @@ import { and, asc, desc, eq, inArray, max, type InferSelectModel, type SQL } fro
 import { alias } from 'drizzle-orm/pg-core'
 
 import { ConflictError, NotFoundError } from '../../errors.ts'
-import type { NewTextInput, TextQuery, TextUpdateInput } from '../../schemas/texts.ts'
+import type { NewTextInput, TextLinkInput, TextQuery, TextUpdateInput } from '../../schemas/texts.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
-import { LABEL_VERSION_INDEX, textAsset } from '../schema/texts.ts'
+import { LABEL_VERSION_INDEX, textAsset, textAssetPosting } from '../schema/texts.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
+import { assertPostingExists } from './posting-exists.ts'
 import { assertNotArchived } from './registries.ts'
+
+export type TextLink = InferSelectModel<typeof textAssetPosting>
 
 export type TextAsset = InferSelectModel<typeof textAsset>
 
@@ -125,8 +128,13 @@ async function readNewestPerLabel(db: Db, textTypeId: number | undefined): Promi
  * label, so an earlier wording can be read back. `textTypeId` selects labels by the type their
  * newest version has now, and the history of a selected label is listed whole even where an
  * older version had another type. A text whose type was archived afterwards is still listed.
+ *
+ * With `postingId`, the list is exactly the versions linked to that posting, by label and then
+ * newest first, and `includeHistory` changes nothing, because a link already names a version.
+ * `textTypeId` still selects by the type a label has now. An unknown posting is not-found.
  */
 export async function listTexts(db: Db, opts: TextQuery = {}): Promise<TextAsset[]> {
+  if (opts.postingId !== undefined) return listLinkedTexts(db, opts.postingId, opts.textTypeId)
   const newest = await readNewestPerLabel(db, opts.textTypeId)
   if (!opts.includeHistory || newest.length === 0) return newest
   return db
@@ -134,4 +142,44 @@ export async function listTexts(db: Db, opts: TextQuery = {}): Promise<TextAsset
     .from(textAsset)
     .where(inArray(textAsset.label, newest.map((row) => row.label)))
     .orderBy(asc(textAsset.label), desc(textAsset.version))
+}
+
+/** The versions linked to one posting, kept to the labels whose newest version has `textTypeId` when given. */
+async function listLinkedTexts(db: Db, postingId: number, textTypeId: number | undefined): Promise<TextAsset[]> {
+  await assertPostingExists(db, postingId)
+  const linked = await db
+    .select({ text: textAsset })
+    .from(textAssetPosting)
+    .innerJoin(textAsset, eq(textAsset.id, textAssetPosting.textAssetId))
+    .where(eq(textAssetPosting.postingId, postingId))
+    .orderBy(asc(textAsset.label), desc(textAsset.version))
+  const rows = linked.map((row) => row.text)
+  if (textTypeId === undefined || rows.length === 0) return rows
+  const labelsOfType = new Set((await readNewestPerLabel(db, textTypeId)).map((row) => row.label))
+  return rows.filter((row) => labelsOfType.has(row.label))
+}
+
+/** One version of a text, by id, or a not-found error naming it. */
+async function assertTextExists(db: Db, textAssetId: number): Promise<void> {
+  const [found] = await db.select({ id: textAsset.id }).from(textAsset).where(eq(textAsset.id, textAssetId))
+  if (!found) throw new NotFoundError('text', textAssetId)
+}
+
+/**
+ * Records that one version of a text was used for one posting, and returns the link. Linking
+ * twice is a no-op that returns the first link, `linkedAt` included. An unknown text version or
+ * posting is a not-found error.
+ */
+export async function linkText(db: Db, input: TextLinkInput): Promise<TextLink> {
+  await assertTextExists(db, input.textAssetId)
+  await assertPostingExists(db, input.postingId)
+  const [created] = await db.insert(textAssetPosting).values(input).onConflictDoNothing().returning()
+  if (created) return created
+
+  const [existing] = await db
+    .select()
+    .from(textAssetPosting)
+    .where(and(eq(textAssetPosting.textAssetId, input.textAssetId), eq(textAssetPosting.postingId, input.postingId)))
+  if (!existing) throw new NotFoundError('text link', `${input.textAssetId} ${input.postingId}`)
+  return existing
 }

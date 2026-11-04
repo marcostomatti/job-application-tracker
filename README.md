@@ -235,10 +235,10 @@ body that is not JSON, as one of these.
 
 ## The MCP server
 
-`bun run mcp` starts the MCP server, which offers 46 tools for recording, scoring and reading
+`bun run mcp` starts the MCP server, which offers 55 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
 repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
-`registered 46 MCP tools` to stderr, which is how you see that every tool module loaded.
+`registered 55 MCP tools` to stderr, which is how you see that every tool module loaded.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).

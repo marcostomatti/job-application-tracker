@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import postgres from 'postgres'
 
 import { addRegistryRows } from '../../../src/data/repositories/registries.ts'
+import { addPostings } from '../../../src/data/repositories/postings.ts'
 import { addText } from '../../../src/data/repositories/texts.ts'
 import { textTools } from '../../../src/mcp/tools/texts.ts'
 import { BULK_MAX } from '../../../src/schemas/common.ts'
@@ -15,7 +16,14 @@ type Listed = { label: string; version: number; body: string; textTypeId: number
 
 describe('the texts group', () => {
   test('the texts group registers exactly the named tools', () => {
-    expect(textTools.map((tool) => tool.name).sort()).toEqual(['text_add', 'text_add_bulk', 'text_list', 'text_update'])
+    expect(textTools.map((tool) => tool.name).sort()).toEqual([
+      'text_add',
+      'text_add_bulk',
+      'text_link',
+      'text_link_bulk',
+      'text_list',
+      'text_update',
+    ])
   })
 
   test('no tool sets annotations, which are left for the author to decide', () => {
@@ -167,5 +175,46 @@ describe('the texts group', () => {
     expect(failureText(outcome as NonNullable<typeof outcome>)).toContain('ConflictError')
     expect(failureText(outcome as NonNullable<typeof outcome>)).toContain('was changed by another write')
     expect(versions).toEqual([[1, 'first'], [2, 'from the writer']])
+  })
+})
+
+describe('the text links', () => {
+  test('text_link links a version and text_list with postingId reads exactly that version back', async () => {
+    const client = await connectTools(textTools, database())
+    const postingId = idOf(await addPostings(database(), [{ company: { name: 'Link tool Co' }, roleTitle: 'Link tool role' }]))
+    const sent = await addText(database(), { label: 'Link tool letter', body: 'as sent' })
+    await client.call('text_update', { label: 'Link tool letter', body: 'edited later' })
+
+    const linked = await client.call('text_link', { textAssetId: sent.id, postingId })
+    const listed = await client.call('text_list', { postingId })
+
+    expect(linked.body).toMatchObject({ textAssetId: sent.id, postingId })
+    expect((listed.body as Listed[]).map((row) => [row.version, row.body])).toEqual([[1, 'as sent']])
+  })
+
+  test('text_link_bulk links nothing when an item names an unknown posting, and names its index', async () => {
+    const client = await connectTools(textTools, database())
+    const postingId = idOf(await addPostings(database(), [{ company: { name: 'Link bulk Co' }, roleTitle: 'Link bulk role' }]))
+    const text = await addText(database(), { label: 'Link bulk letter', body: 'hello' })
+
+    const outcome = await client.call('text_link_bulk', {
+      items: [
+        { textAssetId: text.id, postingId },
+        { textAssetId: text.id, postingId: 999_999 },
+      ],
+    })
+    const listed = await client.call('text_list', { postingId })
+
+    expect(outcome.failed).toBe(true)
+    expect(failureText(outcome)).toContain('1')
+    expect(listed.body).toEqual([])
+  })
+
+  test('text_link refuses a label in place of a version id before touching the database', async () => {
+    const client = await connectTools(textTools, untouchableDb())
+
+    const outcome = await client.call('text_link', { label: 'Some letter', postingId: 1 })
+
+    expect(outcome.failed).toBe(true)
   })
 })

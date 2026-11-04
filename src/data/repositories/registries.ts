@@ -2,7 +2,7 @@ import { and, Column, eq, isNull, type InferInsertModel, type InferSelectModel }
 import type { PgColumn } from 'drizzle-orm/pg-core'
 
 import { ArchivedError, ConflictError, NotFoundError } from '../../errors.ts'
-import type { RegistryRowInputOf, RegistrySchemaName } from '../../schemas/registries.ts'
+import type { RegistryPatchOf, RegistryRowInputOf, RegistrySchemaName } from '../../schemas/registries.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import {
   applyRoute,
@@ -281,4 +281,59 @@ export async function archiveRegistryRow<N extends RegistryName>(
   // Nothing was updated, so the row is either already archived or was never there, and
   // the read that tells those apart is the one that returns an archived row as it is.
   return findRegistryRow(db, name, id)
+}
+
+/**
+ * The columns a patch may write, across every registry; `key` is in none of them. A registry
+ * writes only those it has, so a patch built for one registry and sent for another cannot
+ * reach a column the table lacks.
+ */
+const PATCHABLE_COLUMNS = [
+  'label',
+  'sort',
+  'phaseId',
+  'isShortlist',
+  'isTerminal',
+  'isRepeatable',
+  'isTraction',
+  'isApplied',
+] as const
+
+/**
+ * Changes some columns of one registry row and returns it as stored. Only `PATCHABLE_COLUMNS`
+ * are copied from the patch, so a `key` or a timestamp an untyped caller carries is ignored;
+ * the schema refuses a `key` before this is reached. A reference that differs from the stored
+ * one must be usable, as on an add, and one left unchanged is not checked again, so a stage
+ * whose phase was archived later can still be relabelled.
+ *
+ * An archived row may be changed: the edit is not a new reference to it, and correcting a
+ * retired row's label is how the rows that still name it come to render correctly. An empty
+ * patch returns the row as it is; an id with no row is `NotFoundError`.
+ */
+export async function updateRegistryRow<N extends RegistryName>(
+  db: Db,
+  name: N,
+  id: number,
+  patch: RegistryPatchOf<N>,
+): Promise<RegistryRowOf<N>> {
+  const stored = await findRegistryRow(db, name, id)
+  const given = patch as Readonly<Record<string, unknown>>
+  const columns = Object.fromEntries(
+    PATCHABLE_COLUMNS.flatMap((column) =>
+      column in REGISTRY_TABLES[name] && given[column] !== undefined ? [[column, given[column]]] : [],
+    ),
+  )
+  if (Object.keys(columns).length === 0) return stored
+
+  const current = stored as Readonly<Record<string, unknown>>
+  const changed = Object.fromEntries(Object.entries(columns).filter(([column, value]) => value !== current[column]))
+  await assertReferencesUsable(db, name, [changed])
+  const table = tableFor(name)
+  const [updated] = await db
+    .update(table)
+    .set(columns as Partial<QueryTableInsert>)
+    .where(eq(table.id, id))
+    .returning()
+  if (!updated) throw new NotFoundError(name, id)
+  return updated as RegistryRowOf<N>
 }

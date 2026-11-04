@@ -8,6 +8,7 @@ import {
   findRegistryRow,
   listRegistry,
   REGISTRY_TABLES,
+  updateRegistryRow,
 } from '../../src/data/repositories/registries.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import { BULK_MAX, bulkOf, IdSchema, PAGE_LIMIT_MAX, PaginationSchema } from '../../src/schemas/common.ts'
@@ -164,6 +165,111 @@ describe('archival is not deletion', () => {
 
     // Assert
     expect(error).toBeInstanceOf(NotFoundError)
+  })
+})
+
+describe('updateRegistryRow', () => {
+  test('changes the named columns of a row in place and keeps its key and every other column', async () => {
+    // Arrange / Act
+    const { before, after } = await withMigratedScratchDatabase(async (db) => {
+      const created = await addRegistryRows(db, 'stage', [{ key: 'gated', label: 'Closed by a gate', isTerminal: true, isApplied: true }])
+      const before = await findRegistryRow(db, 'stage', idOf(created))
+      const after = await updateRegistryRow(db, 'stage', before.id, { isApplied: false, label: 'Closed: gate' })
+      return { before, after }
+    })
+
+    // Assert
+    expect(after).toEqual({ ...before, isApplied: false, label: 'Closed: gate' })
+  })
+
+  test('an empty patch returns the row as it is', async () => {
+    // Arrange / Act
+    const { before, after } = await withMigratedScratchDatabase(async (db) => {
+      const created = await addRegistryRows(db, 'phase', [{ key: 'open', label: 'Open', isShortlist: true }])
+      const before = await findRegistryRow(db, 'phase', idOf(created))
+      const after = await updateRegistryRow(db, 'phase', before.id, {})
+      return { before, after }
+    })
+
+    // Assert
+    expect(after).toEqual(before)
+  })
+
+  test('throws NotFoundError for an id that was never there', async () => {
+    // Arrange / Act
+    const error = await withMigratedScratchDatabase(async (db) =>
+      thrownBy(() => updateRegistryRow(db, 'route', 999_999, { label: 'Nobody' })),
+    )
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+  })
+
+  test('refuses to move a stage onto a phase that does not exist, as not-found', async () => {
+    // Arrange / Act
+    const error = await withMigratedScratchDatabase(async (db) => {
+      const [stage] = await addRegistryRows(db, 'stage', [{ key: 'orphan_bound', label: 'Orphan bound' }])
+      if (!stage) throw new Error('the arrangement stored no stage')
+      return thrownBy(() => updateRegistryRow(db, 'stage', stage.id, { phaseId: 999_999 }))
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(NotFoundError)
+  })
+
+  test('refuses to move a stage onto an archived phase and changes nothing', async () => {
+    // Arrange / Act
+    const { error, stored } = await withMigratedScratchDatabase(async (db) => {
+      const phases = await addRegistryRows(db, 'phase', [{ key: 'live', label: 'Live' }, { key: 'old', label: 'Old' }])
+      await archiveRegistryRow(db, 'phase', idOf(phases, 1))
+      const stages = await addRegistryRows(db, 'stage', [{ key: 's', label: 'Stage', phaseId: idOf(phases) }])
+      const error = await thrownBy(() => updateRegistryRow(db, 'stage', idOf(stages), { phaseId: idOf(phases, 1) }))
+      const stored = await findRegistryRow(db, 'stage', idOf(stages))
+      return { error, stored }
+    })
+
+    // Assert
+    expect(error).toBeInstanceOf(ArchivedError)
+    expect(stored.label).toBe('Stage')
+  })
+
+  test('accepts an unchanged phase that was archived after the stage named it', async () => {
+    // Arrange / Act
+    const updated = await withMigratedScratchDatabase(async (db) => {
+      const phases = await addRegistryRows(db, 'phase', [{ key: 'p', label: 'Phase' }])
+      const stages = await addRegistryRows(db, 'stage', [{ key: 's', label: 'Stage', phaseId: idOf(phases) }])
+      await archiveRegistryRow(db, 'phase', idOf(phases))
+      return updateRegistryRow(db, 'stage', idOf(stages), { phaseId: idOf(phases), label: 'Renamed' })
+    })
+
+    // Assert
+    expect(updated.label).toBe('Renamed')
+  })
+
+  test('updates an archived row and keeps it archived', async () => {
+    // Arrange / Act
+    const updated = await withMigratedScratchDatabase(async (db) => {
+      const rows = await addRegistryRows(db, 'route', [{ label: 'Refferal' }])
+      await archiveRegistryRow(db, 'route', idOf(rows))
+      return updateRegistryRow(db, 'route', idOf(rows), { label: 'Referral' })
+    })
+
+    // Assert
+    expect(updated.label).toBe('Referral')
+    expect(updated.archivedAt).not.toBeNull()
+  })
+
+  test('writes no column outside the patch, even one an untyped caller smuggles in', async () => {
+    // Arrange / Act
+    const stored = await withMigratedScratchDatabase(async (db) => {
+      const rows = await addRegistryRows(db, 'layer', [{ key: 'market', label: 'Market' }])
+      const smuggled = { label: 'Market layer', key: 'renamed', archivedAt: new Date() } as unknown as { label: string }
+      await updateRegistryRow(db, 'layer', idOf(rows), smuggled)
+      return findRegistryRow(db, 'layer', idOf(rows))
+    })
+
+    // Assert
+    expect(stored).toMatchObject({ key: 'market', label: 'Market layer', archivedAt: null })
   })
 })
 

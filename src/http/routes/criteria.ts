@@ -1,7 +1,6 @@
 import {
   createCriteriaVersion,
   getRequirements,
-  listCriteriaSets,
   updateRequirement,
 } from '../../data/repositories/criteria.ts'
 import type { Db } from '../../data/repositories/db.ts'
@@ -16,7 +15,7 @@ import {
   RequirementUpdateInputSchema,
   type RequirementUpdateInput,
 } from '../../schemas/criteria.ts'
-import { makeDefaultCriteriaSet, readCriteriaMode, writeCriteriaMode } from '../../mcp/tools/criteria.ts'
+import { makeDefaultCriteriaSet, readCriteriaMode, readCriteriaSets, writeCriteriaMode } from '../../mcp/tools/criteria.ts'
 import { route, type RouteSpec } from './spec.ts'
 
 /**
@@ -47,7 +46,7 @@ async function updateRequirementOfSet(
 
 /** The routes over criteria sets, their requirements, the default set and the criteria mode. */
 export const criteriaRoutes: readonly RouteSpec[] = [
-  route('get', '/criteria-sets', 'criteria_sets', CriteriaSetQuerySchema, async (args, db) => listCriteriaSets(db, args)),
+  route('get', '/criteria-sets', 'criteria_sets', CriteriaSetQuerySchema, async (args, db) => readCriteriaSets(db, args)),
   route('post', '/criteria-sets', 'criteria_version_create', CriteriaVersionInputSchema, async (args, db) =>
     createCriteriaVersion(db, args),
   ),

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { ScaleSchema } from '../scoring/scale.ts'
 import { booleanOrText, bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE, PaginationSchema } from './common.ts'
 
 /**
@@ -114,14 +115,26 @@ export const PostingQuerySchema = PaginationSchema.extend({
   recommendApply: booleanOrText.optional(),
   setAside: z.enum(VISIBILITY_FILTERS).default('exclude'),
   clientHidden: z.enum(VISIBILITY_FILTERS).default('exclude'),
+  scale: ScaleSchema,
 })
 
 export type PostingQuery = z.infer<typeof PostingQuerySchema>
+
+/** The filters and page of a posting search, without the scale its answer is shown on: what the repository reads. */
+export type PostingFilter = Omit<PostingQuery, 'scale'>
 
 /** One posting, named by id: what a read of a single posting, or of its summary, takes. */
 export const PostingRefSchema = z.strictObject({ postingId: IdSchema })
 
 export type PostingRef = z.infer<typeof PostingRefSchema>
+
+/**
+ * One posting read in full, and the scale its scores are shown on. A schema of its own, because
+ * `PostingRefSchema` also serves reads that carry no score.
+ */
+export const PostingGetQuerySchema = z.strictObject({ postingId: IdSchema, scale: ScaleSchema })
+
+export type PostingGetQuery = z.infer<typeof PostingGetQuerySchema>
 
 /** Up to `BULK_MAX` postings to record in one call, all or none. */
 export const PostingBulkSchema = bulkOf(PostingInputSchema)

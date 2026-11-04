@@ -1,5 +1,12 @@
-import { addText, listTexts, updateText } from '../../data/repositories/texts.ts'
-import { NewTextBulkSchema, NewTextSchema, TextQuerySchema, TextUpdateSchema } from '../../schemas/texts.ts'
+import { addText, linkText, listTexts, updateText } from '../../data/repositories/texts.ts'
+import {
+  NewTextBulkSchema,
+  NewTextSchema,
+  TextLinkBulkSchema,
+  TextLinkInputSchema,
+  TextQuerySchema,
+  TextUpdateSchema,
+} from '../../schemas/texts.ts'
 import { inOneTransaction } from '../bulk.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
 
@@ -12,6 +19,7 @@ export const textTools: ToolDefinition[] = [
       'Lists the user\'s saved texts, one row per label showing its newest version, ordered by label. ' +
       'Give includeHistory: true to get every version of each label instead, newest first within a label, to read an earlier wording back. ' +
       'Give textTypeId to keep only the labels whose newest version has that type. ' +
+      'Give postingId to list exactly the versions linked to that posting with text_link, the wording that was sent, even where the text has a newer version since; includeHistory changes nothing then, and an unknown posting is a not-found error. ' +
       'Use this to find a label before text_update, or to read a text; it takes no label, so filter the returned rows yourself.',
     input: TextQuerySchema,
     run: async (args, db) => listTexts(db, args),
@@ -48,5 +56,26 @@ export const textTools: ToolDefinition[] = [
       'If another write added a version of the same label first, this call fails with a conflict and writes nothing; read the text again with text_list and decide whether to repeat the edit.',
     input: TextUpdateSchema,
     run: async (args, db) => updateText(db, args),
+  }),
+  defineTool({
+    name: 'text_link',
+    title: 'Record which text was used for a posting',
+    description:
+      'Records that ONE version of a text, named by its row id (textAssetId, the id text_list returns), was used for ONE posting, and returns the link { textAssetId, postingId, linkedAt }. ' +
+      'Link the version that was actually sent: a later text_update writes a new version and leaves this link on the old one. ' +
+      'Linking the same version to the same posting again is a no-op that returns the first link. Read the links back with text_list and postingId. ' +
+      'An unknown text version or posting is a not-found error.',
+    input: TextLinkInputSchema,
+    run: async (args, db) => linkText(db, args),
+  }),
+  defineTool({
+    name: 'text_link_bulk',
+    title: 'Record several text links',
+    description:
+      'Records up to 500 links in one call, each exactly as text_link takes it, and returns them in the order given. ' +
+      'All or none: if any item fails, nothing is linked and the error names the failing item by its index. ' +
+      'Prefer this to repeated text_link calls when importing which texts went to which postings.',
+    input: TextLinkBulkSchema,
+    run: async (args, db) => inOneTransaction(db, args.items, (tx, item) => linkText(tx, item)),
   }),
 ]

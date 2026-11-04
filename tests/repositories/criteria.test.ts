@@ -526,9 +526,9 @@ describe('the other criteria schemas', () => {
     expect(CriteriaVersionInputSchema.safeParse({ fromSetId: 3, version: 9 }).success).toBe(false)
   })
 
-  test('a set query takes includeArchived as a boolean or its text form, and nothing else', () => {
-    expect(CriteriaSetQuerySchema.parse({})).toEqual({})
-    expect(CriteriaSetQuerySchema.parse({ includeArchived: 'true' })).toEqual({ includeArchived: true })
+  test('a set query takes includeArchived as a boolean or its text form, a scale, and nothing else', () => {
+    expect(CriteriaSetQuerySchema.parse({})).toEqual({ scale: 'ratio' })
+    expect(CriteriaSetQuerySchema.parse({ includeArchived: 'true', scale: 'stars' })).toEqual({ includeArchived: true, scale: 'stars' })
     expect(CriteriaSetQuerySchema.safeParse({ includeArchived: 'yes' }).success).toBe(false)
     expect(CriteriaSetQuerySchema.safeParse({ limit: 5 }).success).toBe(false)
   })
