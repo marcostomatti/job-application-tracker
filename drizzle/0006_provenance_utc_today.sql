@@ -1,0 +1,2 @@
+DROP VIEW "public"."position_first_touch";--> statement-breakpoint
+CREATE VIEW "public"."position_first_touch" AS (select distinct on ("origin"."position_id") "position_id", "id" as "origin_id", "route_id", "touched_on" from "origin" where "origin"."position_id" IS NOT NULL AND "origin"."touched_on" <= (now() AT TIME ZONE 'utc')::date order by "origin"."position_id", "origin"."touched_on", "origin"."recorded_at", "origin"."id");
