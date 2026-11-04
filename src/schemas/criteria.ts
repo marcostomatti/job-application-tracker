@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { ScaleSchema } from '../scoring/scale.ts'
 import { booleanOrText, hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
 import { REQUIREMENT_KINDS } from './discriminators.ts'
 import { AnchorsSchema } from './scoring.ts'
@@ -50,9 +51,10 @@ export const CriteriaVersionInputSchema = z.strictObject({
 
 export type CriteriaVersionInput = z.infer<typeof CriteriaVersionInputSchema>
 
-/** Which criteria sets a list returns; archived ones are left out unless asked for. */
+/** Which criteria sets a list returns, archived ones left out unless asked for, and the scale of their thresholds. */
 export const CriteriaSetQuerySchema = z.strictObject({
   includeArchived: booleanOrText.optional(),
+  scale: ScaleSchema,
 })
 
 export type CriteriaSetQuery = z.infer<typeof CriteriaSetQuerySchema>

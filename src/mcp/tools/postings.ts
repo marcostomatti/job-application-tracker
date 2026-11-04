@@ -1,15 +1,38 @@
-import { addPostings, getPosting, searchPostings, updatePosting } from '../../data/repositories/postings.ts'
+import type { Db } from '../../data/repositories/db.ts'
+import {
+  addPostings,
+  getPosting,
+  searchPostings,
+  updatePosting,
+  type PostingDetail,
+  type PostingListRow,
+} from '../../data/repositories/postings.ts'
 import {
   PostingBulkSchema,
+  PostingGetQuerySchema,
   PostingInputSchema,
   PostingQuerySchema,
-  PostingRefSchema,
   PostingUpdateBulkSchema,
   PostingUpdateInputSchema,
+  type PostingGetQuery,
+  type PostingQuery,
 } from '../../schemas/postings.ts'
+import { scaleScore } from '../../scoring/scale.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
 import { inOneTransaction } from '../bulk.ts'
 import { unwrapSingleItem } from '../result.ts'
+
+/** One posting in full, its scores on the scale asked for: what `posting_get` and its route return. */
+export async function readPosting(db: Db, args: PostingGetQuery): Promise<PostingDetail> {
+  const detail = await getPosting(db, args.postingId)
+  return { ...detail, scores: detail.scores.map((entry) => ({ ...entry, score: scaleScore(entry.score, args.scale) })) }
+}
+
+/** One page of postings, each score on the scale asked for: what `posting_search` and its route return. */
+export async function findPostings(db: Db, args: PostingQuery): Promise<PostingListRow[]> {
+  const rows = await searchPostings(db, args)
+  return rows.map((row) => (row.score ? { ...row, score: scaleScore(row.score, args.scale) } : row))
+}
 
 /** §11.1 group 1: recording, reading, searching and editing postings. */
 export const postingTools: ToolDefinition[] = [
@@ -50,9 +73,10 @@ export const postingTools: ToolDefinition[] = [
       'Returns everything known about ONE posting, by id: the posting, its company, the registry rows it references, its summary, ' +
       'its latest stage, every score with its ratings and penalties, its set-aside or rejection records and where it was found. ' +
       'Use this for the detail view of a posting whose id you already have; to find postings by company, phase or recommendation, use posting_search, which returns one lighter row each. ' +
-      'An unknown id is a not-found error.',
-    input: PostingRefSchema,
-    run: async (args, db) => getPosting(db, args.postingId),
+      'An unknown id is a not-found error. ' +
+      'Give scale (stars, percent or basic) to read each score\'s overall, floor and ceiling on that scale instead of 0..1; ratings, penalties and recommendApply stay as stored.',
+    input: PostingGetQuerySchema,
+    run: async (args, db) => readPosting(db, args),
   }),
   defineTool({
     name: 'posting_search',
@@ -61,9 +85,10 @@ export const postingTools: ToolDefinition[] = [
       'Searches postings for the board and the grid, filtered by company, phase, recommend-apply and by whether set-aside or client-hidden postings are shown; ' +
       'returns one row per posting (the posting, its company, its current stage and phase, its latest score under one criteria set, and a set-aside flag), newest seen first, in pages. ' +
       'Set-aside and client-hidden postings are left out unless the filters say include or only. ' +
-      'Use this to find or list postings; use posting_get when you already have an id and want the full detail.',
+      'Use this to find or list postings; use posting_get when you already have an id and want the full detail. ' +
+      'Give scale (stars, percent or basic) to read each row\'s overall, floor and ceiling on that scale instead of 0..1; the recommendApply filter and field always use the stored verdict.',
     input: PostingQuerySchema,
-    run: async (args, db) => searchPostings(db, args),
+    run: async (args, db) => findPostings(db, args),
   }),
   defineTool({
     name: 'posting_update',

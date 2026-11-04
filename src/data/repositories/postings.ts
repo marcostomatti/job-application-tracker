@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, sql, type InferSelectModel, type SQL } fro
 import { alias } from 'drizzle-orm/pg-core'
 
 import { BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
-import type { PostingInput, PostingPatch, PostingQuery } from '../../schemas/postings.ts'
+import type { PostingFilter, PostingInput, PostingPatch } from '../../schemas/postings.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
 import { postingDisposition, postingStageEvent } from '../schema/dispositions.ts'
@@ -389,7 +389,7 @@ function latestStageEventId(): SQL {
 }
 
 /** The criteria set a search reads scores from: the one named, else the active default. */
-function criteriaSetFor(query: PostingQuery): SQL {
+function criteriaSetFor(query: PostingFilter): SQL {
   if (query.criteriaSetId !== undefined) return sql`${query.criteriaSetId}`
   return sql`(select ${criteriaSet.id} from ${criteriaSet} where ${criteriaSet.isDefault} and ${criteriaSet.archivedAt} is null)`
 }
@@ -451,7 +451,7 @@ function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefi
  * to `recommendApply` with none named, the standing score that gives the answer (`answeringScoreId`),
  * so a row never displays a score that denies why it was listed. Otherwise the default set's latest.
  */
-function displayedScoreId(query: PostingQuery): SQL {
+function displayedScoreId(query: PostingFilter): SQL {
   if (query.criteriaSetId === undefined && query.recommendApply !== undefined) return answeringScoreId(query.recommendApply)
   return latestScoreId(criteriaSetFor(query))
 }
@@ -462,7 +462,7 @@ function isSetAside(): SQL<boolean> {
 }
 
 /** The WHERE conditions a query asks for; a filter it leaves out adds none. */
-function conditionsOf(query: PostingQuery): SQL[] {
+function conditionsOf(query: PostingFilter): SQL[] {
   const conditions: SQL[] = []
   if (query.companyId !== undefined) conditions.push(eq(posting.companyId, query.companyId))
   if (query.phaseId !== undefined) conditions.push(eq(stageTable.phaseId, query.phaseId))
@@ -492,7 +492,7 @@ function conditionsOf(query: PostingQuery): SQL[] {
  * (the best-scoring one when several do), not the default set's, so a listed row never shows a
  * score that contradicts why it is listed. With no `recommendApply` either, it is the default set's.
  */
-export async function searchPostings(db: Db, query: PostingQuery): Promise<PostingListRow[]> {
+export async function searchPostings(db: Db, query: PostingFilter): Promise<PostingListRow[]> {
   const rows = await db
     .select({
       posting,

@@ -9,7 +9,7 @@ import { writeSummary } from '../../src/data/repositories/summaries.ts'
 import { addText } from '../../src/data/repositories/texts.ts'
 import { mountRoutes, ROUTES } from '../../src/http/routes/index.ts'
 import { ALL_TOOLS } from '../../src/mcp/tools/index.ts'
-import { PostingRefSchema } from '../../src/schemas/postings.ts'
+import { PostingGetQuerySchema, PostingRefSchema } from '../../src/schemas/postings.ts'
 import { PostingScoresQuerySchema } from '../../src/schemas/scores.ts'
 import { archiveCriteriaSetForTest, arrangeSet } from '../mcp/tools/criteria-arrangement.ts'
 import { idOf, untouchableDb, useSharedScratchDatabase } from '../mcp/tools/harness.ts'
@@ -113,11 +113,13 @@ describe('the route table', () => {
     expect(checked).toBe(24)
   })
 
-  test('two routes may share one schema because two tools do: the posting reads and the score reads', () => {
+  test('two routes may share one schema because two tools do: the summary and origin reads, and the score reads', () => {
     const schemaOf = (tool: string): unknown => ROUTES.find((spec) => spec.tools.includes(tool))?.schemas[0]
 
-    expect(schemaOf('posting_get')).toBe(PostingRefSchema)
     expect(schemaOf('summary_get')).toBe(PostingRefSchema)
+    expect(schemaOf('origin_list')).toBe(PostingRefSchema)
+    // posting_get takes a scale, which a read with no score in it must not.
+    expect(schemaOf('posting_get')).toBe(PostingGetQuerySchema)
     expect(schemaOf('score_history')).toBe(PostingScoresQuerySchema)
     expect(schemaOf('score_best')).toBe(PostingScoresQuerySchema)
   })
@@ -225,6 +227,31 @@ describe('the score routes', () => {
 
     expect(dataOf(history)).toEqual([expect.objectContaining({ postingId: id, criteriaSetId: setId })])
     expect(dataOf(best)).toEqual([expect.objectContaining({ postingId: id, criteriaSetId: setId })])
+  })
+
+  test('the score reads, the posting reads and the set list take scale from the query string', async () => {
+    const id = await newPostingId('Scaled route')
+    const { setId, requirementId } = await arrangeSet(database(), 'Scaled route set')
+    await scorePosting(database(), {
+      postingId: id,
+      criteriaSetId: setId,
+      ratings: [{ requirementId, coverage: 1, confidence: 'supported' }],
+      penalties: [],
+    })
+    const companyId = (dataOf(await live.request('GET', `/api/postings/${id}`)) as { company: { id: number } }).company.id
+
+    const history = await live.request('GET', `/api/postings/${id}/scores?scale=percent`)
+    const best = await live.request('GET', `/api/postings/${id}/best-scores?scale=percent`)
+    const detail = await live.request('GET', `/api/postings/${id}?scale=percent`)
+    const search = await live.request('GET', `/api/postings?companyId=${companyId}&criteriaSetId=${setId}&scale=percent`)
+    const sets = await live.request('GET', '/api/criteria-sets?scale=percent')
+
+    const shown = { overall: 100, recommendApply: true }
+    expect(dataOf(history)).toEqual([expect.objectContaining(shown)])
+    expect(dataOf(best)).toEqual([expect.objectContaining(shown)])
+    expect((dataOf(detail) as { scores: Array<{ score: unknown }> }).scores[0]?.score).toMatchObject(shown)
+    expect((dataOf(search) as Array<{ score: unknown }>)[0]?.score).toMatchObject(shown)
+    expect((dataOf(sets) as Array<{ id: number; applyThreshold: number }>).find((set) => set.id === setId)?.applyThreshold).toBe(50)
   })
 
   test('POST /api/rescore-requests records a request and GET /pending lists the posting waiting under it', async () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
+import { ScaleSchema } from '../scoring/scale.ts'
 import { RATING_CONFIDENCES } from './discriminators.ts'
 
 /** Trimmed, non-empty and storable: a blank note says nothing, and NUL is refused. */
@@ -60,37 +61,50 @@ export const detourIdsOf = (ratings: readonly RatingInput[]): number[] =>
 
 const hasDuplicate = (values: readonly number[]): boolean => new Set(values).size !== values.length
 
+/** The fields of one scoring pass, shared by a single call and an item of a bulk one. */
+const scorePostingFields = {
+  postingId: IdSchema,
+  criteriaSetId: IdSchema,
+  ratings: z.array(RatingInputSchema),
+  penalties: z.array(PenaltyInputSchema),
+  note: text.optional(),
+}
+
 /**
- * One scoring pass of one posting against one criteria set. A requirement rated twice or a
- * detour given two coverages, or a penalty kind used twice, is refused here, where the caller can see which, because the tables
- * hold one row of each per score and would otherwise answer with a driver error.
+ * A requirement rated twice or a detour given two coverages, or a penalty kind used twice, is
+ * refused here, where the caller can see which, because the tables hold one row of each per
+ * score and would otherwise answer with a driver error.
  */
-export const ScorePostingInputSchema = z
-  .strictObject({
-    postingId: IdSchema,
-    criteriaSetId: IdSchema,
-    ratings: z.array(RatingInputSchema),
-    penalties: z.array(PenaltyInputSchema),
-    note: text.optional(),
-  })
-  .superRefine((input, ctx) => {
-    if (hasDuplicate(input.ratings.map((rating) => rating.requirementId))) {
-      ctx.addIssue({ code: 'custom', path: ['ratings'], message: 'a requirement may be rated once per score' })
-    }
-    if (hasDuplicate(detourIdsOf(input.ratings))) {
-      ctx.addIssue({ code: 'custom', path: ['ratings'], message: 'a detour may be given a coverage once per score' })
-    }
-    if (hasDuplicate(input.penalties.map((penalty) => penalty.penaltyKindId))) {
-      ctx.addIssue({ code: 'custom', path: ['penalties'], message: 'a penalty kind may be used once per score' })
-    }
-  })
+function refuseDuplicates(
+  input: { readonly ratings: readonly RatingInput[]; readonly penalties: readonly PenaltyInput[] },
+  ctx: z.RefinementCtx,
+): void {
+  if (hasDuplicate(input.ratings.map((rating) => rating.requirementId))) {
+    ctx.addIssue({ code: 'custom', path: ['ratings'], message: 'a requirement may be rated once per score' })
+  }
+  if (hasDuplicate(detourIdsOf(input.ratings))) {
+    ctx.addIssue({ code: 'custom', path: ['ratings'], message: 'a detour may be given a coverage once per score' })
+  }
+  if (hasDuplicate(input.penalties.map((penalty) => penalty.penaltyKindId))) {
+    ctx.addIssue({ code: 'custom', path: ['penalties'], message: 'a penalty kind may be used once per score' })
+  }
+}
+
+/** One scoring pass of one posting against one criteria set: what is stored, and an item of a bulk call. */
+export const ScorePostingInputSchema = z.strictObject(scorePostingFields).superRefine(refuseDuplicates)
+
+/** A single `score_posting` call: one scoring pass, and the scale its answer is shown on. */
+export const ScorePostingCallSchema = z
+  .strictObject({ ...scorePostingFields, scale: ScaleSchema })
+  .superRefine(refuseDuplicates)
 
 export type ScorePostingInput = z.infer<typeof ScorePostingInputSchema>
 
-export const ScorePostingBulkSchema = bulkOf(ScorePostingInputSchema)
+/** Up to `BULK_MAX` scoring passes, all or none, with one scale for every answer of the call. */
+export const ScorePostingBulkSchema = bulkOf(ScorePostingInputSchema).extend({ scale: ScaleSchema })
 
-/** The posting whose scores a read returns. */
-export const PostingScoresQuerySchema = z.strictObject({ postingId: IdSchema })
+/** The posting whose scores a read returns, and the scale they are shown on. */
+export const PostingScoresQuerySchema = z.strictObject({ postingId: IdSchema, scale: ScaleSchema })
 
 export type PostingScoresQuery = z.infer<typeof PostingScoresQuerySchema>
 

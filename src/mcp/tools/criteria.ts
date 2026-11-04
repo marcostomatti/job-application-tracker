@@ -8,16 +8,23 @@ import {
   CriteriaSetQuerySchema,
   CriteriaVersionInputSchema,
   RequirementUpdateInputSchema,
+  type CriteriaSetQuery,
 } from '../../schemas/criteria.ts'
+import { scaleCriteriaSet } from '../../scoring/scale.ts'
 import type { CriteriaMode } from '../../schemas/config.ts'
 import type { Db } from '../../data/repositories/db.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
 
 /**
- * The three compositions of this group that are more than one repository call. Each is exported
+ * The four compositions of this group that are more than one repository call. Each is exported
  * so the HTTP route that mirrors the tool calls the same function, and the two cannot disagree
  * about what the call does.
  */
+
+/** The criteria sets, each apply threshold on the scale asked for. */
+export async function readCriteriaSets(db: Db, args: CriteriaSetQuery): Promise<CriteriaSetRow[]> {
+  return (await listCriteriaSets(db, args)).map((set) => scaleCriteriaSet(set, args.scale))
+}
 
 /** Makes a set the default, then returns it as stored. */
 export async function makeDefaultCriteriaSet(db: Db, criteriaSetId: number): Promise<CriteriaSetRow> {
@@ -44,9 +51,10 @@ export const criteriaTools: ToolDefinition[] = [
     description:
       'Lists the criteria sets (the versioned rubrics that postings are scored against), newest first, each with its name, version, apply threshold and whether it is the default. ' +
       'Archived sets are left out unless includeArchived is true. ' +
-      'Use this to find a criteriaSetId; use criteria_requirements to see what is inside one set.',
+      'Use this to find a criteriaSetId; use criteria_requirements to see what is inside one set. ' +
+      'Give scale (stars, percent or basic) to read each apply threshold on that scale, rounded as score reads with the same scale round a score.',
     input: CriteriaSetQuerySchema,
-    run: async (args, db) => listCriteriaSets(db, args),
+    run: async (args, db) => readCriteriaSets(db, args),
   }),
   defineTool({
     name: 'criteria_requirements',
