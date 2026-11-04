@@ -46,15 +46,16 @@ export type OriginInput = z.infer<typeof OriginInputSchema>
 
 export const OriginBulkSchema = bulkOf(OriginInputSchema)
 
-/** One machine query: what was asked and where. The database stamps when it ran. */
+/**
+ * One machine query: what was asked and where. The database stamps when it ran. There is no
+ * bulk form on purpose: recording one search run is not a collection operation.
+ */
 export const SearchRunInputSchema = z.strictObject({
   query: line,
   source: line,
 })
 
 export type SearchRunInput = z.infer<typeof SearchRunInputSchema>
-
-export const SearchRunBulkSchema = bulkOf(SearchRunInputSchema)
 
 /**
  * Tying an existing touch to a position. Both ids are required: the touch is named, not

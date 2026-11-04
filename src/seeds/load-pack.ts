@@ -84,18 +84,48 @@ export async function loadPack(path: string, db: PackDb = getDb()): Promise<Load
   })
 }
 
-if (import.meta.main) {
-  const path = process.argv[2]
+/** Where `main` prints: the two streams, as functions, so a test can read what was said. */
+export type PackIo = {
+  write(text: string): void
+  writeError(text: string): void
+}
+
+const realIo: PackIo = {
+  write: (text) => void process.stdout.write(text),
+  writeError: (text) => void process.stderr.write(text),
+}
+
+/** The conventional exit code for a command used wrongly. */
+const USAGE_EXIT_CODE = 2
+
+/**
+ * `bun run seed:pack <path>`: loads the pack and says what it made, and returns the exit code
+ * (0 loaded, 1 refused or failed, 2 no path given). It prints through `io` and not `console`,
+ * the same shape as `src/auth/set-api-key.ts`, and `load` is a parameter so a test needs no database.
+ */
+export async function main(
+  argv: readonly string[],
+  io: PackIo = realIo,
+  load: (path: string) => Promise<LoadResult> = loadPack,
+): Promise<number> {
+  const path = argv[0]
   if (!path) {
-    console.error('Usage: bun run seed:pack <path-to-pack.json>')
-    process.exit(2)
+    io.writeError('Usage: bun run seed:pack <path-to-pack.json>\n')
+    return USAGE_EXIT_CODE
   }
   try {
-    const { criteriaSetId, requirementCount } = await loadPack(path)
-    console.log(`Loaded criteria set ${criteriaSetId} with ${requirementCount} requirements.`)
+    const { criteriaSetId, requirementCount } = await load(path)
+    io.write(`Loaded criteria set ${criteriaSetId} with ${requirementCount} requirements.\n`)
+    return 0
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error)
-    process.exitCode = 1
+    io.writeError(`${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
+  }
+}
+
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2))
   } finally {
     await closeDb()
   }

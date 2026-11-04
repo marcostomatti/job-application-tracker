@@ -23,7 +23,6 @@ import { firstTouch } from '../../src/provenance/first-touch.ts'
 import {
   OriginBulkSchema,
   OriginInputSchema,
-  SearchRunBulkSchema,
   SearchRunInputSchema,
 } from '../../src/schemas/provenance.ts'
 import { thrownBy } from '../data/rolled-back.ts'
@@ -534,6 +533,5 @@ describe('the provenance input schemas', () => {
   test('the bulk forms take a bounded, non-empty list', () => {
     expect(OriginBulkSchema.safeParse({ items: [] }).success).toBe(false)
     expect(OriginBulkSchema.safeParse({ items: [{ touchedOn: '2026-01-05' }] }).success).toBe(true)
-    expect(SearchRunBulkSchema.safeParse({ items: [{ query: 'q', source: 's' }] }).success).toBe(true)
   })
 })

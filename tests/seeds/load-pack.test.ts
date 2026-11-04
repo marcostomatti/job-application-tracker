@@ -15,7 +15,7 @@ import {
 import { layer } from '../../src/data/schema/registries.ts'
 import { VanillaPackSchema } from '../../src/schemas/scoring.ts'
 import { scoreAgainstSet } from '../../src/scoring/score-against-set.ts'
-import { PackCarriesJudgementError, loadPack } from '../../src/seeds/load-pack.ts'
+import { PackCarriesJudgementError, loadPack, main } from '../../src/seeds/load-pack.ts'
 import { rolledBack, thrownBy, type Tx } from '../data/rolled-back.ts'
 
 const VANILLA_DIR = join(import.meta.dir, '..', '..', 'seeds', 'vanilla')
@@ -335,5 +335,46 @@ describe('loadPack', () => {
     expect(result.floor).toBeNull()
     expect(result.ceiling).toBeNull()
     expect(result.recommendApply).toBe(false)
+  })
+})
+
+describe('the seed:pack command', () => {
+  /** An io that keeps what was printed, one list per stream. */
+  function recorder(): { io: { write(text: string): void; writeError(text: string): void }; out: string[]; err: string[] } {
+    const out: string[] = []
+    const err: string[] = []
+    return { io: { write: (text) => void out.push(text), writeError: (text) => void err.push(text) }, out, err }
+  }
+
+  test('prints what it loaded through the io it is given, and exits 0', async () => {
+    const { io, out, err } = recorder()
+
+    const code = await main(['pack.json'], io, async () => ({ criteriaSetId: 7, requirementCount: 3 }))
+
+    expect(code).toBe(0)
+    expect(out).toEqual(['Loaded criteria set 7 with 3 requirements.\n'])
+    expect(err).toEqual([])
+  })
+
+  test('says how it is used and exits 2 when no path is given', async () => {
+    const { io, out, err } = recorder()
+
+    const code = await main([], io, async () => ({ criteriaSetId: 1, requirementCount: 1 }))
+
+    expect(code).toBe(2)
+    expect(out).toEqual([])
+    expect(err.join('')).toContain('Usage: bun run seed:pack')
+  })
+
+  test('reports a refusal on the error stream and exits 1', async () => {
+    const { io, out, err } = recorder()
+
+    const code = await main(['pack.json'], io, async () => {
+      throw new Error('the pack carries a weight')
+    })
+
+    expect(code).toBe(1)
+    expect(out).toEqual([])
+    expect(err).toEqual(['the pack carries a weight\n'])
   })
 })
