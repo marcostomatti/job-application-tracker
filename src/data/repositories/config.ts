@@ -1,5 +1,4 @@
 import { eq, sql } from 'drizzle-orm'
-import { createLogger } from '@open-tomato/service-logger'
 
 import {
   BackupSettingsSchema,
@@ -9,6 +8,8 @@ import {
   type BackupSettingsPatch,
   type CriteriaMode,
 } from '../../schemas/config.ts'
+import { isRecord } from '../../guards.ts'
+import { lazyLogger, type Log } from '../../logging.ts'
 import { appConfig } from '../schema/config.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
@@ -23,15 +24,10 @@ const BACKUP_KEY = 'backup'
  * production caller passes its own or takes the module's. The `service-logger` `Logger`
  * satisfies this.
  */
-export type FallbackLog = { warn(context: object, message: string): void }
-
-let cachedLogger: FallbackLog | undefined
+export type FallbackLog = Pick<Log, 'warn'>
 
 /** The module's own logger, made on first use so importing this file starts no logger. */
-function defaultLogger(): FallbackLog {
-  cachedLogger ??= createLogger('app-config')
-  return cachedLogger
-}
+const defaultLogger = lazyLogger('app-config')
 
 /**
  * Backups on, one dump kept (each replaces the last rather than accumulating) and a
@@ -101,10 +97,6 @@ function readField<K extends keyof BackupSettings>(stored: Readonly<Record<strin
   return parsed.success
     ? { value: parsed.data as BackupSettings[K], valid: true }
     : { value: BACKUP_DEFAULTS[key], valid: false }
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**

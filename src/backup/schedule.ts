@@ -2,11 +2,11 @@ import { readdir, rm, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 import { createDependency } from '@open-tomato/service-express'
-import { createLogger } from '@open-tomato/service-logger'
 
 import { closeDb, getDb, MissingDatabaseUrlError } from '../data/client.ts'
 import { readBackupSettings } from '../data/repositories/config.ts'
 import type { Db } from '../data/repositories/db.ts'
+import { lazyLogger, type Log } from '../logging.ts'
 import type { BackupSettings } from '../schemas/config.ts'
 import { BackupDumpError, createBunSpawner, runDump, type Spawner } from './dump.ts'
 import { isBackupFileName, isPartialFileName, parseBackupTime, planRetention, type BackupFile } from './retention.ts'
@@ -33,11 +33,7 @@ const STALE_PARTIAL_MS = 3_600_000
 const CHECK_EVERY_MS = 3_600_000
 
 /** What the schedule logs with. The `service-logger` `Logger` satisfies this. */
-export type BackupLog = {
-  info(context: object, message: string): void
-  warn(context: object, message: string): void
-  error(context: object, message: string): void
-}
+export type BackupLog = Log
 
 /** The timer calls the schedule makes, so a test can see them and run a tick by hand. */
 export type BackupTimers = {
@@ -67,12 +63,7 @@ export type BackupWiring = Omit<BackupScheduleOptions, 'db' | 'outDir'> & {
 
 export type BackupResult = { readonly path: string; readonly dropped: number }
 
-let cachedLogger: BackupLog | undefined
-
-function defaultLogger(): BackupLog {
-  cachedLogger ??= createLogger('backup')
-  return cachedLogger
-}
+const defaultLogger = lazyLogger('backup')
 
 const realTimers: BackupTimers = {
   setInterval: (run, ms) => {
@@ -88,7 +79,7 @@ const realTimers: BackupTimers = {
  * Any other error is reduced to its class name, because a driver or file-system message can
  * carry an address, a path or a SQL fragment.
  */
-function describeError(error: unknown): string {
+function describeFailure(error: unknown): string {
   if (error instanceof BackupDumpError) return error.message
   return error instanceof Error ? `unexpected ${error.name}` : 'unexpected failure'
 }
@@ -120,7 +111,7 @@ async function removeDropped(outDir: string, drop: readonly BackupFile[], log: B
         await rm(join(outDir, name))
         return 1
       } catch (error: unknown) {
-        log.warn({ file: name, reason: describeError(error) }, 'an old backup could not be removed')
+        log.warn({ file: name, reason: describeFailure(error) }, 'an old backup could not be removed')
         return 0
       }
     }),
@@ -138,7 +129,7 @@ async function sweepStalePartials(outDir: string, now: Date, log: BackupLog): Pr
   try {
     names = (await entriesOf(outDir)).filter(isPartialFileName)
   } catch (error: unknown) {
-    log.warn({ reason: describeError(error) }, 'the backup directory could not be read for stale partials')
+    log.warn({ reason: describeFailure(error) }, 'the backup directory could not be read for stale partials')
     return
   }
   const swept = await Promise.all(
@@ -149,7 +140,7 @@ async function sweepStalePartials(outDir: string, now: Date, log: BackupLog): Pr
         await rm(join(outDir, name), { force: true })
         return 1
       } catch (error: unknown) {
-        log.warn({ file: name, reason: describeError(error) }, 'a stale partial backup could not be removed')
+        log.warn({ file: name, reason: describeFailure(error) }, 'a stale partial backup could not be removed')
         return 0
       }
     }),
@@ -212,7 +203,7 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
   // database is fine, and a backup nobody wanted is a gitignored 0600 file on the user's own
   // disk, while a silently missing backup is data loss found at the worst moment.
   const settings = await readBackupSettings(opts.db, log).catch((error: unknown) => {
-    log.error({ reason: describeError(error) }, 'backup settings could not be read; the schedule starts and will try again at each check')
+    log.error({ reason: describeFailure(error) }, 'backup settings could not be read; the schedule starts and will try again at each check')
     return undefined
   })
   if (settings !== undefined && !settings.enabled) {
@@ -231,7 +222,7 @@ export async function startBackupSchedule(opts: BackupScheduleOptions): Promise<
       const result = await dumpAndPrune(opts, current)
       log.info({ file: basename(result.path), dropped: result.dropped }, 'backup written')
     } catch (error: unknown) {
-      log.error({ reason: describeError(error) }, 'backup failed')
+      log.error({ reason: describeFailure(error) }, 'backup failed')
     }
   }
   const enqueue = (preloaded?: BackupSettings): Promise<void> => {
@@ -283,7 +274,7 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(`wrote ${basename(result.path)} to backups/ (${result.dropped} older removed)\n`)
     return 0
   } catch (error: unknown) {
-    const reason = error instanceof MissingDatabaseUrlError ? error.message : describeError(error)
+    const reason = error instanceof MissingDatabaseUrlError ? error.message : describeFailure(error)
     process.stderr.write(`backup failed: ${reason}\n`)
     return 1
   } finally {

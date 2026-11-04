@@ -1,21 +1,16 @@
-import { createLogger } from '@open-tomato/service-logger'
 import type { RequestHandler } from 'express'
 
+import { lazyLogger, type Log } from '../logging.ts'
 import { verifyApiKey } from './api-key.ts'
 
 /**
  * Where the 503 for a missing key is reported. A caller can pass a spy to observe it; the
  * `service-logger` `Logger` satisfies this.
  */
-export type AuthLog = { error(context: object, message: string): void }
-
-let cachedLogger: AuthLog | undefined
+export type AuthLog = Pick<Log, 'error'>
 
 /** The module's own logger, made on first use so importing this file starts no logger. */
-function defaultLogger(): AuthLog {
-  cachedLogger ??= createLogger('auth')
-  return cachedLogger
-}
+const defaultLogger = lazyLogger('auth')
 
 /**
  * The two bodies this middleware sends, in the envelope every `/api` route uses

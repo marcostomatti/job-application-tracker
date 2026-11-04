@@ -1,9 +1,10 @@
-import { createLogger } from '@open-tomato/service-logger'
 import type { Request, RequestHandler, Response } from 'express'
 import { z, ZodError, type ZodType } from 'zod'
 
 import type { Db } from '../data/repositories/db.ts'
 import { statusFor } from '../errors.ts'
+import { isRecord } from '../guards.ts'
+import { lazyLogger } from '../logging.ts'
 import { describeError } from '../mcp/result.ts'
 
 const STATUS_BAD_REQUEST = 400
@@ -23,18 +24,8 @@ export interface JsonHandlerOptions<P extends PathOnlySchemas> {
   readonly pathOnly: P
 }
 
-let cachedLogger: { error(context: object, message: string): void } | undefined
-
 /** The module's own logger, made on first use so importing this file starts no logger. */
-function logger(): { error(context: object, message: string): void } {
-  cachedLogger ??= createLogger('http')
-  return cachedLogger
-}
-
-/** A plain object, which is what a JSON body must be for its fields to be merged. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+const logger = lazyLogger('http')
 
 /** A refusal of the caller's input that names one field, or the whole request when `field` is absent. */
 export function inputError(message: string, field?: string): ZodError {
