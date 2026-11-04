@@ -20,7 +20,7 @@ describe('ALL_TOOLS', () => {
   })
 
   test('ALL_TOOLS covers groups 1 to 9 of the spec', () => {
-    expect(ALL_TOOLS.length).toBe(49)
+    expect(ALL_TOOLS.length).toBe(55)
   })
 
   test('every tool has a non-empty title and description', () => {

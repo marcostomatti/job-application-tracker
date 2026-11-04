@@ -11,6 +11,7 @@ import { origin } from '../schema/provenance.ts'
 import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReason, stage as stageTable } from '../schema/registries.ts'
 import { postingPenalty, postingRating, postingScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
+import { readQuestionsOf, type PostingQuestion } from './questions.ts'
 import { nonSupersededSetIds } from './criteria.ts'
 import type { Db } from './db.ts'
 import { isItemFault } from './item-fault.ts'
@@ -74,6 +75,7 @@ export type PostingDetail = {
   readonly scores: readonly ScoreDetail[]
   readonly dispositions: readonly DispositionDetail[]
   readonly origins: readonly OriginDetail[]
+  readonly questions: readonly PostingQuestion[]
 }
 
 /**
@@ -355,12 +357,12 @@ async function readOrigins(db: Db, postingId: number): Promise<OriginDetail[]> {
  * The detail modal's read: the posting with its company, its summary, its latest stage
  * event, the latest score under each criteria set that is not superseded (the same sets
  * `getBestScores` keeps, so the modal and the "+n" chip count the same lenses), its
- * dispositions and its origins. Every
+ * dispositions, its origins and its questions. Every
  * registry label is read whatever its archival state, so nothing renders blank.
  */
 export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
   const row = await readPostingRow(db, id)
-  const [company, references, summary, latestStage, scores, dispositions, origins] = await Promise.all([
+  const [company, references, summary, latestStage, scores, dispositions, origins, questions] = await Promise.all([
     findCompany(db, row.companyId),
     readReferences(db, row),
     findSummary(db, id),
@@ -368,8 +370,9 @@ export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
     readLatestScores(db, id),
     readDispositions(db, id),
     readOrigins(db, id),
+    readQuestionsOf(db, id),
   ])
-  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins }
+  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins, questions }
 }
 
 /**

@@ -71,7 +71,7 @@ export const postingTools: ToolDefinition[] = [
     title: 'Get one posting in full',
     description:
       'Returns everything known about ONE posting, by id: the posting, its company, the registry rows it references, its summary, ' +
-      'its latest stage, every score with its ratings and penalties, its set-aside or rejection records and where it was found. ' +
+      'its latest stage, every score with its ratings and penalties, its set-aside or rejection records, where it was found and the questions asked about it. ' +
       'Use this for the detail view of a posting whose id you already have; to find postings by company, phase or recommendation, use posting_search, which returns one lighter row each. ' +
       'An unknown id is a not-found error. ' +
       'Give scale (stars, percent or basic) to read each score\'s overall, floor and ceiling on that scale instead of 0..1; ratings, penalties and recommendApply stay as stored.',

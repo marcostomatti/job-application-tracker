@@ -49,11 +49,24 @@ export type TextUpdateInput = z.infer<typeof TextUpdateSchema>
 /**
  * Which texts to list: by default the latest version of each label, and with
  * `includeHistory` every version of the labels that match. `textTypeId` is judged on the
- * latest version of a label, because that is the type the text has now.
+ * latest version of a label, because that is the type the text has now. With `postingId`, the
+ * list is exactly the versions linked to that posting, so `includeHistory` changes nothing there.
  */
 export const TextQuerySchema = z.strictObject({
   textTypeId: IdSchema.optional(),
   includeHistory: booleanOrText.optional(),
+  postingId: IdSchema.optional(),
 })
 
 export type TextQuery = z.infer<typeof TextQuerySchema>
+
+/** One version of a text, by its row id, and the posting it was used for. */
+export const TextLinkInputSchema = z.strictObject({
+  textAssetId: IdSchema,
+  postingId: IdSchema,
+})
+
+export type TextLinkInput = z.infer<typeof TextLinkInputSchema>
+
+/** Up to `BULK_MAX` links, all or none. */
+export const TextLinkBulkSchema = bulkOf(TextLinkInputSchema)

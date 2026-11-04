@@ -1,5 +1,6 @@
-import { integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
+import { posting } from './postings.ts'
 import { textType } from './registries.ts'
 
 /** The unique index on `(label, version)`, named once so the repository can recognise its violation. */
@@ -27,4 +28,27 @@ export const textAsset = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex(LABEL_VERSION_INDEX).on(table.label, table.version)],
+)
+
+/**
+ * Which version of a text was used for which posting (spec section 7.8). A link names the
+ * version row, because that is the wording that was sent; a later edit writes a new row and
+ * leaves the link where it was. The key is the pair, so a posting links one version once. The key
+ * leads with the text, so the posting side has an index of its own for `text_list` by posting.
+ */
+export const textAssetPosting = pgTable(
+  'text_asset_posting',
+  {
+    textAssetId: integer('text_asset_id')
+      .notNull()
+      .references(() => textAsset.id),
+    postingId: integer('posting_id')
+      .notNull()
+      .references(() => posting.id),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.textAssetId, table.postingId] }),
+    index('text_asset_posting_posting_idx').on(table.postingId),
+  ],
 )
