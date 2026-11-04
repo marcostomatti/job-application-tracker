@@ -1,17 +1,17 @@
 import { and, desc, eq, lt, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import { ConflictError, NotFoundError } from '../../errors.ts'
+import { ConflictError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
 import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/discriminators.ts'
 import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePostingInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
-import { posting } from '../schema/postings.ts'
 import { postingPenalty, postingRating, postingRatingDetour, postingScore } from '../schema/scores.ts'
 import { findUsableCriteriaSet, getRequirements, nonSupersededSetIds, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
 import type { Db } from './db.ts'
+import { assertPostingExists } from './posting-exists.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived } from './registries.ts'
 
@@ -55,11 +55,6 @@ type ScoreValues = Pick<NewScore, (typeof SCORE_COLUMNS)[number]>
 
 const limiterRequirement = alias(requirement, 'limiter_requirement')
 const runnerUpRequirement = alias(requirement, 'runner_up_requirement')
-
-async function assertPostingExists(db: Db, postingId: number): Promise<void> {
-  const [found] = await db.select({ id: posting.id }).from(posting).where(eq(posting.id, postingId))
-  if (!found) throw new NotFoundError('posting', postingId)
-}
 
 /** The stored kind as the discriminator the scoring function reads. The table's CHECK allows nothing else, so a miss is a broken invariant. */
 function narrowKind(kind: string): RequirementKind {

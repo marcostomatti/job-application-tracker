@@ -4,10 +4,10 @@ import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Origin } from '../../entities/provenance.ts'
 import type { OriginInput, SearchRunInput } from '../../schemas/provenance.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
-import { posting } from '../schema/postings.ts'
 import { origin, postingFirstTouch, searchRun } from '../schema/provenance.ts'
 import { route } from '../schema/registries.ts'
 import type { Db } from './db.ts'
+import { assertPostingExists } from './posting-exists.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived } from './registries.ts'
 
@@ -56,12 +56,6 @@ function missingRow(
     }
   }
   return null
-}
-
-/** Reports a posting that is not there, so "no such posting" and "no origins yet" stay different answers. */
-async function assertPostingExists(db: Db, postingId: number): Promise<void> {
-  const [found] = await db.select({ id: posting.id }).from(posting).where(eq(posting.id, postingId))
-  if (!found) throw new NotFoundError('posting', postingId)
 }
 
 /**
