@@ -7,7 +7,7 @@
  * the backup wiring) is in `server.test.ts`.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -326,8 +326,11 @@ describe('the service with a login and no API_KEY', () => {
   }, PROCESS_TIMEOUT)
 
   test('a reload on an app path gets the page, not a 404', async () => {
-    const bundle = await mkdtemp(join(tmpdir(), 'web-dist-'))
+    // Under a dot-folder, as a clone in `.claude/worktrees` is, which `send` refuses by default.
+    const parent = await mkdtemp(join(tmpdir(), 'web-dist-'))
+    const bundle = join(parent, '.hidden', 'dist')
     try {
+      await mkdir(bundle, { recursive: true })
       await writeFile(join(bundle, 'index.html'), '<title>tracker app</title>')
       const service = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: bundle })
 
@@ -338,7 +341,7 @@ describe('the service with a login and no API_KEY', () => {
       expect(page.status).toBe(200)
       expect(body).toContain('tracker app')
     } finally {
-      await rm(bundle, { recursive: true, force: true })
+      await rm(parent, { recursive: true, force: true })
     }
   }, PROCESS_TIMEOUT)
 })

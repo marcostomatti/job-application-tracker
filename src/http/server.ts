@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 import { createDependency, createService, type ServiceHandle } from '@open-tomato/service-express'
 import { createLogger } from '@open-tomato/service-logger'
@@ -183,7 +183,9 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
       if (existsSync(webDist)) {
         app.use(express.static(webDist))
         // The app routes in the browser, so a reload on /tokens or /stats gets the page and not a 404.
-        app.get(APP_PATHS, (_req, res) => res.sendFile(join(webDist, 'index.html')))
+        // The bundle directory is the `root`, not part of the path: `send` refuses a path with a
+        // dot-folder in it (a clone under `.claude/worktrees`, say) and would answer 404.
+        app.get(APP_PATHS, (_req, res) => res.sendFile('index.html', { root: webDist }))
       } else {
         logger.info({ webDist: 'absent' }, 'no web bundle found; serving the API only')
       }
