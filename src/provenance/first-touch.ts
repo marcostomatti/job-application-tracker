@@ -13,9 +13,9 @@ function byTouchOrder(a: Origin, b: Origin): number {
 }
 
 /**
- * The origin that first reached a position, or null when none has. It is derived on every
+ * The origin that first reached a posting, or null when none has. It is derived on every
  * call and never stored, so a conversation remembered later and entered with an earlier
- * `touchedOn` takes over without any row being edited. The SQL view `position_first_touch`
+ * `touchedOn` takes over without any row being edited. The SQL view `posting_first_touch`
  * applies the same rule; a test compares the two.
  *
  * An origin dated after `today` is skipped, because `touchedOn` is typed by hand and a

@@ -7,8 +7,8 @@ import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { criteriaSet, detour, requirement } from '../../src/data/schema/criteria.ts'
 import { penaltyKind } from '../../src/data/schema/registries.ts'
-import { company, position } from '../../src/data/schema/positions.ts'
-import { positionPenalty, positionRating, positionScore } from '../../src/data/schema/scores.ts'
+import { company, posting } from '../../src/data/schema/postings.ts'
+import { postingPenalty, postingRating, postingScore } from '../../src/data/schema/scores.ts'
 import { DetourSchema, PenaltySchema, RatingSchema } from '../../src/schemas/scoring.ts'
 import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-back.ts'
 
@@ -19,16 +19,16 @@ afterAll(async () => {
   await closeDb()
 })
 
-/** A company, a position and a criteria set with one requirement, all unique to this call. */
+/** A company, a posting and a criteria set with one requirement, all unique to this call. */
 async function seed(tx: Tx, token: string, setVersion = 1) {
   const [owner] = await tx
     .insert(company)
     .values({ name: `test-co-${token}`, nameNorm: `test-co-${token}` })
     .returning()
   const [role] = await tx
-    .insert(position)
+    .insert(posting)
     .values({
-      positionKey: `test-position-${token}`,
+      postingKey: `test-posting-${token}`,
       companyId: owner?.id as number,
       roleTitle: 'Role',
       roleNorm: 'role',
@@ -43,16 +43,16 @@ async function seed(tx: Tx, token: string, setVersion = 1) {
     .values({ criteriaSetId: set?.id as number, key: 'first', label: 'First', anchors: ANCHORS })
     .returning()
   return {
-    positionId: role?.id as number,
+    postingId: role?.id as number,
     setId: set?.id as number,
     requirementId: req?.id as number,
   }
 }
 
-async function insertScore(tx: Tx, positionId: number, criteriaSetId: number, scoredAt?: string) {
+async function insertScore(tx: Tx, postingId: number, criteriaSetId: number, scoredAt?: string) {
   const [score] = await tx
-    .insert(positionScore)
-    .values({ positionId, criteriaSetId, ...(scoredAt ? { scoredAt } : {}) })
+    .insert(postingScore)
+    .values({ postingId, criteriaSetId, ...(scoredAt ? { scoredAt } : {}) })
     .returning()
   return score as NonNullable<typeof score>
 }
@@ -62,16 +62,16 @@ describe('scores, ratings and penalties', () => {
     // Arrange / Act: a requirement added after the score exists, with no schema change
     const stored = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
-      await tx.insert(positionRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: 0.5 })
+      const score = await insertScore(tx, ids.postingId, ids.setId)
+      await tx.insert(postingRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: 0.5 })
       const [added] = await tx
         .insert(requirement)
         .values({ criteriaSetId: ids.setId, key: 'added-later', label: 'Added later', anchors: ANCHORS })
         .returning()
       await tx
-        .insert(positionRating)
+        .insert(postingRating)
         .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: added?.id as number, coverage: 1, evidence: 'stated in the posting' })
-      const rows = await tx.select().from(positionRating).where(eq(positionRating.scoreId, score.id))
+      const rows = await tx.select().from(postingRating).where(eq(postingRating.scoreId, score.id))
       return { rows, addedId: added?.id }
     })
 
@@ -84,17 +84,17 @@ describe('scores, ratings and penalties', () => {
     // Arrange / Act
     const { unrated, zero } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const [second] = await tx
         .insert(requirement)
         .values({ criteriaSetId: ids.setId, key: 'second', label: 'Second', anchors: ANCHORS })
         .returning()
       const [unrated] = await tx
-        .insert(positionRating)
+        .insert(postingRating)
         .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: null })
         .returning()
       const [zero] = await tx
-        .insert(positionRating)
+        .insert(postingRating)
         .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: second?.id as number, coverage: 0 })
         .returning()
       return { unrated, zero }
@@ -110,14 +110,14 @@ describe('scores, ratings and penalties', () => {
     // Arrange / Act
     const outcome = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const tryCoverage = async (key: string, coverage: number) => {
         const [req] = await tx
           .insert(requirement)
           .values({ criteriaSetId: ids.setId, key, label: key, anchors: ANCHORS })
           .returning()
         return thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: req?.id as number, coverage }),
+          inner.insert(postingRating).values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: req?.id as number, coverage }),
         )
       }
       return {
@@ -129,8 +129,8 @@ describe('scores, ratings and penalties', () => {
     })
 
     // Assert
-    expect(violationText(outcome.tooHigh)).toContain('position_rating_coverage_check')
-    expect(violationText(outcome.negative)).toContain('position_rating_coverage_check')
+    expect(violationText(outcome.tooHigh)).toContain('posting_rating_coverage_check')
+    expect(violationText(outcome.negative)).toContain('posting_rating_coverage_check')
     expect(outcome.lowerEdge).toBeUndefined()
     expect(outcome.upperEdge).toBeUndefined()
   })
@@ -139,25 +139,25 @@ describe('scores, ratings and penalties', () => {
     // Arrange / Act
     const outcome = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const kinds = await tx
         .insert(penaltyKind)
         .values([{ label: `test-kind-a-${token}` }, { label: `test-kind-b-${token}` }, { label: `test-kind-c-${token}` }])
         .returning()
       const attempt = (index: number, amount: number) =>
         thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kinds[index]?.id as number, amount }),
+          inner.insert(postingPenalty).values({ scoreId: score.id, penaltyKindId: kinds[index]?.id as number, amount }),
         )
       return { positive: await attempt(0, 0.1), negative: await attempt(1, -0.25), zero: await attempt(2, 0) }
     })
 
     // Assert: a penalty only ever takes points off
-    expect(violationText(outcome.positive)).toContain('position_penalty_amount_check')
+    expect(violationText(outcome.positive)).toContain('posting_penalty_amount_check')
     expect(outcome.negative).toBeUndefined()
     expect(outcome.zero).toBeUndefined()
   })
 
-  test('one position holds scores against several criteria sets', async () => {
+  test('one posting holds scores against several criteria sets', async () => {
     // Arrange / Act
     const rows = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
@@ -165,33 +165,33 @@ describe('scores, ratings and penalties', () => {
         .insert(criteriaSet)
         .values({ name: `test-set-${token}`, version: 2 })
         .returning()
-      await insertScore(tx, ids.positionId, ids.setId)
-      await insertScore(tx, ids.positionId, otherSet?.id as number)
-      return tx.select().from(positionScore).where(eq(positionScore.positionId, ids.positionId))
+      await insertScore(tx, ids.postingId, ids.setId)
+      await insertScore(tx, ids.postingId, otherSet?.id as number)
+      return tx.select().from(postingScore).where(eq(postingScore.postingId, ids.postingId))
     })
 
-    // Assert: same position and same day, different sets, so both rows stand
+    // Assert: same posting and same day, different sets, so both rows stand
     expect(rows).toHaveLength(2)
     expect(new Set(rows.map((row) => row.criteriaSetId)).size).toBe(2)
   })
 
-  test('re-scoring the same position and set on the same day is a no-op', async () => {
+  test('re-scoring the same posting and set on the same day is a no-op', async () => {
     // Arrange / Act
     const { duplicate, noOp, nextDay, rows } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      await insertScore(tx, ids.positionId, ids.setId, '2026-01-10')
-      const base = { positionId: ids.positionId, criteriaSetId: ids.setId, scoredAt: '2026-01-10' }
-      const duplicate = await thrownInSavepoint(tx, (inner) => inner.insert(positionScore).values(base))
-      const noOp = await tx.insert(positionScore).values(base).onConflictDoNothing().returning()
+      await insertScore(tx, ids.postingId, ids.setId, '2026-01-10')
+      const base = { postingId: ids.postingId, criteriaSetId: ids.setId, scoredAt: '2026-01-10' }
+      const duplicate = await thrownInSavepoint(tx, (inner) => inner.insert(postingScore).values(base))
+      const noOp = await tx.insert(postingScore).values(base).onConflictDoNothing().returning()
       const nextDay = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionScore).values({ ...base, scoredAt: '2026-01-11', isRescore: true }),
+        inner.insert(postingScore).values({ ...base, scoredAt: '2026-01-11', isRescore: true }),
       )
-      const rows = await tx.select().from(positionScore).where(eq(positionScore.positionId, ids.positionId))
+      const rows = await tx.select().from(postingScore).where(eq(postingScore.postingId, ids.postingId))
       return { duplicate, noOp, nextDay, rows }
     })
 
     // Assert: the same-day insert collides; a genuine re-score on another day is a new row
-    expect(violationText(duplicate)).toContain('position_score_position_set_day_unique')
+    expect(violationText(duplicate)).toContain('posting_score_posting_set_day_unique')
     expect(noOp).toEqual([])
     expect(nextDay).toBeUndefined()
     expect(rows).toHaveLength(2)
@@ -201,7 +201,7 @@ describe('scores, ratings and penalties', () => {
     // Arrange / Act
     const score = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      return insertScore(tx, ids.positionId, ids.setId)
+      return insertScore(tx, ids.postingId, ids.setId)
     })
 
     // Assert: a bare score row claims nothing about its limiter or its recommendation
@@ -241,10 +241,10 @@ describe('a score only holds what belongs to its own criteria set', () => {
     const outcome = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const other = await otherSetRequirement(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const rate = (criteriaSetId: number, requirementId: number) =>
         thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionRating).values({ scoreId: score.id, criteriaSetId, requirementId, coverage: 1 }),
+          inner.insert(postingRating).values({ scoreId: score.id, criteriaSetId, requirementId, coverage: 1 }),
         )
       return {
         // Claims its own set, but the requirement lives in the other one
@@ -256,8 +256,8 @@ describe('a score only holds what belongs to its own criteria set', () => {
     })
 
     // Assert: both halves of the pair are enforced, and the matching case is unaffected
-    expect(violationText(outcome.wrongRequirement)).toContain('position_rating_set_requirement_fk')
-    expect(violationText(outcome.wrongScore)).toContain('position_rating_score_set_fk')
+    expect(violationText(outcome.wrongRequirement)).toContain('posting_rating_set_requirement_fk')
+    expect(violationText(outcome.wrongScore)).toContain('posting_rating_score_set_fk')
     expect(outcome.correct).toBeUndefined()
   })
 
@@ -266,9 +266,9 @@ describe('a score only holds what belongs to its own criteria set', () => {
     const outcome = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const other = await otherSetRequirement(tx, token)
-      const base = { positionId: ids.positionId, criteriaSetId: ids.setId }
+      const base = { postingId: ids.postingId, criteriaSetId: ids.setId }
       const attempt = (day: string, extra: { limiterRequirementId?: number; runnerUpRequirementId?: number }) =>
-        thrownInSavepoint(tx, (inner) => inner.insert(positionScore).values({ ...base, scoredAt: day, ...extra }))
+        thrownInSavepoint(tx, (inner) => inner.insert(postingScore).values({ ...base, scoredAt: day, ...extra }))
       return {
         limiter: await attempt('2026-02-01', { limiterRequirementId: other.otherRequirementId }),
         runnerUp: await attempt('2026-02-02', { runnerUpRequirementId: other.otherRequirementId }),
@@ -280,8 +280,8 @@ describe('a score only holds what belongs to its own criteria set', () => {
     })
 
     // Assert: a limiter naming a requirement outside the scored set would be a wrong answer with no error
-    expect(violationText(outcome.limiter)).toContain('position_score_limiter_set_fk')
-    expect(violationText(outcome.runnerUp)).toContain('position_score_runner_up_set_fk')
+    expect(violationText(outcome.limiter)).toContain('posting_score_limiter_set_fk')
+    expect(violationText(outcome.runnerUp)).toContain('posting_score_runner_up_set_fk')
     expect(outcome.own).toBeUndefined()
   })
 
@@ -289,17 +289,17 @@ describe('a score only holds what belongs to its own criteria set', () => {
     // Arrange / Act
     const outcome = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const [kind] = await tx.insert(penaltyKind).values({ label: `test-kind-${token}` }).returning()
       const kindId = kind?.id as number
       const missing = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionPenalty).values({ scoreId: score.id, amount: -0.1 } as never),
+        inner.insert(postingPenalty).values({ scoreId: score.id, amount: -0.1 } as never),
       )
       const first = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.1 }),
+        inner.insert(postingPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.1 }),
       )
       const again = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.2 }),
+        inner.insert(postingPenalty).values({ scoreId: score.id, penaltyKindId: kindId, amount: -0.2 }),
       )
       return { missing, first, again }
     })
@@ -307,7 +307,7 @@ describe('a score only holds what belongs to its own criteria set', () => {
     // Assert: an empty registry means no penalty rows, not penalty rows without a kind
     expect(violationText(outcome.missing)).toContain('penalty_kind_id')
     expect(outcome.first).toBeUndefined()
-    expect(violationText(outcome.again)).toContain('position_penalty_score_kind_unique')
+    expect(violationText(outcome.again)).toContain('posting_penalty_score_kind_unique')
   })
 })
 
@@ -316,11 +316,11 @@ describe('numeric columns read back as numbers', () => {
     // Arrange / Act
     const read = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       await tx
-        .insert(positionRating)
+        .insert(postingRating)
         .values({ scoreId: score.id, criteriaSetId: ids.setId, requirementId: ids.requirementId, coverage: 0.35, confidence: 'supported' })
-      const [rating] = await tx.select().from(positionRating).where(eq(positionRating.scoreId, score.id))
+      const [rating] = await tx.select().from(postingRating).where(eq(postingRating.scoreId, score.id))
       return rating as NonNullable<typeof rating>
     })
 
@@ -336,10 +336,10 @@ describe('numeric columns read back as numbers', () => {
     // Arrange / Act
     const read = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const score = await insertScore(tx, ids.positionId, ids.setId)
+      const score = await insertScore(tx, ids.postingId, ids.setId)
       const [kind] = await tx.insert(penaltyKind).values({ label: `test-kind-${token}` }).returning()
-      await tx.insert(positionPenalty).values({ scoreId: score.id, penaltyKindId: kind?.id as number, amount: -0.25 })
-      const [penalty] = await tx.select().from(positionPenalty).where(eq(positionPenalty.scoreId, score.id))
+      await tx.insert(postingPenalty).values({ scoreId: score.id, penaltyKindId: kind?.id as number, amount: -0.25 })
+      const [penalty] = await tx.select().from(postingPenalty).where(eq(postingPenalty.scoreId, score.id))
       return penalty as NonNullable<typeof penalty>
     })
 
@@ -354,9 +354,9 @@ describe('numeric columns read back as numbers', () => {
     const read = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const [stored] = await tx
-        .insert(positionScore)
+        .insert(postingScore)
         .values({
-          positionId: ids.positionId,
+          postingId: ids.postingId,
           criteriaSetId: ids.setId,
           overall: 0.7,
           floor: 0.1,
@@ -413,7 +413,7 @@ describe('the score tables keep the schema free of vocabulary', () => {
         SELECT table_name, column_name, is_nullable
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name IN ('position_score', 'position_rating', 'position_penalty')`)
+          AND table_name IN ('posting_score', 'posting_rating', 'posting_penalty')`)
       return [...result] as { table_name: string; column_name: string; is_nullable: string }[]
     })
 
@@ -421,9 +421,9 @@ describe('the score tables keep the schema free of vocabulary', () => {
     const names = columns.map((column) => column.column_name)
     expect(names).not.toContain('penalty_fintech')
     expect(names).not.toContain('problem_type')
-    const kind = columns.find((column) => column.table_name === 'position_penalty' && column.column_name === 'penalty_kind_id')
+    const kind = columns.find((column) => column.table_name === 'posting_penalty' && column.column_name === 'penalty_kind_id')
     expect(kind?.is_nullable).toBe('NO')
-    const coverage = columns.find((column) => column.table_name === 'position_rating' && column.column_name === 'coverage')
+    const coverage = columns.find((column) => column.table_name === 'posting_rating' && column.column_name === 'coverage')
     expect(coverage?.is_nullable).toBe('YES')
   })
 })

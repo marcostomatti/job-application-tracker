@@ -1,6 +1,6 @@
-CREATE TABLE "position_penalty" (
+CREATE TABLE "posting_penalty" (
   "id" integer PRIMARY KEY,
   "penaltyFintech" numeric,
-  "isAcmeClient" boolean,
+  "isProptechClient" boolean,
   "icelandicrequired" boolean
 );

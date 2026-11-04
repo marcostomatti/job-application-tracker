@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { date, index, integer, pgTable, pgView, text, timestamp } from 'drizzle-orm/pg-core'
 
-import { position } from './positions.ts'
+import { posting } from './postings.ts'
 import { route } from './registries.ts'
 
 /**
@@ -19,14 +19,14 @@ export const searchRun = pgTable('search_run', {
 
 /**
  * A dated touch through a named route: a query that surfaced a lead, a recruiter's message, a
- * conversation in a corridor. A position reached through several doors has several rows, none
- * merged. Which one counts as first is derived (see `positionFirstTouch`), never stored on a
+ * conversation in a corridor. A posting reached through several doors has several rows, none
+ * merged. Which one counts as first is derived (see `postingFirstTouch`), never stored on a
  * row, so a conversation remembered later and entered with an earlier `touched_on` can take
  * over.
  *
- * `position_id` is nullable so a touch can be logged before any position exists and attached
+ * `posting_id` is nullable so a touch can be logged before any posting exists and attached
  * when it does. `route_id` is nullable because the route registry ships empty. A deleted
- * position leaves its origins behind, unattached, rather than taking the provenance with it.
+ * posting leaves its origins behind, unattached, rather than taking the provenance with it.
  * `touched_on` is user-entered, so a future date is kept as typed and is only ignored when
  * first touch is derived.
  */
@@ -34,7 +34,7 @@ export const origin = pgTable(
   'origin',
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    positionId: integer('position_id').references(() => position.id, { onDelete: 'set null' }),
+    postingId: integer('posting_id').references(() => posting.id, { onDelete: 'set null' }),
     routeId: integer('route_id').references(() => route.id),
     touchedOn: date('touched_on', { mode: 'string' }).notNull(),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
@@ -42,14 +42,14 @@ export const origin = pgTable(
     searchRunId: integer('search_run_id').references(() => searchRun.id),
   },
   (table) => [
-    index('origin_position_touch_idx').on(table.positionId, table.touchedOn, table.recordedAt, table.id),
+    index('origin_posting_touch_idx').on(table.postingId, table.touchedOn, table.recordedAt, table.id),
   ],
 )
 
 /**
- * The origin that first reached each position: the smallest `(touched_on, recorded_at, id)`
+ * The origin that first reached each posting: the smallest `(touched_on, recorded_at, id)`
  * among origins not dated after today. The same rule as `firstTouch` in code, and a test
- * pins that the two agree. An origin with no position has no row here.
+ * pins that the two agree. An origin with no posting has no row here.
  *
  * "Today" is the UTC date, `(now() AT TIME ZONE 'utc')::date`, and never `CURRENT_DATE`:
  * `CURRENT_DATE` follows the session's TimeZone setting, so a database not set to UTC would
@@ -58,15 +58,15 @@ export const origin = pgTable(
  * future-dated typo is filtered a little early or late, and a mistyped day corrects itself
  * the next day anyway.
  */
-export const positionFirstTouch = pgView('position_first_touch').as((qb) =>
+export const postingFirstTouch = pgView('posting_first_touch').as((qb) =>
   qb
-    .selectDistinctOn([origin.positionId], {
-      positionId: origin.positionId,
+    .selectDistinctOn([origin.postingId], {
+      postingId: origin.postingId,
       originId: sql<number>`${origin.id}`.as('origin_id'),
       routeId: origin.routeId,
       touchedOn: origin.touchedOn,
     })
     .from(origin)
-    .where(sql`${origin.positionId} IS NOT NULL AND ${origin.touchedOn} <= (now() AT TIME ZONE 'utc')::date`)
-    .orderBy(origin.positionId, origin.touchedOn, origin.recordedAt, origin.id),
+    .where(sql`${origin.postingId} IS NOT NULL AND ${origin.touchedOn} <= (now() AT TIME ZONE 'utc')::date`)
+    .orderBy(origin.postingId, origin.touchedOn, origin.recordedAt, origin.id),
 )

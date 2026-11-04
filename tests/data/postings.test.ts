@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm'
 
 import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
-import { company, normaliseName, position, positionSummary } from '../../src/data/schema/positions.ts'
+import { company, normaliseName, posting, postingSummary } from '../../src/data/schema/postings.ts'
 import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-back.ts'
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
@@ -44,7 +44,7 @@ async function insertCompany(tx: Tx, name: string) {
 
 function roleValues(companyId: number, token: string, extra: { disambiguator?: string } = {}) {
   return {
-    positionKey: `test-position-${token}-${extra.disambiguator ?? 'none'}`,
+    postingKey: `test-posting-${token}-${extra.disambiguator ?? 'none'}`,
     companyId,
     roleTitle: 'Staff Engineer',
     roleNorm: normaliseName('Staff Engineer'),
@@ -56,7 +56,7 @@ afterAll(async () => {
   await closeDb()
 })
 
-describe('companies, positions, summaries and artefacts', () => {
+describe('companies, postings, summaries and artefacts', () => {
   test('normaliseName folds, lowercases and collapses punctuation', () => {
     // Arrange / Act / Assert: the brief's pair, then accents, which NFKD splits into marks
     expect(normaliseName('Acme  Inc.')).toBe('acme inc')
@@ -106,9 +106,9 @@ describe('companies, positions, summaries and artefacts', () => {
     // Arrange / Act
     const rows = await rolledBack(async (tx, token) => {
       const owner = await insertCompany(tx, `Globex ${token}`)
-      await tx.insert(position).values(roleValues(owner.id, token, { disambiguator: 'platform team' }))
-      await tx.insert(position).values(roleValues(owner.id, token, { disambiguator: 'data team' }))
-      return tx.select().from(position).where(sql`${position.companyId} = ${owner.id}`)
+      await tx.insert(posting).values(roleValues(owner.id, token, { disambiguator: 'platform team' }))
+      await tx.insert(posting).values(roleValues(owner.id, token, { disambiguator: 'data team' }))
+      return tx.select().from(posting).where(sql`${posting.companyId} = ${owner.id}`)
     })
 
     // Assert: scoped to the company this test created
@@ -120,31 +120,31 @@ describe('companies, positions, summaries and artefacts', () => {
     const { blank, named } = await rolledBack(async (tx, token) => {
       const owner = await insertCompany(tx, `Initech ${token}`)
       // The default disambiguator is '' rather than null, because null would make two blanks distinct
-      await tx.insert(position).values({ ...roleValues(owner.id, token), positionKey: `a-${token}` })
-      await tx.insert(position).values({ ...roleValues(owner.id, token, { disambiguator: 'x' }), positionKey: `b-${token}` })
+      await tx.insert(posting).values({ ...roleValues(owner.id, token), postingKey: `a-${token}` })
+      await tx.insert(posting).values({ ...roleValues(owner.id, token, { disambiguator: 'x' }), postingKey: `b-${token}` })
       const blank = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(position).values({ ...roleValues(owner.id, token), positionKey: `c-${token}` }),
+        inner.insert(posting).values({ ...roleValues(owner.id, token), postingKey: `c-${token}` }),
       )
       const named = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(position).values({ ...roleValues(owner.id, token, { disambiguator: 'x' }), positionKey: `d-${token}` }),
+        inner.insert(posting).values({ ...roleValues(owner.id, token, { disambiguator: 'x' }), postingKey: `d-${token}` }),
       )
       return { blank, named }
     })
 
     // Assert
-    expect(violationText(blank)).toContain('position_company_role_disambiguator_unique')
-    expect(violationText(named)).toContain('position_company_role_disambiguator_unique')
+    expect(violationText(blank)).toContain('posting_company_role_disambiguator_unique')
+    expect(violationText(named)).toContain('posting_company_role_disambiguator_unique')
   })
 
-  test('a position summary is one row per position', async () => {
+  test('a posting summary is one row per posting', async () => {
     // Arrange / Act
     const { first, second } = await rolledBack(async (tx, token) => {
       const owner = await insertCompany(tx, `Umbrella ${token}`)
-      const [role] = await tx.insert(position).values(roleValues(owner.id, token)).returning()
-      const summary = { positionId: role?.id as number, condensed: 'the posting, noise stripped', sourceHash: 'h1' }
-      const [first] = await tx.insert(positionSummary).values(summary).returning()
+      const [role] = await tx.insert(posting).values(roleValues(owner.id, token)).returning()
+      const summary = { postingId: role?.id as number, condensed: 'the posting, noise stripped', sourceHash: 'h1' }
+      const [first] = await tx.insert(postingSummary).values(summary).returning()
       const second = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionSummary).values({ ...summary, sourceHash: 'h2' }),
+        inner.insert(postingSummary).values({ ...summary, sourceHash: 'h2' }),
       )
       return { first, second }
     })
@@ -152,7 +152,7 @@ describe('companies, positions, summaries and artefacts', () => {
     // Assert: a repost changes source_hash on the one row; it does not add a second
     expect(first?.stack).toEqual([])
     expect(first?.extra).toEqual({})
-    expect(violationText(second)).toContain('position_summary_pkey')
+    expect(violationText(second)).toContain('posting_summary_pkey')
   })
 
   test('an artefact stores a locator and an access note but no credential column', async () => {
@@ -175,8 +175,20 @@ describe('companies, positions, summaries and artefacts', () => {
   })
 
   test('the migration passes the lint', () => {
-    // Arrange
+    // Arrange: the table was created as position in 0002 and renamed in 0012
     const migration = join(MIGRATIONS_DIR, '0002_positions.sql')
+
+    // Act
+    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
+
+    // Assert: the file must exist, or "no findings" would pass for the wrong reason
+    expect(existsSync(migration)).toBe(true)
+    expect(findings).toEqual([])
+  })
+
+  test('the rename migration passes the lint', () => {
+    // Arrange
+    const migration = join(MIGRATIONS_DIR, '0012_rename_position_to_posting.sql')
 
     // Act
     const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)

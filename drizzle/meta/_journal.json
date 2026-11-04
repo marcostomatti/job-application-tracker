@@ -64,6 +64,34 @@
       "when": 1793709251459,
       "tag": "0008_finite_weights_and_amounts",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793724608681,
+      "tag": "0009_text_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793730062181,
+      "tag": "0010_rating_detour_coverage",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793732342162,
+      "tag": "0011_ordinary_spiral",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793784549893,
+      "tag": "0012_rename_position_to_posting",
+      "breakpoints": true
     }
   ]
 }

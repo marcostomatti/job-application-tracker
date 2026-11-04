@@ -12,11 +12,13 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
+import { ConflictError } from '../../errors.ts'
 import type { DrizzleClient } from '../client.ts'
+import { isUniqueViolation } from '../driver-faults.ts'
 import { layer } from './registries.ts'
 
 /**
- * The versioned unit of scoring. A position's score only means something against
+ * The versioned unit of scoring. A posting's score only means something against
  * the whole set it was scored under, so a new version is a new set, and old
  * versions stay. `applyThreshold` is null until the user sets a bar, which is
  * how a vanilla pack ships. The 0..1 columns use number mode, because the default mode
@@ -75,6 +77,7 @@ export const requirement = pgTable(
     // Redundant as a key (id is already unique); it exists so a rating or a limiter can
     // reference the pair and the database can check the requirement is in the scored set.
     unique('requirement_criteria_set_id_id_unique').on(table.criteriaSetId, table.id),
+    // The members are REQUIREMENT_KINDS (src/schemas/discriminators.ts); tests/data/discriminators.test.ts compares them.
     check('requirement_kind_check', sql`${table.kind} IN ('gate', 'soft')`),
     // A negative weight is ignored by the overall yet still ranked by the limiter.
     // `< 'Infinity'` also rules out NaN, which Postgres orders above every number, so a weight is
@@ -101,10 +104,14 @@ export const detour = pgTable(
     costAmount: numeric('cost_amount'),
     costUnit: text('cost_unit'),
   },
-  (table) => [check('detour_discount_check', sql`${table.discount} >= 0 AND ${table.discount} <= 1`)],
+  (table) => [
+    // Redundant as a key (id is already unique); it exists so a stored detour coverage can
+    // reference the pair and the database can check the detour belongs to the rated requirement.
+    unique('detour_requirement_id_id_unique').on(table.requirementId, table.id),
+    check('detour_discount_check', sql`${table.discount} >= 0 AND ${table.discount} <= 1`),
+  ],
 )
 
-const UNIQUE_VIOLATION = '23505'
 const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'
 
 /**
@@ -112,26 +119,15 @@ const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'
  * class so a retried bulk insert can treat it as a no-op, which it cannot do if
  * the error is indistinguishable from a real failure.
  */
-export class CriteriaSetConflictError extends Error {
+export class CriteriaSetConflictError extends ConflictError {
   constructor(
     readonly setName: string,
     readonly version: number,
     options?: ErrorOptions,
   ) {
-    super(`A criteria set named "${setName}" at version ${version} already exists.`, options)
+    super('criteria set', `"${setName}" at version ${version}`, options)
     this.name = 'CriteriaSetConflictError'
   }
-}
-
-type DriverFault = { code?: string; constraint_name?: string }
-
-/** Drizzle wraps the driver error as `cause`; accept the bare driver error too. */
-function isNameVersionConflict(error: unknown): boolean {
-  const candidates = [error, error instanceof Error ? error.cause : undefined]
-  return candidates.some((candidate) => {
-    const fault = candidate as DriverFault | null | undefined
-    return fault?.code === UNIQUE_VIOLATION && fault.constraint_name === NAME_VERSION_CONSTRAINT
-  })
 }
 
 type NewCriteriaSet = typeof criteriaSet.$inferInsert
@@ -153,7 +149,7 @@ export async function insertCriteriaSet(
     if (!created) throw new Error('The criteria set insert returned no row.')
     return created
   } catch (error) {
-    if (isNameVersionConflict(error)) {
+    if (isUniqueViolation(error, NAME_VERSION_CONSTRAINT)) {
       throw new CriteriaSetConflictError(values.name, values.version ?? 1, { cause: error })
     }
     throw error

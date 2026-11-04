@@ -1,0 +1,379 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { createBackupDependency, runBackupOnce, startBackupSchedule, type BackupTimers } from '../../src/backup/schedule.ts'
+import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
+import { setBackupSettings } from '../../src/data/repositories/config.ts'
+import type { Db } from '../../src/data/repositories/db.ts'
+import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
+import { flakyDb } from './db-proxies.ts'
+
+const NOW = new Date('2026-11-03T09:05:07Z')
+const NEW_DUMP = 'tracker-20261103T090507Z.dump'
+const URL_UNDER_TEST = 'postgres://backup_user:s3cret@db.example.test:5433/tracker_db'
+
+let outDir: string
+
+beforeEach(async () => {
+  outDir = await mkdtemp(join(tmpdir(), 'backup-schedule-'))
+})
+
+afterEach(async () => {
+  await rm(outDir, { recursive: true, force: true })
+})
+
+/** The directory's entries in a fixed order, because `readdir` promises none. */
+async function listing(): Promise<string[]> {
+  return (await readdir(outDir)).sort()
+}
+
+/** Dumps already on disk, named as `runDump` names them. */
+async function seedDumps(...names: string[]): Promise<void> {
+  await Promise.all(names.map((name) => writeFile(join(outDir, name), 'old dump')))
+}
+
+function recordingSpawner(calls: SpawnRequest[]): Spawner {
+  return async (request) => {
+    calls.push(request)
+    const target = request.args.find((arg) => arg.startsWith('--file='))?.slice('--file='.length)
+    if (target) await writeFile(target, 'new dump')
+    return { exitCode: 0, signal: null, stderr: '' }
+  }
+}
+
+type FakeTimers = BackupTimers & {
+  readonly started: { readonly run: () => void; readonly ms: number }[]
+  readonly cleared: unknown[]
+}
+
+function fakeTimers(): FakeTimers {
+  const started: FakeTimers['started'] = []
+  const cleared: unknown[] = []
+  return {
+    started,
+    cleared,
+    setInterval: (run, ms) => {
+      started.push({ run, ms })
+      return started.length
+    },
+    clearInterval: (handle) => {
+      cleared.push(handle)
+    },
+  }
+}
+
+const silent = { info: () => {}, warn: () => {}, error: () => {} }
+
+function start(db: Db, extra: Partial<Parameters<typeof startBackupSchedule>[0]> = {}) {
+  const calls: SpawnRequest[] = []
+  const timers = fakeTimers()
+  const options = { db, outDir, spawn: recordingSpawner(calls), databaseUrl: URL_UNDER_TEST, now: () => NOW, timers, logger: silent, ...extra }
+  return { calls, timers, started: startBackupSchedule(options) }
+}
+
+describe('startBackupSchedule', () => {
+  test('starts no timer and runs no dump when enabled is false', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { enabled: false })
+      const { calls, timers, started } = start(db)
+
+      const handle = await started
+      await handle.stop()
+
+      expect(timers.started).toEqual([])
+      expect(timers.cleared).toEqual([])
+      expect(calls).toEqual([])
+    })
+  })
+
+  test('reads keep and interval from app_config: a dump is due after the interval, and only keep files stay', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { keep: 2, intervalDays: 3 })
+      await seedDumps('tracker-20260920T000000Z.dump', 'tracker-20261001T000000Z.dump', 'tracker-20261030T090507Z.dump')
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      // newest is 4 days old and the interval is 3, so a dump was made; keep = 2 leaves it and the previous newest
+      expect(calls).toHaveLength(1)
+      expect(await listing()).toEqual(['tracker-20261030T090507Z.dump', NEW_DUMP])
+    })
+  })
+
+  test('makes no dump while the newest is younger than the interval', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { keep: 2, intervalDays: 3 })
+      await seedDumps('tracker-20261101T090507Z.dump')
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toEqual([])
+      expect(await listing()).toEqual(['tracker-20261101T090507Z.dump'])
+    })
+  })
+
+  test('defaults to one kept dump a fortnight apart when nothing is stored, and the first start makes one', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedDumps('tracker-20261001T000000Z.dump')
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toHaveLength(1)
+      expect(await listing()).toEqual([NEW_DUMP])
+    })
+  })
+
+  test('arms one timer that checks well inside any interval, and stop() clears it', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const { timers, started } = start(db)
+
+      const handle = await started
+      expect(timers.started).toHaveLength(1)
+      // timer delays above 2^31 - 1 ms fire at once, so a check period must stay far below it
+      expect(timers.started[0]?.ms).toBeLessThanOrEqual(2 ** 31 - 1)
+      expect(timers.cleared).toEqual([])
+      await handle.stop()
+
+      expect(timers.cleared).toEqual([1])
+    })
+  })
+
+  test('a timer tick makes a dump once the interval has passed', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { intervalDays: 1 })
+      await seedDumps('tracker-20261103T000000Z.dump')
+      let current = NOW
+      const { calls, timers, started } = start(db, { now: () => current })
+      const handle = await started
+
+      current = new Date('2026-11-05T00:00:00Z')
+      timers.started[0]?.run()
+      await handle.stop()
+
+      expect(calls).toHaveLength(1)
+    })
+  })
+
+  test('a timer tick rereads the settings, so switching backups off takes effect without a restart', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { intervalDays: 1 })
+      await seedDumps('tracker-20261103T000000Z.dump')
+      let current = NOW
+      const { calls, timers, started } = start(db, { now: () => current })
+      const handle = await started
+
+      current = new Date('2026-11-05T00:00:00Z')
+      await setBackupSettings(db, { enabled: false })
+      timers.started[0]?.run()
+      await handle.stop()
+
+      expect(calls).toEqual([])
+    })
+  })
+
+  test('a settings read that fails at start does not end the schedule: the timer is armed and a later tick recovers', async () => {
+    await withMigratedScratchDatabase(async (real) => {
+      // Arrange: a database whose first two selects fail, as a hiccup at boot would
+      const flaky = flakyDb(real, 2)
+      const logged: string[] = []
+      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+      const { calls, timers, started } = start(flaky, { logger })
+
+      // Act: start does not reject, and the failure is logged by class name only, at once
+      const handle = await started
+      expect(timers.started).toHaveLength(1)
+      expect(calls).toEqual([])
+      expect(logged.join('\n')).not.toContain('connection reset')
+      expect(logged.some((line) => line.includes('could not be read'))).toBe(true)
+
+      // Assert: the next hourly tick reads the settings again and makes the due dump
+      timers.started[0]?.run()
+      await handle.stop()
+      expect(calls).toHaveLength(1)
+    })
+  })
+
+  test('a database that stays down logs a failure at each hourly check, so no one waits to learn why', async () => {
+    await withMigratedScratchDatabase(async (real) => {
+      const logged: string[] = []
+      const logger = { ...silent, error: (context: object, message: string) => void logged.push(JSON.stringify([context, message])) }
+      const { calls, timers, started } = start(flakyDb(real, Number.MAX_SAFE_INTEGER), { logger })
+      const handle = await started
+      const afterStart = logged.length
+
+      timers.started[0]?.run()
+      await until(() => logged.length > afterStart)
+      const afterOneTick = logged.length
+      timers.started[0]?.run()
+      await until(() => logged.length > afterOneTick)
+      await handle.stop()
+
+      expect(afterStart).toBeGreaterThan(0)
+      expect(calls).toEqual([])
+      // each of the three paths (start, tick, tick) names the class and never the driver's message
+      expect(logged.length).toBeGreaterThan(afterStart + 1)
+      expect(logged.join('\n')).not.toContain('connection reset')
+    })
+  })
+
+  test('a failing dump is logged without the URL and does not stop the schedule or throw', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const logged: string[] = []
+      const logger = {
+        info: (context: object, message: string) => logged.push(JSON.stringify([context, message])),
+        warn: (context: object, message: string) => logged.push(JSON.stringify([context, message])),
+        error: (context: object, message: string) => logged.push(JSON.stringify([context, message])),
+      }
+      const spawn: Spawner = async () => ({ exitCode: 1, signal: null, stderr: `connect failed ${URL_UNDER_TEST}` })
+      const { started } = start(db, { spawn, logger })
+
+      const handle = await started
+      await handle.stop()
+
+      const text = logged.join('\n')
+      expect(text).toContain('connect failed')
+      expect(text).not.toContain('s3cret')
+      expect(text).not.toContain(URL_UNDER_TEST)
+    })
+  })
+})
+
+/** Waits, up to a few seconds, for something a timer tick does in the background. */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(condition()).toBe(true)
+}
+
+/** A partial dump on disk whose last write was `ageMs` before `NOW`. */
+async function seedPartial(name: string, ageMs: number): Promise<void> {
+  const path = join(outDir, name)
+  await writeFile(path, 'half a dump')
+  const modified = new Date(NOW.getTime() - ageMs)
+  await utimes(path, modified, modified)
+}
+
+const HOUR_MS = 3_600_000
+const STALE_PARTIAL = 'tracker-20261020T000000Z.dump.partial'
+const FRESH_PARTIAL = 'tracker-20261103T090000Z.dump.partial'
+
+describe('stale partial dumps', () => {
+  test('are removed when the schedule starts, and a recent one, which may be a dump in flight, is left', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+      await seedPartial(FRESH_PARTIAL, 60_000)
+      await seedDumps('tracker-20261103T080000Z.dump')
+      await writeFile(join(outDir, 'notes.partial'), 'not mine')
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toEqual([])
+      expect(await listing()).toEqual(['notes.partial', 'tracker-20261103T080000Z.dump', FRESH_PARTIAL])
+    })
+  })
+
+  test('are removed by a one-off backup too', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+
+      await runBackupOnce({ db, outDir, spawn: recordingSpawner([]), databaseUrl: URL_UNDER_TEST, now: () => NOW, logger: silent })
+
+      expect(await listing()).toEqual([NEW_DUMP])
+    })
+  })
+
+  test('are not removed when backups are off, because nothing is managing the directory then', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { enabled: false })
+      await seedPartial(STALE_PARTIAL, 3 * HOUR_MS)
+      const { started } = start(db)
+
+      await (await started).stop()
+
+      expect(await listing()).toEqual([STALE_PARTIAL])
+    })
+  })
+
+  test('do not stand in for a backup: a directory with only a partial is still due a dump', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedPartial(FRESH_PARTIAL, 60_000)
+      const { calls, started } = start(db)
+
+      await (await started).stop()
+
+      expect(calls).toHaveLength(1)
+    })
+  })
+})
+
+describe('runBackupOnce', () => {
+  test('dumps now whatever the interval says, then prunes to keep', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await setBackupSettings(db, { keep: 1 })
+      await seedDumps('tracker-20261103T090000Z.dump', 'tracker-20261102T000000Z.dump')
+      const calls: SpawnRequest[] = []
+
+      const result = await runBackupOnce({ db, outDir, spawn: recordingSpawner(calls), databaseUrl: URL_UNDER_TEST, now: () => NOW, logger: silent })
+
+      expect(result.path).toBe(join(outDir, NEW_DUMP))
+      expect(result.dropped).toBe(2)
+      expect(await listing()).toEqual([NEW_DUMP])
+    })
+  })
+
+  test('leaves files that are not backups alone', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await writeFile(join(outDir, 'notes.txt'), 'keep me')
+      await seedDumps('tracker-20261001T000000Z.dump')
+
+      await runBackupOnce({ db, outDir, spawn: recordingSpawner([]), databaseUrl: URL_UNDER_TEST, now: () => NOW, logger: silent })
+
+      expect(await listing()).toEqual(['notes.txt', NEW_DUMP])
+    })
+  })
+
+  test('a failed dump prunes nothing, so the last good backup survives', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      await seedDumps('tracker-20261001T000000Z.dump')
+      const spawn: Spawner = async () => ({ exitCode: 1, signal: null, stderr: 'boom' })
+
+      await runBackupOnce({ db, outDir, spawn, databaseUrl: URL_UNDER_TEST, now: () => NOW, logger: silent }).catch(() => undefined)
+
+      expect(await listing()).toEqual(['tracker-20261001T000000Z.dump'])
+    })
+  })
+
+  test('refuses to run without a database URL, naming the variable', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const original = process.env.DATABASE_URL
+      delete process.env.DATABASE_URL
+      try {
+        await expect(runBackupOnce({ db, outDir, spawn: recordingSpawner([]), now: () => NOW, logger: silent })).rejects.toThrow(/DATABASE_URL/)
+      } finally {
+        if (original !== undefined) process.env.DATABASE_URL = original
+      }
+    })
+  })
+})
+
+describe('createBackupDependency', () => {
+  test('starts the schedule on start and clears its timer on stop', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const timers = fakeTimers()
+      const dependency = createBackupDependency({ db, outDir, spawn: recordingSpawner([]), databaseUrl: URL_UNDER_TEST, now: () => NOW, timers, logger: silent })
+
+      await dependency.start()
+      expect(dependency.status).toBe('running')
+      expect(timers.started).toHaveLength(1)
+      await dependency.stop()
+
+      expect(dependency.status).toBe('stopped')
+      expect(timers.cleared).toEqual([1])
+    })
+  })
+})

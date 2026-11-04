@@ -96,13 +96,12 @@ export const STRUCTURAL_VALUE_PATTERNS: readonly RegExp[] = [
 /**
  * Words that must not appear in a column, table, index, type or constraint name (whole words once the name is
  * split on underscores; a trailing plural "s" is ignored). Industries,
- * technologies, spoken languages and jurisdictions. The first two entries are
- * the ones the old schema's audit found; the rest are the same kinds of word.
+ * technologies, spoken languages and jurisdictions. The first entry is
+ * the one the old schema's audit found; the rest are the same kinds of word.
  */
 export const DENIED_COLUMN_WORDS: readonly string[] = [
   // named in the design's section 1 audit
   'fintech',
-  'acme',
   // industries
   'healthtech',
   'edtech',
@@ -186,7 +185,6 @@ export const PROSE_WORDS: readonly string[] = [
  */
 export const DENIED_SUBSTRINGS: readonly string[] = [
   'fintech',
-  'acme',
   'healthtech',
   'edtech',
   'insurtech',

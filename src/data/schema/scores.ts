@@ -12,24 +12,24 @@ import {
   unique,
 } from 'drizzle-orm/pg-core'
 
-import { criteriaSet, requirement } from './criteria.ts'
-import { position } from './positions.ts'
+import { criteriaSet, detour, requirement } from './criteria.ts'
+import { posting } from './postings.ts'
 import { penaltyKind } from './registries.ts'
 
 /**
- * One scoring pass of one position against one criteria set. A position has many of these,
+ * One scoring pass of one posting against one criteria set. A posting has many of these,
  * because a score only means something against the set it was scored under. The columns
  * mirror what `scoreAgainstSet` returns. `limiterIsUnknown` says the named limiter is only a
  * requirement nobody has rated yet. The unique key makes a same-day re-score for the same set
  * a no-op, while a genuine re-score on another day is a new row marked `isRescore`.
  */
-export const positionScore = pgTable(
-  'position_score',
+export const postingScore = pgTable(
+  'posting_score',
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    positionId: integer('position_id')
+    postingId: integer('posting_id')
       .notNull()
-      .references(() => position.id, { onDelete: 'cascade' }),
+      .references(() => posting.id, { onDelete: 'cascade' }),
     criteriaSetId: integer('criteria_set_id')
       .notNull()
       .references(() => criteriaSet.id),
@@ -46,30 +46,30 @@ export const positionScore = pgTable(
     note: text(),
   },
   (table) => [
-    unique('position_score_position_set_day_unique').on(
-      table.positionId,
+    unique('posting_score_posting_set_day_unique').on(
+      table.postingId,
       table.criteriaSetId,
       table.scoredAt,
     ),
     // Redundant as a key (id is already unique); it exists so a rating can reference the
     // pair and the database can check the rating's set is the score's set.
-    unique('position_score_id_criteria_set_unique').on(table.id, table.criteriaSetId),
+    unique('posting_score_id_criteria_set_unique').on(table.id, table.criteriaSetId),
     // A limiter must be a requirement of the set being scored. A null limiter skips the check.
     foreignKey({
-      name: 'position_score_limiter_set_fk',
+      name: 'posting_score_limiter_set_fk',
       columns: [table.criteriaSetId, table.limiterRequirementId],
       foreignColumns: [requirement.criteriaSetId, requirement.id],
     }),
     foreignKey({
-      name: 'position_score_runner_up_set_fk',
+      name: 'posting_score_runner_up_set_fk',
       columns: [table.criteriaSetId, table.runnerUpRequirementId],
       foreignColumns: [requirement.criteriaSetId, requirement.id],
     }),
-    check('position_score_overall_check', sql`${table.overall} >= 0 AND ${table.overall} <= 1`),
-    check('position_score_floor_check', sql`${table.floor} >= 0 AND ${table.floor} <= 1`),
-    check('position_score_ceiling_check', sql`${table.ceiling} >= 0 AND ${table.ceiling} <= 1`),
+    check('posting_score_overall_check', sql`${table.overall} >= 0 AND ${table.overall} <= 1`),
+    check('posting_score_floor_check', sql`${table.floor} >= 0 AND ${table.floor} <= 1`),
+    check('posting_score_ceiling_check', sql`${table.ceiling} >= 0 AND ${table.ceiling} <= 1`),
     check(
-      'position_score_limiter_coverage_check',
+      'posting_score_limiter_coverage_check',
       sql`${table.limiterCoverage} >= 0 AND ${table.limiterCoverage} <= 1`,
     ),
   ],
@@ -82,8 +82,8 @@ export const positionScore = pgTable(
  * `coverage` is nullable on purpose: null means not rated, which is different from 0 (rated,
  * and not covered). `confidence` is an internal discriminator, so a CHECK may list it.
  */
-export const positionRating = pgTable(
-  'position_rating',
+export const postingRating = pgTable(
+  'posting_rating',
   {
     scoreId: integer('score_id').notNull(),
     criteriaSetId: integer('criteria_set_id').notNull(),
@@ -98,20 +98,58 @@ export const positionRating = pgTable(
     // must name the same set. Without them a rating could point at a requirement from a set
     // the score was never made under, and the limiter would name something outside it.
     foreignKey({
-      name: 'position_rating_score_set_fk',
+      name: 'posting_rating_score_set_fk',
       columns: [table.scoreId, table.criteriaSetId],
-      foreignColumns: [positionScore.id, positionScore.criteriaSetId],
+      foreignColumns: [postingScore.id, postingScore.criteriaSetId],
     }).onDelete('cascade'),
     foreignKey({
-      name: 'position_rating_set_requirement_fk',
+      name: 'posting_rating_set_requirement_fk',
       columns: [table.criteriaSetId, table.requirementId],
       foreignColumns: [requirement.criteriaSetId, requirement.id],
     }),
-    check('position_rating_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
+    check('posting_rating_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
+    // The members are RATING_CONFIDENCES (src/schemas/discriminators.ts); tests/data/discriminators.test.ts compares them.
     check(
-      'position_rating_confidence_check',
+      'posting_rating_confidence_check',
       sql`${table.confidence} IN ('supported', 'partial', 'unknown')`,
     ),
+  ],
+)
+
+/**
+ * How well a posting covers one detour of a requirement, under one score. The detour itself
+ * (its label and discount) belongs to the criteria set; this is the per-posting half, the
+ * part `scoreAgainstSet` needs and no other table holds. A row hangs off the rating of the same
+ * requirement, so it goes when the rating does, and the second key ties the detour to that
+ * requirement, so a coverage cannot name a detour that is a way round some other requirement.
+ * `coverage` reads like a rating's: null is not rated, which is different from 0.
+ *
+ * The key to `detour` is restrictive on purpose (no `ON DELETE`): a stored score's inputs must
+ * not vanish underneath it, or history would silently change meaning. It matches the key from
+ * `posting_rating` to `requirement`. A surface that edits a set's detours must therefore retire
+ * one rather than delete it, which needs an archival column `detour` does not have yet.
+ */
+export const postingRatingDetour = pgTable(
+  'posting_rating_detour',
+  {
+    scoreId: integer('score_id').notNull(),
+    requirementId: integer('requirement_id').notNull(),
+    detourId: integer('detour_id').notNull(),
+    coverage: numeric({ mode: 'number' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scoreId, table.detourId] }),
+    foreignKey({
+      name: 'posting_rating_detour_rating_fk',
+      columns: [table.scoreId, table.requirementId],
+      foreignColumns: [postingRating.scoreId, postingRating.requirementId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'posting_rating_detour_detour_fk',
+      columns: [table.requirementId, table.detourId],
+      foreignColumns: [detour.requirementId, detour.id],
+    }),
+    check('posting_rating_detour_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
   ],
 )
 
@@ -122,13 +160,13 @@ export const positionRating = pgTable(
  * key on score and kind keeps one penalty of each kind per score; the table has its own id
  * only because that suits the query builder.
  */
-export const positionPenalty = pgTable(
-  'position_penalty',
+export const postingPenalty = pgTable(
+  'posting_penalty',
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
     scoreId: integer('score_id')
       .notNull()
-      .references(() => positionScore.id, { onDelete: 'cascade' }),
+      .references(() => postingScore.id, { onDelete: 'cascade' }),
     penaltyKindId: integer('penalty_kind_id')
       .notNull()
       .references(() => penaltyKind.id),
@@ -136,9 +174,9 @@ export const positionPenalty = pgTable(
     reason: text(),
   },
   (table) => [
-    unique('position_penalty_score_kind_unique').on(table.scoreId, table.penaltyKindId),
+    unique('posting_penalty_score_kind_unique').on(table.scoreId, table.penaltyKindId),
     // `<= 0` already rejects NaN (ordered above every number); `> '-Infinity'` rejects the other
     // non-finite value, so an amount is always a finite number.
-    check('position_penalty_amount_check', sql`${table.amount} <= 0 AND ${table.amount} > '-Infinity'`),
+    check('posting_penalty_amount_check', sql`${table.amount} <= 0 AND ${table.amount} > '-Infinity'`),
   ],
 )

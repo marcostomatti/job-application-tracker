@@ -18,7 +18,7 @@ const clampToUnit = (value: number): number => Math.min(1, Math.max(0, value))
  * contribute no points. Dividing by the weight total puts every set on the same 0..1 scale,
  * so the same apply threshold means the same thing in each. `overall` is the average over the
  * rated requirements; `floor` counts every unrated one as 0 and `ceiling` as 1, so a wide gap
- * between them says the position needs questions asked. Penalties are signed amounts added to
+ * between them says the posting needs questions asked. Penalties are signed amounts added to
  * all three, and each result is clamped into 0..1. When no weight exists to normalise against
  * (a fresh pack before the seed interview), all three are null.
  */

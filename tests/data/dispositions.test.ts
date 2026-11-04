@@ -5,15 +5,15 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
 import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
-import { positionDisposition, positionStageEvent } from '../../src/data/schema/dispositions.ts'
-import { company, normaliseName, position } from '../../src/data/schema/positions.ts'
+import { postingDisposition, postingStageEvent } from '../../src/data/schema/dispositions.ts'
+import { company, normaliseName, posting } from '../../src/data/schema/postings.ts'
 import { rejectionReason, setAsideReason, stage } from '../../src/data/schema/registries.ts'
 import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-back.ts'
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
-const DISPOSITION_CHECK = 'position_disposition_kind_reason_check'
-const SET_ASIDE_FK = 'position_disposition_set_aside_reason_id_set_aside_reason_id_fk'
-const REJECTION_FK = 'position_disposition_rejection_reason_id_rejection_reason_id_fk'
+const DISPOSITION_CHECK = 'posting_disposition_kind_reason_check'
+const SET_ASIDE_FK = 'posting_disposition_set_aside_reason_id_set_aside_reason_id_fk'
+const REJECTION_FK = 'posting_disposition_rejection_reason_id_rejection_reason_id_fk'
 // Explicit ids far above anything an identity column hands out, one per registry, so neither
 // id can exist in the other registry. The rows carrying them never commit: the test inserts
 // them inside `rolledBack`, so they cannot collide with data or with each other across runs.
@@ -25,16 +25,16 @@ afterAll(async () => {
   await closeDb()
 })
 
-/** A position, one reason of each kind and two stages (one repeatable), all inside `tx`. */
+/** A posting, one reason of each kind and two stages (one repeatable), all inside `tx`. */
 async function seed(tx: Tx, token: string) {
   const [owner] = await tx
     .insert(company)
     .values({ name: `Test Co ${token}`, nameNorm: normaliseName(`Test Co ${token}`) })
     .returning()
   const [target] = await tx
-    .insert(position)
+    .insert(posting)
     .values({
-      positionKey: `test-position-${token}`,
+      postingKey: `test-posting-${token}`,
       companyId: owner!.id,
       roleTitle: 'Staff Engineer',
       roleNorm: normaliseName('Staff Engineer'),
@@ -51,7 +51,7 @@ async function seed(tx: Tx, token: string) {
     .values({ key: `repeating-${token}`, label: 'A repeatable stage', isRepeatable: true })
     .returning()
   return {
-    positionId: target!.id,
+    postingId: target!.id,
     setAsideReasonId: aside!.id,
     rejectionReasonId: rejected!.id,
     openStage: open!,
@@ -65,11 +65,11 @@ describe('dispositions and stage history', () => {
     const { withoutReason, withReason, error } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const failure = await thrownInSavepoint(tx, (inner) =>
-        inner.insert(positionDisposition).values({ positionId: ids.positionId, kind: 'set_aside' }),
+        inner.insert(postingDisposition).values({ postingId: ids.postingId, kind: 'set_aside' }),
       )
       const [saved] = await tx
-        .insert(positionDisposition)
-        .values({ positionId: ids.positionId, kind: 'set_aside', setAsideReasonId: ids.setAsideReasonId })
+        .insert(postingDisposition)
+        .values({ postingId: ids.postingId, kind: 'set_aside', setAsideReasonId: ids.setAsideReasonId })
         .returning()
       return { withoutReason: failure, withReason: saved, error: violationText(failure) }
     })
@@ -87,7 +87,7 @@ describe('dispositions and stage history', () => {
       const ids = await seed(tx, token)
       const attempt = (reasons: { setAsideReasonId?: number; rejectionReasonId?: number }) =>
         thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionDisposition).values({ positionId: ids.positionId, kind: 'set_aside', ...reasons }),
+          inner.insert(postingDisposition).values({ postingId: ids.postingId, kind: 'set_aside', ...reasons }),
         )
       return {
         onlyRejection: await attempt({ rejectionReasonId: ids.rejectionReasonId }),
@@ -109,11 +109,11 @@ describe('dispositions and stage history', () => {
       const ids = await seed(tx, token)
       const attempt = (values: { kind: string; setAsideReasonId?: number; rejectionReasonId?: number }) =>
         thrownInSavepoint(tx, (inner) =>
-          inner.insert(positionDisposition).values({ positionId: ids.positionId, ...values }),
+          inner.insert(postingDisposition).values({ postingId: ids.postingId, ...values }),
         )
       const [saved] = await tx
-        .insert(positionDisposition)
-        .values({ positionId: ids.positionId, kind: 'rejected', rejectionReasonId: ids.rejectionReasonId })
+        .insert(postingDisposition)
+        .values({ postingId: ids.postingId, kind: 'rejected', rejectionReasonId: ids.rejectionReasonId })
         .returning()
       return {
         neither: await attempt({ kind: 'rejected' }),
@@ -154,7 +154,7 @@ describe('dispositions and stage history', () => {
           .returning()
         const attempt = (values: { kind: string; setAsideReasonId?: number; rejectionReasonId?: number }) =>
           thrownInSavepoint(tx, (inner) =>
-            inner.insert(positionDisposition).values({ positionId: ids.positionId, ...values }),
+            inner.insert(postingDisposition).values({ postingId: ids.postingId, ...values }),
           )
         const failures = {
           asideColumnGivenRejectionId: await attempt({ kind: 'set_aside', setAsideReasonId: onlyRejection!.id }),
@@ -162,10 +162,10 @@ describe('dispositions and stage history', () => {
         }
         // The same ids are fine in the column that owns them, so the refusals above are about the registry
         const accepted = await tx
-          .insert(positionDisposition)
+          .insert(postingDisposition)
           .values([
-            { positionId: ids.positionId, kind: 'set_aside', setAsideReasonId: onlyAside!.id },
-            { positionId: ids.positionId, kind: 'rejected', rejectionReasonId: onlyRejection!.id },
+            { postingId: ids.postingId, kind: 'set_aside', setAsideReasonId: onlyAside!.id },
+            { postingId: ids.postingId, kind: 'rejected', rejectionReasonId: onlyRejection!.id },
           ])
           .returning()
         return { ...failures, ownIdsAccepted: accepted }
@@ -178,20 +178,20 @@ describe('dispositions and stage history', () => {
     expect(ownIdsAccepted).toHaveLength(2)
   })
 
-  test('a position carries a disposition independently of its stage', async () => {
+  test('a posting carries a disposition independently of its stage', async () => {
     // Arrange / Act
     const { dispositions, events, openStage } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      await tx.insert(positionStageEvent).values({ positionId: ids.positionId, stageId: ids.openStage.id })
+      await tx.insert(postingStageEvent).values({ postingId: ids.postingId, stageId: ids.openStage.id })
       await tx
-        .insert(positionDisposition)
-        .values({ positionId: ids.positionId, kind: 'set_aside', setAsideReasonId: ids.setAsideReasonId })
+        .insert(postingDisposition)
+        .values({ postingId: ids.postingId, kind: 'set_aside', setAsideReasonId: ids.setAsideReasonId })
       return {
         dispositions: await tx
           .select()
-          .from(positionDisposition)
-          .where(eq(positionDisposition.positionId, ids.positionId)),
-        events: await tx.select().from(positionStageEvent).where(eq(positionStageEvent.positionId, ids.positionId)),
+          .from(postingDisposition)
+          .where(eq(postingDisposition.postingId, ids.postingId)),
+        events: await tx.select().from(postingStageEvent).where(eq(postingStageEvent.postingId, ids.postingId)),
         openStage: ids.openStage,
       }
     })
@@ -208,28 +208,28 @@ describe('dispositions and stage history', () => {
     // Arrange / Act
     const { history, current, afterAppend, openStageId, repeatingStageId } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
-      const forPosition = eq(positionStageEvent.positionId, ids.positionId)
-      await tx.insert(positionStageEvent).values([
-        { positionId: ids.positionId, stageId: ids.openStage.id, occurredAt: new Date('2026-01-01T00:00:00Z') },
-        { positionId: ids.positionId, stageId: ids.repeatingStage.id, occurredAt: new Date('2026-01-02T00:00:00Z') },
+      const forPosting = eq(postingStageEvent.postingId, ids.postingId)
+      await tx.insert(postingStageEvent).values([
+        { postingId: ids.postingId, stageId: ids.openStage.id, occurredAt: new Date('2026-01-01T00:00:00Z') },
+        { postingId: ids.postingId, stageId: ids.repeatingStage.id, occurredAt: new Date('2026-01-02T00:00:00Z') },
       ])
       const latest = () =>
         tx
           .select()
-          .from(positionStageEvent)
-          .where(forPosition)
-          .orderBy(desc(positionStageEvent.occurredAt), desc(positionStageEvent.id))
+          .from(postingStageEvent)
+          .where(forPosting)
+          .orderBy(desc(postingStageEvent.occurredAt), desc(postingStageEvent.id))
           .limit(1)
       const [first] = await latest()
       // Moving back to the earlier stage is a new event, not an edit of the old one
-      await tx.insert(positionStageEvent).values({
-        positionId: ids.positionId,
+      await tx.insert(postingStageEvent).values({
+        postingId: ids.postingId,
         stageId: ids.openStage.id,
         occurredAt: new Date('2026-01-03T00:00:00Z'),
       })
       const [second] = await latest()
       return {
-        history: await tx.select().from(positionStageEvent).where(forPosition).orderBy(asc(positionStageEvent.id)),
+        history: await tx.select().from(postingStageEvent).where(forPosting).orderBy(asc(postingStageEvent.id)),
         current: first,
         afterAppend: second,
         openStageId: ids.openStage.id,
@@ -252,13 +252,13 @@ describe('dispositions and stage history', () => {
     // Arrange / Act: inside one transaction now() is constant, so default timestamps tie
     const { current, ids } = await rolledBack(async (tx, token) => {
       const seeded = await seed(tx, token)
-      await tx.insert(positionStageEvent).values({ positionId: seeded.positionId, stageId: seeded.openStage.id })
-      await tx.insert(positionStageEvent).values({ positionId: seeded.positionId, stageId: seeded.repeatingStage.id })
+      await tx.insert(postingStageEvent).values({ postingId: seeded.postingId, stageId: seeded.openStage.id })
+      await tx.insert(postingStageEvent).values({ postingId: seeded.postingId, stageId: seeded.repeatingStage.id })
       const [latest] = await tx
         .select()
-        .from(positionStageEvent)
-        .where(eq(positionStageEvent.positionId, seeded.positionId))
-        .orderBy(desc(positionStageEvent.occurredAt), desc(positionStageEvent.id))
+        .from(postingStageEvent)
+        .where(eq(postingStageEvent.postingId, seeded.postingId))
+        .orderBy(desc(postingStageEvent.occurredAt), desc(postingStageEvent.id))
         .limit(1)
       return { current: latest, ids: seeded }
     })
@@ -267,25 +267,25 @@ describe('dispositions and stage history', () => {
     expect(current?.stageId).toBe(ids.repeatingStage.id)
   })
 
-  test('a repeatable stage can occur more than once for one position', async () => {
+  test('a repeatable stage can occur more than once for one posting', async () => {
     // Arrange / Act
     const { repeats, total } = await rolledBack(async (tx, token) => {
       const ids = await seed(tx, token)
       const events = [ids.repeatingStage.id, ids.openStage.id, ids.repeatingStage.id, ids.repeatingStage.id].map(
         (stageId, index) => ({
-          positionId: ids.positionId,
+          postingId: ids.postingId,
           stageId,
           occurredAt: new Date(Date.UTC(2026, 0, index + 1)),
         }),
       )
-      await tx.insert(positionStageEvent).values(events)
-      const forPosition = eq(positionStageEvent.positionId, ids.positionId)
+      await tx.insert(postingStageEvent).values(events)
+      const forPosting = eq(postingStageEvent.postingId, ids.postingId)
       return {
         repeats: await tx
           .select({ count: sql<number>`count(*)::int` })
-          .from(positionStageEvent)
-          .where(and(forPosition, eq(positionStageEvent.stageId, ids.repeatingStage.id))),
-        total: await tx.select({ count: sql<number>`count(*)::int` }).from(positionStageEvent).where(forPosition),
+          .from(postingStageEvent)
+          .where(and(forPosting, eq(postingStageEvent.stageId, ids.repeatingStage.id))),
+        total: await tx.select({ count: sql<number>`count(*)::int` }).from(postingStageEvent).where(forPosting),
       }
     })
 
