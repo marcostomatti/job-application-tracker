@@ -22,6 +22,7 @@ import {
   hasApiKeyLine,
   main,
   registerInterrupt,
+  replaceFileAtomically,
   replaceApiKeyLine,
   type MainIo,
 } from '../../src/auth/set-api-key.ts'
@@ -652,5 +653,76 @@ describe('createRealIo', () => {
 
     expect(await readdir(dir)).toEqual(['.env'])
     expect(await readdir(join(dir, '.env'))).toEqual(['keep'])
+  })
+})
+
+describe('replaceFileAtomically and an interrupt', () => {
+  const scratch = mkdtemp(join(tmpdir(), 'set-api-key-interrupt-'))
+  afterAll(async () => {
+    await rm(await scratch, { recursive: true, force: true })
+  })
+
+  /** A fresh, empty directory per test, under the system temp directory. */
+  async function freshDir(): Promise<string> {
+    const dir = join(await scratch, crypto.randomUUID())
+    await mkdir(dir)
+    return dir
+  }
+
+  test('stops listening for the interrupt once the write is done', async () => {
+    const dir = await freshDir()
+    const log: string[] = []
+
+    await replaceFileAtomically(join(dir, '.env'), 'API_KEY=x\n', () => {
+      log.push('listening')
+      return () => log.push('stopped')
+    })
+
+    expect(log).toEqual(['listening', 'stopped'])
+  })
+
+  test('stops listening when the write fails too', async () => {
+    const dir = await freshDir()
+    await mkdir(join(dir, '.env'))
+    const log: string[] = []
+
+    await expect(
+      replaceFileAtomically(join(dir, '.env'), 'x', () => {
+        log.push('listening')
+        return () => log.push('stopped')
+      }),
+    ).rejects.toThrow()
+
+    expect(log).toEqual(['listening', 'stopped'])
+  })
+
+  test('an interrupt while the temporary file holds the key removes it, and the original is untouched', async () => {
+    // Arrange: a payload large enough that the write takes long enough to be caught in the act
+    const dir = await freshDir()
+    const path = join(dir, '.env')
+    await writeFile(path, 'DB_PORT=5439\n')
+    let interrupt: () => void = () => {}
+    const pending = replaceFileAtomically(path, 'API_KEY='.concat('k'.repeat(48 * 1024 * 1024)), (handler) => {
+      interrupt = handler
+      return () => {}
+    })
+    const outcome = pending.then(
+      () => 'finished',
+      () => 'failed',
+    )
+
+    // Act: wait for the temporary file to appear, then deliver the interrupt
+    let seen: string[] = []
+    for (let attempt = 0; attempt < 2000 && seen.length === 0; attempt += 1) {
+      seen = (await readdir(dir)).filter((name) => name.endsWith('.tmp'))
+      if (seen.length === 0) await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    interrupt()
+    await outcome
+
+    // Assert: the file was there to catch, it is gone, and the original is as it was
+    expect(seen).toHaveLength(1)
+    expect(await readdir(dir)).toEqual(['.env'])
+    expect(await readFile(path, 'utf8')).toBe('DB_PORT=5439\n')
   })
 })

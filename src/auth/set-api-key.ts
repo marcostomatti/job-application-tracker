@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { rmSync } from 'node:fs'
 import { chmod, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
@@ -209,14 +210,40 @@ async function existingMode(path: string): Promise<number | undefined> {
  * renamed over the original. A failure before the rename leaves the original as it was, and
  * the temporary file is removed. A symlink is followed, so the link is kept and its target is
  * replaced. The original's mode is kept, and a new file is created owner-only.
+ *
+ * The temporary file holds the new key, so an interrupt (SIGINT, SIGTERM) during the write
+ * removes it before the process exits, the same `registerInterrupt` the screen clear uses. The
+ * original is untouched either way, because the rename is the last step. The listener is
+ * registered before the temporary name exists and reads it when it fires, so no signal lands
+ * between the file's creation and the handler.
  */
-async function replaceFileAtomically(path: string, text: string): Promise<void> {
+export async function replaceFileAtomically(
+  path: string,
+  text: string,
+  onInterrupt: (handler: () => void) => () => void = registerInterrupt,
+): Promise<void> {
+  let temporary: string | undefined
+  const stopListening = onInterrupt(() => {
+    // Synchronous on purpose: the process exits as soon as this returns.
+    if (temporary !== undefined) rmSync(temporary, { force: true })
+  })
+  try {
+    await writeAtomically(path, text, (name) => {
+      temporary = name
+    })
+  } finally {
+    stopListening()
+  }
+}
+
+async function writeAtomically(path: string, text: string, noteTemporary: (name: string) => void): Promise<void> {
   const target = await realpath(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return path
     throw error
   })
   const mode = (await existingMode(target)) ?? NEW_ENV_FILE_MODE
   const temporary = `${target}.${randomUUID()}.tmp`
+  noteTemporary(temporary)
 
   try {
     await writeFile(temporary, text, { mode, flag: 'wx' })
@@ -241,7 +268,7 @@ export function createRealIo(envPath: string): MainIo {
         throw error
       }
     },
-    writeFile: replaceFileAtomically,
+    writeFile: (path, text) => replaceFileAtomically(path, text),
     write: (text) => {
       process.stdout.write(text)
     },
