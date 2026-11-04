@@ -132,6 +132,41 @@ describe('runDump', () => {
     expect(message).not.toContain(URL_UNDER_TEST)
   })
 
+  test('removes the host name from the child\'s stderr, wherever and however often it is written', async () => {
+    // Arrange: libpq prints the host when a connection fails, in the form a bare name and in a quoted one
+    const stderr = 'pg_dump: error: connection to server at "db.example.test", port 5433 failed: ' +
+      'could not translate host name DB.EXAMPLE.TEST. Is the server running on host db.example.test?'
+    const spawn = failing({ exitCode: 1, signal: null, stderr })
+
+    // Act
+    const error = await runDump({ databaseUrl: URL_UNDER_TEST, outDir, now: NOW, spawn }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+
+    // Assert: the reason stays readable and the machine's name does not
+    const message = (error as Error).message
+    expect(message).not.toMatch(/example\.test/i)
+    expect(message).toContain('connection to server at "[redacted]"')
+    expect(message).toContain('port 5433 failed')
+    expect(message).toContain('Is the server running on host [redacted]?')
+  })
+
+  test('removes only a host that stands alone, so a short name does not mangle the words around it', async () => {
+    // Arrange: a host called "db" is also a stretch of "database"
+    const url = 'postgres://backup_user:s3cret@db:5432/tracker_db'
+    const spawn = failing({ exitCode: 1, signal: null, stderr: 'pg_dump: error: database "tracker_db" on db failed; db.other is not db' })
+
+    // Act
+    const error = await runDump({ databaseUrl: url, outDir, now: NOW, spawn }).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+
+    // Assert
+    expect((error as Error).message).toContain('database "tracker_db" on [redacted] failed; db.other is not [redacted]')
+  })
+
   test('removes the half-written file when the dump fails, so it is never taken for a backup', async () => {
     const spawn = failing({ exitCode: 1, signal: null, stderr: 'boom' })
 

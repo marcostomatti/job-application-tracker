@@ -34,7 +34,8 @@ export type RunDumpOptions = {
 
 /**
  * A dump that failed. Its message is safe to log and to show: it carries the binary's own
- * stderr with the connection URL and password removed, and nothing else from the connection.
+ * stderr with the connection URL, the password and the host name removed, and nothing else
+ * from the connection.
  */
 export class BackupDumpError extends Error {
   constructor(message: string) {
@@ -107,8 +108,35 @@ function safePassword(databaseUrl: string): string | undefined {
   }
 }
 
-function redact(text: string, secrets: readonly string[]): string {
-  return secrets.reduce((clean, secret) => clean.split(secret).join(REDACTED), text)
+/** Removes the credential and the machine's name from text; built once per dump by `redactorFor`. */
+type Redactor = (text: string) => string
+
+const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g
+
+/**
+ * A pattern for the host as a whole name. A host such as `db` is also a stretch of "database", so
+ * a plain substring replace would mangle the message around it; the name has to stand alone, which
+ * means not touching another name character on either side. A dot on the right ends the name
+ * unless a name character follows it, so a sentence's full stop counts and `db.other` does not.
+ */
+function hostPattern(host: string): RegExp {
+  const escaped = host.replace(REGEX_SPECIAL, String.raw`\$&`)
+  return new RegExp(String.raw`(?<![A-Za-z0-9_.-])${escaped}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])`, 'gi')
+}
+
+/**
+ * What stderr or an error message is cleaned with: every spelling of the credential, then the
+ * host. `pg_dump` prints the host when a connection fails, and the machine's name in a local log
+ * is something a person pastes into a bug report without reading it. The URL is removed first,
+ * since it contains the host.
+ */
+function redactorFor(databaseUrl: string, env: Readonly<Record<string, string>>): Redactor {
+  const secrets = secretsIn(databaseUrl, env)
+  const host = env.PGHOST === undefined || env.PGHOST === '' ? undefined : hostPattern(env.PGHOST)
+  return (text) => {
+    const withoutSecrets = secrets.reduce((clean, secret) => clean.split(secret).join(REDACTED), text)
+    return host === undefined ? withoutSecrets : withoutSecrets.replace(host, REDACTED)
+  }
 }
 
 /** The part of a spawner's failure that is safe to repeat: its error code, never its message. */
@@ -117,10 +145,10 @@ function codeOf(error: unknown): string {
   return typeof code === 'string' ? code : 'unknown'
 }
 
-function describeFailure(result: SpawnResult, secrets: readonly string[]): string {
+function describeFailure(result: SpawnResult, redact: Redactor): string {
   const how = result.signal === null ? `exited with code ${result.exitCode ?? 'unknown'}` : `was stopped by ${result.signal}`
   // Redact first, cut second: see STDERR_CAPTURE_MAX_CHARS.
-  const stderr = redact(result.stderr, secrets).trim().slice(0, MESSAGE_STDERR_MAX_CHARS)
+  const stderr = redact(result.stderr).trim().slice(0, MESSAGE_STDERR_MAX_CHARS)
   return stderr === '' ? `pg_dump ${how}` : `pg_dump ${how}: ${stderr}`
 }
 
@@ -133,7 +161,7 @@ async function removeQuietly(path: string): Promise<void> {
  *
  * The connection URL is the credential this function exists to protect. It is split into the
  * `PG*` variables the binary reads, so it is in no argument, no file name and no log (this
- * function logs nothing), and every message it raises has the URL and the password removed.
+ * function logs nothing), and every message it raises has the URL, the password and the host removed.
  * A failing `pg_dump` still reports its own stderr, which is where the reason is.
  *
  * The dump is written beside its final name and moved into place only once the child has
@@ -149,15 +177,15 @@ export async function runDump(opts: RunDumpOptions): Promise<string> {
     // The reason is dropped on purpose: a URL parse error can quote the URL.
     throw new BackupDumpError('DATABASE_URL is not a usable postgres connection URL')
   }
-  const secrets = secretsIn(opts.databaseUrl, env)
+  const redact = redactorFor(opts.databaseUrl, env)
   const finalPath = join(opts.outDir, backupFileName(opts.now))
   const partialPath = partialFileName(finalPath)
 
   await mkdir(opts.outDir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
-  const result = await runBinary(opts, env, partialPath, secrets)
+  const result = await runBinary(opts, env, partialPath, redact)
   if (result.exitCode !== 0) {
     await removeQuietly(partialPath)
-    throw new BackupDumpError(describeFailure(result, secrets))
+    throw new BackupDumpError(describeFailure(result, redact))
   }
   const written = await stat(partialPath).catch(() => null)
   if (!written || written.size === 0) {
@@ -173,7 +201,7 @@ async function runBinary(
   opts: RunDumpOptions,
   env: Readonly<Record<string, string>>,
   partialPath: string,
-  secrets: readonly string[],
+  redact: Redactor,
 ): Promise<SpawnResult> {
   const command = process.env.PG_DUMP_BIN || DEFAULT_BINARY
   const args = ['--format=custom', '--no-password', `--file=${partialPath}`]
@@ -182,7 +210,7 @@ async function runBinary(
   } catch (error: unknown) {
     await removeQuietly(partialPath)
     const reason = error instanceof BackupDumpError ? error.message : `${error instanceof Error ? error.message : ''}`
-    throw new BackupDumpError(redact(`pg_dump could not be run (${codeOf(error)}): ${reason}`, secrets).trim())
+    throw new BackupDumpError(redact(`pg_dump could not be run (${codeOf(error)}): ${reason}`).trim())
   }
 }
 
