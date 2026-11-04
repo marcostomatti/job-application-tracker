@@ -24,7 +24,7 @@ type Grant = { claims: IdClaims; clientId: string; redirectUri: string; challeng
  * Starts a provider on an ephemeral loopback port: discovery, a JWKS with one RSA key, and a
  * token endpoint that checks the code, the redirect URI and the PKCE verifier as a real one does.
  */
-export async function startMockIssuer(clientId: string): Promise<MockIssuer> {
+export async function startMockIssuer(clientId: string, options: { trailingSlash?: boolean } = {}): Promise<MockIssuer> {
   const { privateKey, publicKey } = await generateKeyPair('RS256')
   const other = await generateKeyPair('RS256')
   const jwk: JWK = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' }
@@ -33,6 +33,7 @@ export async function startMockIssuer(clientId: string): Promise<MockIssuer> {
   let tampering: Parameters<MockIssuer['tamper']>[0] = {}
 
   let issuer = ''
+  const base = (): string => issuer.replace(/\/$/, '')
   const server: ReturnType<typeof Bun.serve> = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -41,9 +42,9 @@ export async function startMockIssuer(clientId: string): Promise<MockIssuer> {
       if (url.pathname === '/.well-known/openid-configuration') {
         return Response.json({
           issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          jwks_uri: `${issuer}/jwks`,
+          authorization_endpoint: `${base()}/authorize`,
+          token_endpoint: `${base()}/token`,
+          jwks_uri: `${base()}/jwks`,
         })
       }
       if (url.pathname === '/jwks') return Response.json({ keys: [jwk] })
@@ -51,7 +52,8 @@ export async function startMockIssuer(clientId: string): Promise<MockIssuer> {
       return new Response('not found', { status: 404 })
     },
   })
-  issuer = `http://127.0.0.1:${server.port}`
+  const origin = `http://127.0.0.1:${server.port}`
+  issuer = options.trailingSlash ? `${origin}/` : origin
 
   async function sign(claims: IdClaims, options: { audience?: string; issuer?: string; otherKey?: boolean } = {}): Promise<string> {
     return new SignJWT(claims)

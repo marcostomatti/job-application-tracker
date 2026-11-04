@@ -65,6 +65,19 @@ describe('the authorization request', () => {
 })
 
 describe('completeLogin', () => {
+  test("an issuer written with a trailing slash is matched as the provider writes it", async () => {
+    const slashed = await startMockIssuer(CLIENT_ID, { trailingSlash: true })
+    try {
+      const client = new OidcClient({ ...config, issuer: slashed.issuer.replace(/\/$/, '') })
+      const pending = newPendingLogin()
+      const code = slashed.approve(await client.authorizationUrl(pending), { sub: SUBJECT, email: EMAIL, email_verified: true })
+
+      expect((await client.completeLogin({ code, pending })).sub).toBe(SUBJECT)
+    } finally {
+      await slashed.stop()
+    }
+  })
+
   test('a verified ID token for the allowed email signs in, and the verifier reached the token endpoint', async () => {
     const client = new OidcClient(config)
     const { pending, code } = await approved(client, { sub: SUBJECT, email: EMAIL, email_verified: true })

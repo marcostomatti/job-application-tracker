@@ -6,6 +6,8 @@ import type { OidcConfig } from './config.ts'
 
 /** The three endpoints this app uses from a provider's discovery document. */
 export interface OidcEndpoints {
+  /** The issuer exactly as the provider writes it, trailing slash and all, which is what its ID tokens carry in `iss`. */
+  readonly issuer: string
   readonly authorizationEndpoint: string
   readonly tokenEndpoint: string
   readonly jwksUri: string
@@ -74,6 +76,7 @@ export class OidcClient {
       throw new OidcLoginError('the discovery document names another issuer')
     }
     return {
+      issuer: document.issuer,
       authorizationEndpoint: endpoint(document, 'authorization_endpoint'),
       tokenEndpoint: endpoint(document, 'token_endpoint'),
       jwksUri: endpoint(document, 'jwks_uri'),
@@ -101,7 +104,7 @@ export class OidcClient {
    * `OidcLoginError` for every refusal.
    */
   async completeLogin(input: { code: string; pending: PendingLogin }): Promise<JWTPayload> {
-    const { tokenEndpoint, jwksUri } = await this.discover()
+    const { issuer, tokenEndpoint, jwksUri } = await this.discover()
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       code: input.code,
@@ -123,7 +126,7 @@ export class OidcClient {
     let claims: JWTPayload
     try {
       claims = (await jwtVerify(tokens.id_token, this.jwks, {
-        issuer: this.config.issuer,
+        issuer,
         audience: this.config.clientId,
         requiredClaims: ['exp', 'iat', 'sub'],
       })).payload
