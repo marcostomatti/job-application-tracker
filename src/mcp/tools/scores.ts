@@ -33,6 +33,7 @@ export const scoreTools: ToolDefinition[] = [
       'Scores ONE position against ONE criteria set from the ratings and penalties you give, and returns { score, stageEvent }. ' +
       'The score carries its overall value, floor, ceiling, the limiting requirement and recommendApply. ' +
       'If the score recommends applying and the position is not already applied, the position is also moved to the first open stage of the phase flagged shortlist, and stageEvent is that move; otherwise stageEvent is null, including when no shortlist phase exists. ' +
+      'The move follows THIS score only: a position scored under a set that says no is not moved, even when another current set recommends it, so a position can appear in the recommended filter (position_search with recommendApply true, which looks across all current sets) without having been shortlisted. ' +
       'The score and the move are one atomic step. Scoring the same position and set again on the same day replaces that score; on a later day it adds a re-score. ' +
       'A rating needs a coverage from 0 to 1, or null for not rated; a requirement you do not rate counts as not rated. Get requirement ids from criteria_requirements.',
     input: ScorePositionInputSchema,

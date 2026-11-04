@@ -191,6 +191,13 @@ async function findShortlistStageId(db: Db): Promise<number | null> {
  * or that phase holds no usable stage: the registries ship empty, and a re-score must not
  * fail because the user has not built their vocabulary yet.
  *
+ * The caller passes the flag of the score it has just written, not the across-sets answer of
+ * spec section 8. That is deliberate: the move is a consequence of the scoring action, so a
+ * position scored under a set that said no must not be shortlisted because some other set
+ * says yes. The cost is a known inconsistency: a position that another set recommends is in
+ * the recommended filter (`searchPositions`) without having been shortlisted, until a score
+ * under a recommending set moves it, or the user does.
+ *
  * The check and the write run under the position's row lock, so an application filed by
  * another transaction between them cannot be moved back to the shortlist.
  *

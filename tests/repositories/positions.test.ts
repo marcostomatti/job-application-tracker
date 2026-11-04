@@ -21,6 +21,7 @@ import { positionDisposition, positionStageEvent } from '../../src/data/schema/d
 import { company, position } from '../../src/data/schema/positions.ts'
 import { origin } from '../../src/data/schema/provenance.ts'
 import { positionPenalty, positionRating, positionScore } from '../../src/data/schema/scores.ts'
+import { getBestScores } from '../../src/data/repositories/scores.ts'
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
 import { BULK_MAX, bulkOf } from '../../src/schemas/common.ts'
 import {
@@ -723,6 +724,32 @@ describe('searchPositions', () => {
     expect(rows[0]?.phase?.label).toBe('A phase')
   })
 
+  test('shows one score per set name, the newest version\'s, as getBestScores does', async () => {
+    // Arrange / Act
+    const { detail, best } = await withMigratedScratchDatabase(async (db) => {
+      const { id } = await addOne(db, role('Acme', 'One'))
+      const created = await db
+        .insert(criteriaSet)
+        .values([
+          { name: 'web-search', version: 1 },
+          { name: 'web-search', version: 2 },
+          { name: 'other', version: 1 },
+        ])
+        .returning()
+      await db.insert(positionScore).values([
+        { positionId: id, criteriaSetId: idOf(created, 0), scoredAt: '2026-01-01', overall: 0.9, recommendApply: true },
+        { positionId: id, criteriaSetId: idOf(created, 1), scoredAt: '2026-02-01', overall: 0.2 },
+        { positionId: id, criteriaSetId: idOf(created, 2), scoredAt: '2026-02-01', overall: 0.4 },
+      ])
+      return { detail: await getPosition(db, id), best: await getBestScores(db, id) }
+    })
+
+    // Assert: the modal and the "+n" chip count the same lenses
+    expect(detail.scores.map((entry) => entry.score.id).sort()).toEqual(best.map((row) => row.id).sort())
+    expect(detail.scores).toHaveLength(2)
+    expect(detail.scores.map((entry) => entry.score.overall).sort()).toEqual([0.2, 0.4])
+  })
+
   test('shows the same latest score per criteria set as getPosition', async () => {
     // Arrange / Act: scores written newest first, so id order and date order disagree
     const { setAId, setBId, detail, forA, forB } = await withMigratedScratchDatabase(async (db) => {
@@ -863,6 +890,72 @@ describe('searchPositions', () => {
       // Assert: v1's old yes does not count, and a position v2 has not scored matches neither answer
       expect(yes).toEqual([])
       expect(titles(no)).toEqual(['Declined by v2'])
+    })
+
+    test('shows the score that caused the match, not the default set\'s denial', async () => {
+      // Arrange / Act: the default set declines the position; another set recommends it
+      const { yes, no, unfiltered, otherId } = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Only B'))
+        const [defaultId, otherId] = await sets(db, [
+          { name: 'standard', version: 1, isDefault: true },
+          { name: 'other', version: 1 },
+        ])
+        await db.insert(positionScore).values([score(id, need(defaultId), false), score(id, need(otherId), true)])
+        return {
+          otherId: need(otherId),
+          yes: await searchPositions(db, queryOf({ recommendApply: true })),
+          no: await searchPositions(db, queryOf({ recommendApply: false })),
+          unfiltered: await searchPositions(db, queryOf()),
+        }
+      })
+
+      // Assert: the filtered row carries the recommending set's score; with no answer asked the default set's score stays
+      expect(yes[0]?.score).toMatchObject({ criteriaSetId: otherId, recommendApply: true })
+      expect(no).toEqual([])
+      expect(unfiltered[0]?.score).toMatchObject({ recommendApply: false })
+    })
+
+    test('shows the best-scoring of several recommending sets, ties going to the later score', async () => {
+      // Arrange / Act
+      const { rows, highId, lateId } = await withMigratedScratchDatabase(async (db) => {
+        const [high, tied] = await addPositions(db, [role('Acme', 'High'), role('Acme', 'Tied')])
+        const [a, b, c] = await sets(db, [
+          { name: 'a', version: 1, isDefault: true },
+          { name: 'b', version: 1 },
+          { name: 'c', version: 1 },
+        ])
+        const highPosition = idOf([high as { id: number }])
+        const tiedPosition = idOf([tied as { id: number }])
+        await db.insert(positionScore).values([
+          { ...score(highPosition, need(a), true), overall: 0.6 },
+          { ...score(highPosition, need(b), true), overall: 0.95 },
+          { ...score(highPosition, need(c), false), overall: 0.99 },
+          { ...score(tiedPosition, need(a), true, '2026-01-01'), overall: 0.8 },
+          { ...score(tiedPosition, need(b), true, '2026-03-01'), overall: 0.8 },
+        ])
+        return { rows: await searchPositions(db, queryOf({ recommendApply: true })), highId: need(b), lateId: need(b) }
+      })
+
+      // Assert: a declining set never supplies the score, even with the highest overall
+      const byTitle = (title: string) => rows.find((row) => row.position.roleTitle === title)?.score
+      expect(byTitle('High')).toMatchObject({ criteriaSetId: highId, overall: 0.95 })
+      expect(byTitle('Tied')).toMatchObject({ criteriaSetId: lateId, scoredAt: '2026-03-01' })
+    })
+
+    test('shows a declining score for the declined answer', async () => {
+      // Arrange / Act
+      const no = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Declined'))
+        const [a, b] = await sets(db, [
+          { name: 'a', version: 1, isDefault: true },
+          { name: 'b', version: 1 },
+        ])
+        await db.insert(positionScore).values([{ ...score(id, need(a), false), overall: 0.2 }, { ...score(id, need(b), false), overall: 0.4 }])
+        return searchPositions(db, queryOf({ recommendApply: false }))
+      })
+
+      // Assert: the declined row is not left without a score, and shows its best declining one
+      expect(no[0]?.score).toMatchObject({ recommendApply: false, overall: 0.4 })
     })
 
     test('lists a position recommended by a higher version whatever an older version says', async () => {

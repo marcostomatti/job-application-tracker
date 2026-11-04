@@ -65,7 +65,8 @@ export const criteriaTools: ToolDefinition[] = [
       'Copies a criteria set, with its requirements, weights, threshold and detours, into a new set and returns it. ' +
       'The version number is assigned for you: one past the highest version of the target name. By default the copy keeps the source\'s name; give name to file it under another, which starts at version 1. ' +
       'The copy is never the default and never archived; use criteria_set_default to promote it. ' +
-      'Prefer this to editing a set that has already been used for scoring, so old scores keep their meaning.',
+      'Prefer this to editing a set that has already been used for scoring, so old scores keep their meaning. ' +
+      'EXPECT positions to drop out of the recommended-for-apply list: a new version of a name supersedes the older ones at once, and only the newest version of each name counts toward a recommendation, so every position that was recommended only by the older version stops being recommended until it is scored against the new one. That is deliberate (the new criteria have not been applied yet, so the answer is unknown, not a stale yes). Fix it with rescore_request for the new set, then score each pending position with score_position. A copy filed under a different name starts at version 1 and supersedes nothing.',
     input: CriteriaVersionInputSchema,
     run: async (args, db) => createCriteriaVersion(db, args),
   }),

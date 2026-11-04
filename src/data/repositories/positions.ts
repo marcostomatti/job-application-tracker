@@ -78,8 +78,9 @@ export type PositionDetail = {
 
 /**
  * One row of the board and the grid. `stage` and `phase` come from the position's latest
- * stage event; `score` is the latest score under the criteria set the query named, or the
- * default set. `setAside` says whether any disposition of kind `set_aside` exists, so a
+ * stage event; `score` is the latest score under the criteria set the query named; else, when
+ * the query asked for an answer to `recommendApply`, the standing score that gives it; else the
+ * default set's latest. `setAside` says whether any disposition of kind `set_aside` exists, so a
  * caller that asked to include set-aside positions can tell which they are.
  */
 export type PositionListRow = {
@@ -272,7 +273,7 @@ async function readLatestStage(db: Db, positionId: number): Promise<LatestStage 
   return { event, stage, phase }
 }
 
-/** The newest score under each criteria set; a position keeps its history, the modal shows the head of each. */
+/** The newest score under each criteria set; a position keeps its history, the modal shows the head of each set that is not superseded. */
 function latestPerSet(scores: readonly Score[]): Score[] {
   const seen = new Set<number>()
   return scores.filter((score) => {
@@ -307,7 +308,7 @@ async function readLatestScores(db: Db, positionId: number): Promise<ScoreDetail
   const history = await db
     .select()
     .from(positionScore)
-    .where(eq(positionScore.positionId, positionId))
+    .where(and(eq(positionScore.positionId, positionId), sql`${positionScore.criteriaSetId} in ${nonSupersededSetIds()}`))
     .orderBy(asc(positionScore.criteriaSetId), desc(positionScore.scoredAt), desc(positionScore.id))
   const latest = latestPerSet(history)
   if (latest.length === 0) return []
@@ -352,7 +353,9 @@ async function readOrigins(db: Db, positionId: number): Promise<OriginDetail[]> 
 
 /**
  * The detail modal's read: the position with its company, its summary, its latest stage
- * event, the latest score under each criteria set, its dispositions and its origins. Every
+ * event, the latest score under each criteria set that is not superseded (the same sets
+ * `getBestScores` keeps, so the modal and the "+n" chip count the same lenses), its
+ * dispositions and its origins. Every
  * registry label is read whatever its archival state, so nothing renders blank.
  */
 export async function getPosition(db: Db, id: number): Promise<PositionDetail> {
@@ -401,17 +404,34 @@ const CANDIDATE_ALIAS = 'standing_score'
 const standingScore = alias(positionScore, CANDIDATE_ALIAS)
 
 /**
- * Whether the position has a standing score, and, when `recommending` is set, one that
- * recommends apply. A standing score is the latest score (by day, then id) of a non-superseded
- * criteria set (`nonSupersededSetIds`). Each set's latest is picked first and its flag tested
+ * The part of a statement that makes `standing_score` a standing score of the row being read: a
+ * score of that position, under a non-superseded criteria set (`nonSupersededSetIds`), and the
+ * latest of its set (by day, then id). Each set's latest is picked first and any flag tested
  * after, so a recommendation that a later score withdrew does not count.
  */
+function isStandingScore(): SQL {
+  return sql`${standingScore.positionId} = ${position.id}
+    and ${standingScore.criteriaSetId} in ${nonSupersededSetIds()}
+    and ${standingScore.id} = ${latestScoreId(sql`${standingScore.criteriaSetId}`)}`
+}
+
+/** Whether the position has a standing score, and, when `recommending` is set, one that recommends apply. */
 function hasStandingScore(recommending: boolean): SQL<boolean> {
   const flag = recommending ? sql`and ${standingScore.recommendApply}` : sql``
-  return sql<boolean>`exists (select 1 from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)}
-    where ${standingScore.positionId} = ${position.id}
-    and ${standingScore.criteriaSetId} in ${nonSupersededSetIds()}
-    and ${standingScore.id} = ${latestScoreId(sql`${standingScore.criteriaSetId}`)} ${flag})`
+  return sql<boolean>`exists (select 1 from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)} where ${isStandingScore()} ${flag})`
+}
+
+/**
+ * The id of the standing score that gives the answer `answer` to `recommendApply`, the one a row
+ * displays when it was listed for that answer without a set named. Several sets can give the
+ * same answer, so the pick is the best-scoring (the largest `overall`, which section 8
+ * normalises so it compares across sets, and section 9.2 shows "the best-scoring set"), then the
+ * later day, then the later id, so the same data always shows the same score. Null when none gives it.
+ */
+function answeringScoreId(answer: boolean): SQL {
+  return sql`(select ${standingScore.id} from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)}
+    where ${isStandingScore()} and ${standingScore.recommendApply} = ${answer}
+    order by ${standingScore.overall} desc nulls last, ${standingScore.scoredAt} desc, ${standingScore.id} desc limit 1)`
 }
 
 /**
@@ -424,6 +444,16 @@ function hasStandingScore(recommending: boolean): SQL<boolean> {
 function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefined): SQL {
   if (criteriaSetId !== undefined) return eq(positionScore.recommendApply, answer)
   return answer ? hasStandingScore(true) : sql`(${hasStandingScore(false)} and not ${hasStandingScore(true)})`
+}
+
+/**
+ * The id of the score a row carries. With a set named, that set's latest. Asked for an answer
+ * to `recommendApply` with none named, the standing score that gives the answer (`answeringScoreId`),
+ * so a row never displays a score that denies why it was listed. Otherwise the default set's latest.
+ */
+function displayedScoreId(query: PositionQuery): SQL {
+  if (query.criteriaSetId === undefined && query.recommendApply !== undefined) return answeringScoreId(query.recommendApply)
+  return latestScoreId(criteriaSetFor(query))
 }
 
 function isSetAside(): SQL<boolean> {
@@ -458,8 +488,9 @@ function conditionsOf(query: PositionQuery): SQL[] {
  *
  * `recommendApply` with no `criteriaSetId` is the across-sets rule of the spec's section 8,
  * not the default set's answer: a position matches `true` when any non-superseded set's latest
- * score recommends apply. The row's own `score` is still the default set's latest, so a row
- * listed because another set recommends it can carry a default-set score that does not.
+ * score recommends apply. The row's `score` is then the standing score that gives the answer
+ * (the best-scoring one when several do), not the default set's, so a listed row never shows a
+ * score that contradicts why it is listed. With no `recommendApply` either, it is the default set's.
  */
 export async function searchPositions(db: Db, query: PositionQuery): Promise<PositionListRow[]> {
   const rows = await db
@@ -476,7 +507,7 @@ export async function searchPositions(db: Db, query: PositionQuery): Promise<Pos
     .leftJoin(positionStageEvent, eq(positionStageEvent.id, latestStageEventId()))
     .leftJoin(stageTable, eq(stageTable.id, positionStageEvent.stageId))
     .leftJoin(phaseTable, eq(phaseTable.id, stageTable.phaseId))
-    .leftJoin(positionScore, eq(positionScore.id, latestScoreId(criteriaSetFor(query))))
+    .leftJoin(positionScore, eq(positionScore.id, displayedScoreId(query)))
     .where(and(...conditionsOf(query)))
     .orderBy(desc(position.seenAt), desc(position.id))
     .limit(query.limit)

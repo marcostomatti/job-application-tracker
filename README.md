@@ -62,6 +62,29 @@ set exists and changes nothing. The loaded set is not made the default; you choo
 `bun run lint:migrations` rejects any pack in `seeds/vanilla/` with a weight or an apply
 threshold set, and `seed:pack` refuses such a file too.
 
+## New criteria versions and the recommended list
+
+A position is recommended for apply when at least one **current** criteria set puts it over
+that set's own threshold. Current means the highest `version` of a set `name`, so each name
+counts once, however many versions it has.
+
+**Publishing a new version of a criteria set empties the recommended list of everything only
+the older version recommended, until those positions are scored again.** This is expected, not
+a fault: the new criteria have not been applied to them yet, so the honest answer is "unknown"
+and not a stale yes from the old criteria. The older scores stay in the history. To refill the
+list, ask for a re-score of the new set (the `rescore_request` tool), then score each pending
+position against it.
+
+Two reads follow from the same rule. The board shows a position that another current set
+recommends even when the default set does not, and the row then displays the recommending
+set's score (the best-scoring one if several recommend). Scoring moves a position to the
+shortlist only when the score just written recommends it, so such a position can be in the
+recommended list without having been shortlisted.
+
+Archiving a set does not change this: an archived set that is the newest version of its name
+still counts, because nothing can be scored against it any more and only a newer version of the
+same name withdraws its recommendation.
+
 ## Backups
 
 `bun run backup` writes one `pg_dump` of the database into `backups/` and removes older dumps,
