@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "job-tracker": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd \"${CLAUDE_PLUGIN_ROOT}\" && exec bun run mcp"
+      ]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "job-tracker": {
+      "command": "bun",
+      "args": ["run", "mcp"]
+    }
+  }
+}
