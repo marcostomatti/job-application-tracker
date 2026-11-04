@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import type { DrizzleClient } from '../../src/data/client.ts'
-import { addPositions } from '../../src/data/repositories/positions.ts'
+import { addPostings } from '../../src/data/repositories/postings.ts'
 import { listPendingRescore, requestRescore } from '../../src/data/repositories/rescore.ts'
-import { scorePosition } from '../../src/data/repositories/scores.ts'
+import { scorePosting } from '../../src/data/repositories/scores.ts'
 import { insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
 import { NotFoundError } from '../../src/errors.ts'
 import { PendingRescoreQuerySchema, RescoreRequestInputSchema } from '../../src/schemas/scores.ts'
@@ -30,9 +30,9 @@ function idOf(rows: readonly { readonly id: number }[], index = 0): number {
   return id
 }
 
-/** Two sets with one requirement each, and two positions: one seen before `SINCE`, one after. */
+/** Two sets with one requirement each, and two postings: one seen before `SINCE`, one after. */
 async function arrange(db: DrizzleClient): Promise<Arranged> {
-  const positions = await addPositions(db, [
+  const postings = await addPostings(db, [
     { company: { name: 'Early Co' }, roleTitle: 'Engineer', seenAt: BEFORE_SINCE },
     { company: { name: 'Late Co' }, roleTitle: 'Engineer', seenAt: AFTER_SINCE },
   ])
@@ -50,13 +50,13 @@ async function arrange(db: DrizzleClient): Promise<Arranged> {
     otherSetId: otherSet.id,
     requirementId: idOf(rows, 0),
     otherRequirementId: idOf(rows, 1),
-    early: idOf(positions, 0),
-    late: idOf(positions, 1),
+    early: idOf(postings, 0),
+    late: idOf(postings, 1),
   }
 }
 
 describe('requestRescore', () => {
-  test('stores the intent and returns the row, with no list of positions on it', async () => {
+  test('stores the intent and returns the row, with no list of postings on it', async () => {
     // Arrange / Act
     const request = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
@@ -84,7 +84,7 @@ describe('requestRescore', () => {
 })
 
 describe('listPendingRescore', () => {
-  test('lists the positions seen on or after the date, with the request and set they wait on', async () => {
+  test('lists the postings seen on or after the date, with the request and set they wait on', async () => {
     // Arrange / Act
     const { arranged, request, pending } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
@@ -92,18 +92,18 @@ describe('listPendingRescore', () => {
       return { arranged, request, pending: await listPendingRescore(db) }
     })
 
-    // Assert: the position seen before the date is not waiting
-    expect(pending).toEqual([{ rescoreRequestId: request.id, positionId: arranged.late, criteriaSetId: arranged.setId }])
+    // Assert: the posting seen before the date is not waiting
+    expect(pending).toEqual([{ rescoreRequestId: request.id, postingId: arranged.late, criteriaSetId: arranged.setId }])
   })
 
-  test('drops a position as soon as it has a score for that set', async () => {
+  test('drops a posting as soon as it has a score for that set', async () => {
     // Arrange / Act
     const { arranged, before, after } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const request = await requestRescore(db, { criteriaSetId: arranged.setId, sinceDate: SINCE })
       const before = await listPendingRescore(db, request.id)
-      await scorePosition(db, {
-        positionId: arranged.late,
+      await scorePosting(db, {
+        postingId: arranged.late,
         criteriaSetId: arranged.setId,
         ratings: [{ requirementId: arranged.requirementId, coverage: 1, confidence: 'supported' }],
         penalties: [],
@@ -112,7 +112,7 @@ describe('listPendingRescore', () => {
     })
 
     // Assert
-    expect(before.map((row) => row.positionId)).toEqual([arranged.late])
+    expect(before.map((row) => row.postingId)).toEqual([arranged.late])
     expect(after).toEqual([])
   })
 
@@ -121,8 +121,8 @@ describe('listPendingRescore', () => {
     const { arranged, pending } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const request = await requestRescore(db, { criteriaSetId: arranged.setId, sinceDate: SINCE })
-      await scorePosition(db, {
-        positionId: arranged.late,
+      await scorePosting(db, {
+        postingId: arranged.late,
         criteriaSetId: arranged.otherSetId,
         ratings: [{ requirementId: arranged.otherRequirementId, coverage: 1, confidence: 'supported' }],
         penalties: [],
@@ -131,10 +131,10 @@ describe('listPendingRescore', () => {
     })
 
     // Assert
-    expect(pending.map((row) => row.positionId)).toEqual([arranged.late])
+    expect(pending.map((row) => row.postingId)).toEqual([arranged.late])
   })
 
-  test('narrows to one request, keeps the others apart, and lists in request then position order', async () => {
+  test('narrows to one request, keeps the others apart, and lists in request then posting order', async () => {
     // Arrange / Act
     const { arranged, first, second, all, onlySecond } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
@@ -150,7 +150,7 @@ describe('listPendingRescore', () => {
     })
 
     // Assert
-    expect(all.map((row) => [row.rescoreRequestId, row.positionId])).toEqual([
+    expect(all.map((row) => [row.rescoreRequestId, row.postingId])).toEqual([
       [first.id, arranged.late],
       [second.id, arranged.early],
       [second.id, arranged.late],
@@ -177,12 +177,12 @@ describe('listPendingRescore', () => {
     expect(missing).toBeInstanceOf(NotFoundError)
   })
 
-  test('a position already scored for the set when the request is made is not pending', async () => {
+  test('a posting already scored for the set when the request is made is not pending', async () => {
     // Arrange / Act
     const { pending } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      await scorePosition(db, {
-        positionId: arranged.late,
+      await scorePosting(db, {
+        postingId: arranged.late,
         criteriaSetId: arranged.setId,
         ratings: [{ requirementId: arranged.requirementId, coverage: 1, confidence: 'supported' }],
         penalties: [],

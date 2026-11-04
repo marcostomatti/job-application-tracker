@@ -9,7 +9,7 @@ const text = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 const unitInterval = z.number().min(0).max(1)
 
 /**
- * How well the position covers one detour of the rated requirement: the per-position half of a
+ * How well the posting covers one detour of the rated requirement: the per-posting half of a
  * detour, whose label and discount belong to the criteria set. Like a rating's, `null` is not rated.
  */
 export const DetourCoverageInputSchema = z.strictObject({
@@ -25,7 +25,7 @@ export type DetourCoverageInput = z.infer<typeof DetourCoverageInputSchema>
  * a caller who leaves the field out has most likely forgotten it, so it is refused rather than
  * read as either. A requirement the call does not mention at all is also not rated.
  *
- * `detours` says how well the position covers each way round this requirement; a detour left
+ * `detours` says how well the posting covers each way round this requirement; a detour left
  * out is not rated. A detour coverage qualifies a rating of the same requirement, so it needs
  * that rating to exist: a caller with no direct assessment of the requirement but a detour to
  * report sends the rating with `coverage: null` and the detour beside it. The requirement then
@@ -61,13 +61,13 @@ export const detourIdsOf = (ratings: readonly RatingInput[]): number[] =>
 const hasDuplicate = (values: readonly number[]): boolean => new Set(values).size !== values.length
 
 /**
- * One scoring pass of one position against one criteria set. A requirement rated twice or a
+ * One scoring pass of one posting against one criteria set. A requirement rated twice or a
  * detour given two coverages, or a penalty kind used twice, is refused here, where the caller can see which, because the tables
  * hold one row of each per score and would otherwise answer with a driver error.
  */
-export const ScorePositionInputSchema = z
+export const ScorePostingInputSchema = z
   .strictObject({
-    positionId: IdSchema,
+    postingId: IdSchema,
     criteriaSetId: IdSchema,
     ratings: z.array(RatingInputSchema),
     penalties: z.array(PenaltyInputSchema),
@@ -85,16 +85,16 @@ export const ScorePositionInputSchema = z
     }
   })
 
-export type ScorePositionInput = z.infer<typeof ScorePositionInputSchema>
+export type ScorePostingInput = z.infer<typeof ScorePostingInputSchema>
 
-export const ScorePositionBulkSchema = bulkOf(ScorePositionInputSchema)
+export const ScorePostingBulkSchema = bulkOf(ScorePostingInputSchema)
 
-/** The position whose scores a read returns. */
-export const PositionScoresQuerySchema = z.strictObject({ positionId: IdSchema })
+/** The posting whose scores a read returns. */
+export const PostingScoresQuerySchema = z.strictObject({ postingId: IdSchema })
 
-export type PositionScoresQuery = z.infer<typeof PositionScoresQuerySchema>
+export type PostingScoresQuery = z.infer<typeof PostingScoresQuerySchema>
 
-/** A request that every position seen on or after `sinceDate` be scored against the set. */
+/** A request that every posting seen on or after `sinceDate` be scored against the set. */
 export const RescoreRequestInputSchema = z.strictObject({
   criteriaSetId: IdSchema,
   sinceDate: z.iso.date(),
@@ -102,7 +102,7 @@ export const RescoreRequestInputSchema = z.strictObject({
 
 export type RescoreRequestInput = z.infer<typeof RescoreRequestInputSchema>
 
-/** Which pending positions a read returns: those of one request, or of every request. */
+/** Which pending postings a read returns: those of one request, or of every request. */
 export const PendingRescoreQuerySchema = z.strictObject({
   rescoreRequestId: IdSchema.optional(),
 })

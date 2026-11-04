@@ -4,19 +4,19 @@ import { alias } from 'drizzle-orm/pg-core'
 import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
 import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/discriminators.ts'
-import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePositionInput } from '../../schemas/scores.ts'
+import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePostingInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
-import { position } from '../schema/positions.ts'
-import { positionPenalty, positionRating, positionRatingDetour, positionScore } from '../schema/scores.ts'
+import { posting } from '../schema/postings.ts'
+import { postingPenalty, postingRating, postingRatingDetour, postingScore } from '../schema/scores.ts'
 import { findUsableCriteriaSet, getRequirements, nonSupersededSetIds, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived } from './registries.ts'
 
-type StoredScore = InferSelectModel<typeof positionScore>
-type NewScore = typeof positionScore.$inferInsert
+type StoredScore = InferSelectModel<typeof postingScore>
+type NewScore = typeof postingScore.$inferInsert
 
 /**
  * A stored score as a caller reads it: the row, plus the keys of the requirements the table
@@ -35,8 +35,8 @@ export type ScoreRow = StoredScore & {
 }
 
 /**
- * The columns `scorePosition` writes to a score row, in one place: what the scoring function
- * returned, mapped to the table's names, and the note. The position, the set, the day and
+ * The columns `scorePosting` writes to a score row, in one place: what the scoring function
+ * returned, mapped to the table's names, and the note. The posting, the set, the day and
  * `isRescore` are set by the code that owns them. The write copies exactly these keys.
  */
 const SCORE_COLUMNS = [
@@ -56,9 +56,9 @@ type ScoreValues = Pick<NewScore, (typeof SCORE_COLUMNS)[number]>
 const limiterRequirement = alias(requirement, 'limiter_requirement')
 const runnerUpRequirement = alias(requirement, 'runner_up_requirement')
 
-async function assertPositionExists(db: Db, positionId: number): Promise<void> {
-  const [found] = await db.select({ id: position.id }).from(position).where(eq(position.id, positionId))
-  if (!found) throw new NotFoundError('position', positionId)
+async function assertPostingExists(db: Db, postingId: number): Promise<void> {
+  const [found] = await db.select({ id: posting.id }).from(posting).where(eq(posting.id, postingId))
+  if (!found) throw new NotFoundError('posting', postingId)
 }
 
 /** The stored kind as the discriminator the scoring function reads. The table's CHECK allows nothing else, so a miss is a broken invariant. */
@@ -88,7 +88,7 @@ function coverageOfDetour(rating: RatingInput | undefined, detourId: number): nu
  * What `scoreAgainstSet` reads, built from the stored set and what the caller rated. Ratings and
  * penalties are keyed by requirement id and penalty kind id in the table and by key in the
  * function, so each id is translated to its key here. A rating naming a requirement outside the
- * set has no key and takes no part in the arithmetic; the composite key on `position_rating`
+ * set has no key and takes no part in the arithmetic; the composite key on `posting_rating`
  * then refuses the row when it is written, which rolls the whole score back.
  *
  * A detour's coverage is the one the caller gave under the rating of its requirement, and null
@@ -144,16 +144,16 @@ function toScoreValues(result: ScoreResult, requirements: readonly RequirementRo
   }
 }
 
-/** Whether this position was scored against this set on an earlier day, which is what makes a new row a re-score. */
-async function hasEarlierScore(db: Db, positionId: number, criteriaSetId: number): Promise<boolean> {
+/** Whether this posting was scored against this set on an earlier day, which is what makes a new row a re-score. */
+async function hasEarlierScore(db: Db, postingId: number, criteriaSetId: number): Promise<boolean> {
   const [found] = await db
-    .select({ id: positionScore.id })
-    .from(positionScore)
+    .select({ id: postingScore.id })
+    .from(postingScore)
     .where(
       and(
-        eq(positionScore.positionId, positionId),
-        eq(positionScore.criteriaSetId, criteriaSetId),
-        lt(positionScore.scoredAt, sql`CURRENT_DATE`),
+        eq(postingScore.postingId, postingId),
+        eq(postingScore.criteriaSetId, criteriaSetId),
+        lt(postingScore.scoredAt, sql`CURRENT_DATE`),
       ),
     )
     .limit(1)
@@ -161,19 +161,19 @@ async function hasEarlierScore(db: Db, positionId: number, criteriaSetId: number
 }
 
 /**
- * Writes today's score row for the position and set: inserts it, or replaces the numbers on the
+ * Writes today's score row for the posting and set: inserts it, or replaces the numbers on the
  * row that already exists for today. One statement, so two callers scoring the same day cannot
  * both insert and the loser fail on the unique key; the second waits for the first's row, then
  * updates it. A same-day update leaves `isRescore` as it was, because it does not change whether
  * an earlier day's score exists.
  */
-async function upsertScoreRow(db: Db, input: ScorePositionInput, values: ScoreValues): Promise<StoredScore> {
-  const isRescore = await hasEarlierScore(db, input.positionId, input.criteriaSetId)
+async function upsertScoreRow(db: Db, input: ScorePostingInput, values: ScoreValues): Promise<StoredScore> {
+  const isRescore = await hasEarlierScore(db, input.postingId, input.criteriaSetId)
   const [written] = await db
-    .insert(positionScore)
-    .values({ positionId: input.positionId, criteriaSetId: input.criteriaSetId, isRescore, ...pickDefined(values, SCORE_COLUMNS) })
+    .insert(postingScore)
+    .values({ postingId: input.postingId, criteriaSetId: input.criteriaSetId, isRescore, ...pickDefined(values, SCORE_COLUMNS) })
     .onConflictDoUpdate({
-      target: [positionScore.positionId, positionScore.criteriaSetId, positionScore.scoredAt],
+      target: [postingScore.postingId, postingScore.criteriaSetId, postingScore.scoredAt],
       set: pickDefined(values, SCORE_COLUMNS),
     })
     .returning()
@@ -183,7 +183,7 @@ async function upsertScoreRow(db: Db, input: ScorePositionInput, values: ScoreVa
 
 async function insertRatings(db: Db, score: StoredScore, ratings: readonly RatingInput[]): Promise<void> {
   if (ratings.length === 0) return
-  await db.insert(positionRating).values(
+  await db.insert(postingRating).values(
     ratings.map((rating) => ({
       scoreId: score.id,
       criteriaSetId: score.criteriaSetId,
@@ -204,12 +204,12 @@ async function insertDetourCoverages(db: Db, score: StoredScore, ratings: readon
       coverage: entry.coverage,
     })),
   )
-  if (rows.length > 0) await db.insert(positionRatingDetour).values(rows)
+  if (rows.length > 0) await db.insert(postingRatingDetour).values(rows)
 }
 
 async function insertPenalties(db: Db, score: StoredScore, penalties: readonly PenaltyInput[]): Promise<void> {
   if (penalties.length === 0) return
-  await db.insert(positionPenalty).values(
+  await db.insert(postingPenalty).values(
     penalties.map((penalty) => ({
       scoreId: score.id,
       penaltyKindId: penalty.penaltyKindId,
@@ -226,16 +226,16 @@ async function insertPenalties(db: Db, score: StoredScore, penalties: readonly P
  * a score that never saw it. A detour coverage hangs off its rating by a cascading key, so
  * deleting the ratings deletes the coverages with them.
  */
-async function replaceRatingsAndPenalties(db: Db, score: StoredScore, input: ScorePositionInput): Promise<void> {
-  await db.delete(positionRating).where(eq(positionRating.scoreId, score.id))
-  await db.delete(positionPenalty).where(eq(positionPenalty.scoreId, score.id))
+async function replaceRatingsAndPenalties(db: Db, score: StoredScore, input: ScorePostingInput): Promise<void> {
+  await db.delete(postingRating).where(eq(postingRating.scoreId, score.id))
+  await db.delete(postingPenalty).where(eq(postingPenalty.scoreId, score.id))
   await insertRatings(db, score, input.ratings)
   await insertDetourCoverages(db, score, input.ratings)
   await insertPenalties(db, score, input.penalties)
 }
 
-const REQUIREMENT_OUTSIDE_SET = 'position_rating_set_requirement_fk'
-const DETOUR_OF_OTHER_REQUIREMENT = 'position_rating_detour_detour_fk'
+const REQUIREMENT_OUTSIDE_SET = 'posting_rating_set_requirement_fk'
+const DETOUR_OF_OTHER_REQUIREMENT = 'posting_rating_detour_detour_fk'
 
 /**
  * Types the two foreign-key faults a caller can cause, and leaves every other error as it was.
@@ -243,7 +243,7 @@ const DETOUR_OF_OTHER_REQUIREMENT = 'position_rating_detour_detour_fk'
  * the driver's fault, whose message repeats the failed statement, into an error that carries no
  * SQL. The driver fault stays on `cause`.
  */
-function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown {
+function typeMembershipFault(error: unknown, input: ScorePostingInput): unknown {
   if (isForeignKeyViolation(error, REQUIREMENT_OUTSIDE_SET)) {
     return new ConflictError('criteria set', String(input.criteriaSetId), {
       message: `a rating names a requirement that is not in criteria set ${input.criteriaSetId}`,
@@ -260,10 +260,10 @@ function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown
 }
 
 /**
- * Scores a position against a criteria set and stores the result: the row, its ratings and its
+ * Scores a posting against a criteria set and stores the result: the row, its ratings and its
  * penalties, in one transaction. `scoreAgainstSet` does all the arithmetic and names the limiter;
  * this function loads its input, translates requirement ids and keys in both directions, and
- * stores what came back. It is the only writer of `position_score`, so a stored limiter is always
+ * stores what came back. It is the only writer of `posting_score`, so a stored limiter is always
  * one the function returned, and nothing recomputes a score from stored columns.
  *
  * A null coverage is stored as null: not rated, which is not zero. A call on the same day as
@@ -271,13 +271,13 @@ function typeMembershipFault(error: unknown, input: ScorePositionInput): unknown
  * later day writes a new row marked `isRescore`. A penalty naming an archived kind, or a score
  * against an archived criteria set, is refused before anything is written (`ArchivedError`).
  * A rating naming a requirement outside the set, or a detour coverage naming a detour of another
- * requirement, is refused by the database's composite keys and surfaces as a `ConflictError`. The function moves no position and writes no stage event: a
+ * requirement, is refused by the database's composite keys and surfaces as a `ConflictError`. The function moves no posting and writes no stage event: a
  * recommendation is acted on by whoever composes this call with the pipeline.
  */
-export async function scorePosition(db: Db, input: ScorePositionInput): Promise<ScoreRow> {
+export async function scorePosting(db: Db, input: ScorePostingInput): Promise<ScoreRow> {
   try {
     return await db.transaction(async (tx) => {
-      await assertPositionExists(tx, input.positionId)
+      await assertPostingExists(tx, input.postingId)
       const set = await findUsableCriteriaSet(tx, input.criteriaSetId)
       for (const penalty of input.penalties) await assertNotArchived(tx, 'penalty_kind', penalty.penaltyKindId)
       const requirements = await getRequirements(tx, set.id)
@@ -291,48 +291,48 @@ export async function scorePosition(db: Db, input: ScorePositionInput): Promise<
   }
 }
 
-/** Every score of a position that meets the condition, newest first (the day scored, then the row id), with its limiter keys and its set's name and version. */
-async function readScoreRows(db: Db, positionId: number, condition: SQL | undefined): Promise<ScoreRow[]> {
+/** Every score of a posting that meets the condition, newest first (the day scored, then the row id), with its limiter keys and its set's name and version. */
+async function readScoreRows(db: Db, postingId: number, condition: SQL | undefined): Promise<ScoreRow[]> {
   const rows = await db
     .select({
-      score: positionScore,
+      score: postingScore,
       limiterKey: limiterRequirement.key,
       runnerUpKey: runnerUpRequirement.key,
       criteriaSetName: criteriaSet.name,
       criteriaSetVersion: criteriaSet.version,
     })
-    .from(positionScore)
-    .innerJoin(criteriaSet, eq(criteriaSet.id, positionScore.criteriaSetId))
-    .leftJoin(limiterRequirement, eq(limiterRequirement.id, positionScore.limiterRequirementId))
-    .leftJoin(runnerUpRequirement, eq(runnerUpRequirement.id, positionScore.runnerUpRequirementId))
-    .where(and(eq(positionScore.positionId, positionId), condition))
-    .orderBy(desc(positionScore.scoredAt), desc(positionScore.id))
+    .from(postingScore)
+    .innerJoin(criteriaSet, eq(criteriaSet.id, postingScore.criteriaSetId))
+    .leftJoin(limiterRequirement, eq(limiterRequirement.id, postingScore.limiterRequirementId))
+    .leftJoin(runnerUpRequirement, eq(runnerUpRequirement.id, postingScore.runnerUpRequirementId))
+    .where(and(eq(postingScore.postingId, postingId), condition))
+    .orderBy(desc(postingScore.scoredAt), desc(postingScore.id))
   return rows.map(({ score, ...rest }) => ({ ...score, ...rest }))
 }
 
 /**
- * Every score of a position, newest first (the day scored, then the row id). Each row carries
+ * Every score of a posting, newest first (the day scored, then the row id). Each row carries
  * its `criteriaSetId`, name and version, so a caller in `perspective` mode groups the list by
- * set and the order inside each group is still newest first. A position that does not exist is
- * `NotFoundError`, so "never scored" and "no such position" stay different answers.
+ * set and the order inside each group is still newest first. A posting that does not exist is
+ * `NotFoundError`, so "never scored" and "no such posting" stay different answers.
  */
-export async function getScoreHistory(db: Db, positionId: number): Promise<ScoreRow[]> {
-  await assertPositionExists(db, positionId)
-  return readScoreRows(db, positionId, undefined)
+export async function getScoreHistory(db: Db, postingId: number): Promise<ScoreRow[]> {
+  await assertPostingExists(db, postingId)
+  return readScoreRows(db, postingId, undefined)
 }
 
 /**
  * The scores that stand today, newest first: the latest score of each non-superseded criteria
  * set (see `nonSupersededSetIds`, which is the spec's section 8 rule). For a set name that is
- * its highest version, and within it the latest day. A position scored under v1 and v2 of one
+ * its highest version, and within it the latest day. A posting scored under v1 and v2 of one
  * name gives one row, v2's; one scored only under v1, once v2 exists, gives none for that name.
  * This is what the "+n" chip counts. A set archived since it scored still stands, because an
  * archived set is hidden from new use and not from what it already judged.
  */
-export async function getBestScores(db: Db, positionId: number): Promise<ScoreRow[]> {
-  await assertPositionExists(db, positionId)
+export async function getBestScores(db: Db, postingId: number): Promise<ScoreRow[]> {
+  await assertPostingExists(db, postingId)
   const latestBySet = new Map<number, ScoreRow>()
-  for (const row of await readScoreRows(db, positionId, sql`${positionScore.criteriaSetId} in ${nonSupersededSetIds()}`)) {
+  for (const row of await readScoreRows(db, postingId, sql`${postingScore.criteriaSetId} in ${nonSupersededSetIds()}`)) {
     if (!latestBySet.has(row.criteriaSetId)) latestBySet.set(row.criteriaSetId, row)
   }
   return [...latestBySet.values()]

@@ -20,7 +20,7 @@ const keyColumn = () => text().notNull().unique()
 
 const sortColumn = () => integer().notNull().default(0)
 
-/** The board's columns. `isShortlist` marks where a newly recommended position lands. */
+/** The board's columns. `isShortlist` marks where a newly recommended posting lands. */
 export const phase = pgTable('phase', {
   ...registryColumns(),
   key: keyColumn(),
@@ -29,7 +29,7 @@ export const phase = pgTable('phase', {
 })
 
 /**
- * `isApplied` protects a position from a re-score once the user has committed;
+ * `isApplied` protects a posting from a re-score once the user has committed;
  * `isTraction` is what the funnel counts as having gone somewhere.
  * `phaseId` is nullable because the phase registry ships empty.
  */

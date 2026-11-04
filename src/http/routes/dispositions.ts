@@ -37,16 +37,16 @@ function branch<S extends ZodType>(
 }
 
 /**
- * The two tools behind `/positions/:positionId/disposition`. They take different schemas on
+ * The two tools behind `/postings/:postingId/disposition`. They take different schemas on
  * purpose (their reasons come from different registries and are never interchangeable), so the
  * route does not merge them into a third schema. The choice reads which reason field the body
  * carries, never a registry row's `key` or `label`.
  */
 const BRANCHES: readonly DispositionBranch[] = [
-  branch('position_set_aside', 'setAsideReasonId', 'to set the position aside', SetAsideInputSchema, async (args, db) =>
+  branch('posting_set_aside', 'setAsideReasonId', 'to set the posting aside', SetAsideInputSchema, async (args, db) =>
     setAside(db, args),
   ),
-  branch('position_reject', 'rejectionReasonId', 'to record a rejection', RecordRejectionInputSchema, async (args, db) =>
+  branch('posting_reject', 'rejectionReasonId', 'to record a rejection', RecordRejectionInputSchema, async (args, db) =>
     recordRejection(db, args),
   ),
 ]
@@ -68,14 +68,14 @@ function dispositionHandler(db: Db): RequestHandler {
   }
 }
 
-/** The routes for where a position stands: a stage event, a set-aside or a rejection, and what is set aside. */
+/** The routes for where a posting stands: a stage event, a set-aside or a rejection, and what is set aside. */
 export const dispositionRoutes: readonly RouteSpec[] = [
-  route('post', '/positions/:positionId/stage', 'stage_append', StageEventInputSchema, async (args, db) =>
+  route('post', '/postings/:postingId/stage', 'stage_append', StageEventInputSchema, async (args, db) =>
     appendStageEvent(db, args),
   ),
   {
     method: 'post',
-    path: '/positions/:positionId/disposition',
+    path: '/postings/:postingId/disposition',
     tools: BRANCHES.map((candidate) => candidate.tool),
     schemas: BRANCHES.map((candidate) => candidate.schema),
     handler: dispositionHandler,

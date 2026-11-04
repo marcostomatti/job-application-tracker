@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { count } from 'drizzle-orm'
 
-import { addPositions } from '../../src/data/repositories/positions.ts'
+import { addPostings } from '../../src/data/repositories/postings.ts'
 import { getSummary, summaryChanged, writeSummary } from '../../src/data/repositories/summaries.ts'
-import { positionSummary } from '../../src/data/schema/positions.ts'
+import { postingSummary } from '../../src/data/schema/postings.ts'
 import { NotFoundError } from '../../src/errors.ts'
 import { SummaryInputSchema } from '../../src/schemas/summaries.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 import type { DrizzleClient } from '../../src/data/client.ts'
 
-async function newPositionId(db: DrizzleClient, title = 'Staff Engineer'): Promise<number> {
-  const [added] = await addPositions(db, [{ company: { name: 'Acme' }, roleTitle: title }])
-  if (!added) throw new Error('the arrangement stored no position')
+async function newPostingId(db: DrizzleClient, title = 'Staff Engineer'): Promise<number> {
+  const [added] = await addPostings(db, [{ company: { name: 'Acme' }, roleTitle: title }])
+  if (!added) throw new Error('the arrangement stored no posting')
   return added.id
 }
 
@@ -20,9 +20,9 @@ describe('writeSummary and getSummary', () => {
   test('stores a summary and reads it back, with defaults for what the caller left out', async () => {
     // Arrange / Act
     const { written, read } = await withMigratedScratchDatabase(async (db) => {
-      const positionId = await newPositionId(db)
-      const written = await writeSummary(db, { positionId, condensed: 'The posting, condensed', sourceHash: 'h1' })
-      return { written, read: await getSummary(db, positionId) }
+      const postingId = await newPostingId(db)
+      const written = await writeSummary(db, { postingId, condensed: 'The posting, condensed', sourceHash: 'h1' })
+      return { written, read: await getSummary(db, postingId) }
     })
 
     // Assert
@@ -37,9 +37,9 @@ describe('writeSummary and getSummary', () => {
   test('keeps the stack and the extra payload as data', async () => {
     // Arrange / Act
     const read = await withMigratedScratchDatabase(async (db) => {
-      const positionId = await newPositionId(db)
+      const postingId = await newPostingId(db)
       await writeSummary(db, {
-        positionId,
+        postingId,
         stack: ['typescript', 'postgres'],
         description: 'A role',
         industry: 'A sector',
@@ -47,7 +47,7 @@ describe('writeSummary and getSummary', () => {
         extra: { team: { size: 6 }, remote: true },
         sourceHash: 'h1',
       })
-      return getSummary(db, positionId)
+      return getSummary(db, postingId)
     })
 
     // Assert
@@ -59,11 +59,11 @@ describe('writeSummary and getSummary', () => {
   test('replaces the summary on a second write, so a repost leaves one row with the new hash', async () => {
     // Arrange / Act: a pause longer than the clock's resolution separates the two stamps
     const { first, second, rows } = await withMigratedScratchDatabase(async (db) => {
-      const positionId = await newPositionId(db)
-      const first = await writeSummary(db, { positionId, condensed: 'Old', description: 'Gone', sourceHash: 'h1' })
+      const postingId = await newPostingId(db)
+      const first = await writeSummary(db, { postingId, condensed: 'Old', description: 'Gone', sourceHash: 'h1' })
       await Bun.sleep(25)
-      const second = await writeSummary(db, { positionId, condensed: 'New', sourceHash: 'h2' })
-      const [found] = await db.select({ n: count() }).from(positionSummary)
+      const second = await writeSummary(db, { postingId, condensed: 'New', sourceHash: 'h2' })
+      const [found] = await db.select({ n: count() }).from(postingSummary)
       return { first, second, rows: found?.n }
     })
 
@@ -75,20 +75,20 @@ describe('writeSummary and getSummary', () => {
     expect(second.summarisedAt.getTime()).toBeGreaterThan(first.summarisedAt.getTime())
   })
 
-  test('refuses a summary for a position that does not exist', async () => {
+  test('refuses a summary for a posting that does not exist', async () => {
     // Arrange / Act
     const error = await withMigratedScratchDatabase((db) =>
-      thrownBy(() => writeSummary(db, { positionId: 4242, condensed: 'Orphan', sourceHash: 'h1' })),
+      thrownBy(() => writeSummary(db, { postingId: 4242, condensed: 'Orphan', sourceHash: 'h1' })),
     )
 
     // Assert
     expect(error).toBeInstanceOf(NotFoundError)
   })
 
-  test('reads null for a position that has no summary yet, and not found for one that does not exist', async () => {
+  test('reads null for a posting that has no summary yet, and not found for one that does not exist', async () => {
     // Arrange / Act
     const { bare, error } = await withMigratedScratchDatabase(async (db) => ({
-      bare: await getSummary(db, await newPositionId(db)),
+      bare: await getSummary(db, await newPostingId(db)),
       error: await thrownBy(() => getSummary(db, 4242)),
     }))
 
@@ -102,11 +102,11 @@ describe('summaryChanged', () => {
   test('is true for a different hash and false for the same one', async () => {
     // Arrange / Act
     const { same, different } = await withMigratedScratchDatabase(async (db) => {
-      const positionId = await newPositionId(db)
-      await writeSummary(db, { positionId, condensed: 'Condensed', sourceHash: 'h1' })
+      const postingId = await newPostingId(db)
+      await writeSummary(db, { postingId, condensed: 'Condensed', sourceHash: 'h1' })
       return {
-        same: await summaryChanged(db, positionId, 'h1'),
-        different: await summaryChanged(db, positionId, 'h2'),
+        same: await summaryChanged(db, postingId, 'h1'),
+        different: await summaryChanged(db, postingId, 'h2'),
       }
     })
 
@@ -117,7 +117,7 @@ describe('summaryChanged', () => {
 
   test('is true when no summary has been stored, because there is nothing to match', async () => {
     // Arrange / Act
-    const changed = await withMigratedScratchDatabase(async (db) => summaryChanged(db, await newPositionId(db), 'h1'))
+    const changed = await withMigratedScratchDatabase(async (db) => summaryChanged(db, await newPostingId(db), 'h1'))
 
     // Assert
     expect(changed).toBe(true)
@@ -126,11 +126,11 @@ describe('summaryChanged', () => {
   test('follows the stored hash, so it flips once the changed posting is written', async () => {
     // Arrange / Act
     const { before, after } = await withMigratedScratchDatabase(async (db) => {
-      const positionId = await newPositionId(db)
-      await writeSummary(db, { positionId, condensed: 'Condensed', sourceHash: 'h1' })
-      const before = await summaryChanged(db, positionId, 'h2')
-      await writeSummary(db, { positionId, condensed: 'Reposted', sourceHash: 'h2' })
-      return { before, after: await summaryChanged(db, positionId, 'h2') }
+      const postingId = await newPostingId(db)
+      await writeSummary(db, { postingId, condensed: 'Condensed', sourceHash: 'h1' })
+      const before = await summaryChanged(db, postingId, 'h2')
+      await writeSummary(db, { postingId, condensed: 'Reposted', sourceHash: 'h2' })
+      return { before, after: await summaryChanged(db, postingId, 'h2') }
     })
 
     // Assert
@@ -138,7 +138,7 @@ describe('summaryChanged', () => {
     expect(after).toBe(false)
   })
 
-  test('raises NotFoundError for a position that does not exist', async () => {
+  test('raises NotFoundError for a posting that does not exist', async () => {
     // Arrange / Act
     const error = await withMigratedScratchDatabase((db) => thrownBy(() => summaryChanged(db, 4242, 'h1')))
 
@@ -148,11 +148,11 @@ describe('summaryChanged', () => {
 })
 
 describe('the summary input schema', () => {
-  const minimal = { positionId: 1, condensed: 'Condensed', sourceHash: 'h1' }
+  const minimal = { postingId: 1, condensed: 'Condensed', sourceHash: 'h1' }
 
   test('accepts a text id, as an HTTP path carries it', () => {
     // Assert
-    expect(SummaryInputSchema.parse({ ...minimal, positionId: '7' }).positionId).toBe(7)
+    expect(SummaryInputSchema.parse({ ...minimal, postingId: '7' }).postingId).toBe(7)
   })
 
   test('refuses a field it does not name, a blank hash and a blank condensed text', () => {

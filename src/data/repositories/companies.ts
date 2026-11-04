@@ -1,8 +1,8 @@
 import { eq, type InferSelectModel } from 'drizzle-orm'
 
 import { NotFoundError } from '../../errors.ts'
-import type { CompanyInput } from '../../schemas/positions.ts'
-import { company, normaliseName } from '../schema/positions.ts'
+import type { CompanyInput } from '../../schemas/postings.ts'
+import { company, normaliseName } from '../schema/postings.ts'
 import type { Db } from './db.ts'
 
 export type Company = InferSelectModel<typeof company>
@@ -37,7 +37,7 @@ export async function upsertCompany(db: Db, input: CompanyInput): Promise<Compan
   return existing
 }
 
-/** One company by id, for a read that already holds a position naming it. */
+/** One company by id, for a read that already holds a posting naming it. */
 export async function findCompany(db: Db, id: number): Promise<Company> {
   const [found] = await db.select().from(company).where(eq(company.id, id))
   if (!found) throw new NotFoundError('company', id)

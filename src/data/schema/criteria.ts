@@ -18,7 +18,7 @@ import { isUniqueViolation } from '../driver-faults.ts'
 import { layer } from './registries.ts'
 
 /**
- * The versioned unit of scoring. A position's score only means something against
+ * The versioned unit of scoring. A posting's score only means something against
  * the whole set it was scored under, so a new version is a new set, and old
  * versions stay. `applyThreshold` is null until the user sets a bar, which is
  * how a vanilla pack ships. The 0..1 columns use number mode, because the default mode

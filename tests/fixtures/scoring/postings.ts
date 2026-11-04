@@ -1,7 +1,7 @@
 import type { ScoreInput } from '../../../src/entities/scoring.ts'
 import type { ScoreResult } from '../../../src/scoring/score-against-set.ts'
 
-export type FixturePosition = {
+export type FixturePosting = {
   name: string
   input: ScoreInput
   expected: ScoreResult
@@ -32,7 +32,7 @@ const rating = (requirementKey: string, coverage: number | null) => ({
   confidence: 'supported' as const,
 })
 
-export const FIXTURE_POSITIONS: readonly FixturePosition[] = [
+export const FIXTURE_POSTINGS: readonly FixturePosting[] = [
   {
     name: 'Acme Widgets, a clear apply',
     input: {

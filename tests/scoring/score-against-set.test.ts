@@ -3,7 +3,7 @@ import { ZodError } from 'zod'
 import type { Rating, Requirement, ScoreInput } from '../../src/entities/scoring.ts'
 import { ScoreInputSchema } from '../../src/schemas/scoring.ts'
 import { scoreAgainstSet } from '../../src/scoring/score-against-set.ts'
-import { FIXTURE_POSITIONS } from '../fixtures/scoring/positions.ts'
+import { FIXTURE_POSTINGS } from '../fixtures/scoring/postings.ts'
 
 const requirement = (
   key: string,
@@ -170,11 +170,11 @@ describe('scoreAgainstSet', () => {
     ).toThrow(ZodError)
   })
 
-  test.each(FIXTURE_POSITIONS)('scores fixture position $name as expected', ({
-    input: positionInput,
+  test.each(FIXTURE_POSTINGS)('scores fixture posting $name as expected', ({
+    input: postingInput,
     expected,
   }) => {
-    expect(scoreAgainstSet(positionInput)).toEqual(expected)
+    expect(scoreAgainstSet(postingInput)).toEqual(expected)
   })
 })
 

@@ -3,7 +3,7 @@ import { Router, type Application } from 'express'
 import type { Db } from '../../data/repositories/db.ts'
 import { criteriaRoutes } from './criteria.ts'
 import { dispositionRoutes } from './dispositions.ts'
-import { positionRoutes } from './positions.ts'
+import { postingRoutes } from './postings.ts'
 import { registryRoutes } from './registries.ts'
 import { scoreRoutes } from './scores.ts'
 import type { RouteSpec } from './spec.ts'
@@ -11,7 +11,7 @@ import { textRoutes } from './texts.ts'
 
 /** Every internal HTTP route, in the order of the brief's table (§11.2). */
 export const ROUTES: readonly RouteSpec[] = [
-  ...positionRoutes,
+  ...postingRoutes,
   ...scoreRoutes,
   ...dispositionRoutes,
   ...criteriaRoutes,

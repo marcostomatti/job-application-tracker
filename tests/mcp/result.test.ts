@@ -8,11 +8,11 @@ import { describeError, errorResult, okResult, unwrapSingleItem } from '../../sr
 /** What a Postgres driver fault looks like: the failed statement and the constraint it names. */
 function driverFault(): Error {
   return Object.assign(
-    new Error('duplicate key value violates unique constraint "positions_position_key_unique"'),
+    new Error('duplicate key value violates unique constraint "postings_posting_key_unique"'),
     {
-      query: 'insert into "positions" ("position_key", "title") values ($1, $2)',
-      constraint_name: 'positions_position_key_unique',
-      detail: 'Key (position_key)=(acme-dev) already exists.',
+      query: 'insert into "postings" ("posting_key", "title") values ($1, $2)',
+      constraint_name: 'postings_posting_key_unique',
+      detail: 'Key (posting_key)=(acme-dev) already exists.',
     },
   )
 }
@@ -51,19 +51,19 @@ describe('okResult', () => {
 
 describe('errorResult', () => {
   test('errorResult names a NotFoundError and sets isError', () => {
-    const result = errorResult(new NotFoundError('position', 7))
+    const result = errorResult(new NotFoundError('posting', 7))
 
     expect(result.isError).toBe(true)
     expect(JSON.parse(textOf(result))).toEqual({
-      error: { name: 'NotFoundError', message: 'position 7 does not exist' },
+      error: { name: 'NotFoundError', message: 'posting 7 does not exist' },
     })
   })
 
   test('errorResult names a ConflictError by its message', () => {
-    const result = errorResult(new ConflictError('position_key', 'acme-dev'))
+    const result = errorResult(new ConflictError('posting_key', 'acme-dev'))
 
     expect(JSON.parse(textOf(result))).toEqual({
-      error: { name: 'ConflictError', message: 'position_key acme-dev already exists' },
+      error: { name: 'ConflictError', message: 'posting_key acme-dev already exists' },
     })
   })
 
@@ -104,7 +104,7 @@ describe('errorResult', () => {
       error: { name: 'BulkItemError', message: 'bulk item 3 failed' },
     })
     expect(JSON.stringify(result)).not.toContain('insert into')
-    expect(JSON.stringify(result)).not.toContain('positions_position_key_unique')
+    expect(JSON.stringify(result)).not.toContain('postings_posting_key_unique')
   })
 
   test('errorResult keeps the bare message when the cause is not an error at all', () => {
@@ -115,13 +115,13 @@ describe('errorResult', () => {
   })
 
   test('errorResult leaks neither the SQL nor the constraint name of a ConflictError cause', () => {
-    const conflict = new ConflictError('position_key', 'acme-dev', { cause: driverFault() })
+    const conflict = new ConflictError('posting_key', 'acme-dev', { cause: driverFault() })
 
     const text = JSON.stringify(errorResult(conflict))
 
-    expect(text).toContain('position_key acme-dev already exists')
+    expect(text).toContain('posting_key acme-dev already exists')
     expect(text).not.toContain('insert into')
-    expect(text).not.toContain('positions_position_key_unique')
+    expect(text).not.toContain('postings_posting_key_unique')
     expect(text).not.toContain('constraint')
     expect(text).not.toContain('cause')
   })
@@ -132,7 +132,7 @@ describe('errorResult', () => {
     const text = JSON.stringify(errorResult(new BulkItemError(0, notFound)))
 
     expect(text).not.toContain('insert into')
-    expect(text).not.toContain('positions_position_key_unique')
+    expect(text).not.toContain('postings_posting_key_unique')
   })
 
   test('errorResult hides an unknown error behind "internal error"', () => {
@@ -199,19 +199,19 @@ describe('describeError', () => {
 
 describe('unwrapSingleItem', () => {
   test('unwrapSingleItem returns the cause of a BulkItemError at index 0', () => {
-    const real = new NotFoundError('position', 7)
+    const real = new NotFoundError('posting', 7)
 
     expect(unwrapSingleItem(new BulkItemError(0, real))).toBe(real)
   })
 
   test('unwrapSingleItem leaves a BulkItemError at another index unchanged', () => {
-    const failure = new BulkItemError(1, new NotFoundError('position', 7))
+    const failure = new BulkItemError(1, new NotFoundError('posting', 7))
 
     expect(unwrapSingleItem(failure)).toBe(failure)
   })
 
   test('unwrapSingleItem leaves any other error and any non-error unchanged', () => {
-    const plain = new ConflictError('position_key', 'acme-dev')
+    const plain = new ConflictError('posting_key', 'acme-dev')
 
     expect(unwrapSingleItem(plain)).toBe(plain)
     expect(unwrapSingleItem('text')).toBe('text')

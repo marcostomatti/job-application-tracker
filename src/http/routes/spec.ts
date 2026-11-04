@@ -10,9 +10,9 @@ export type HttpMethod = 'get' | 'post' | 'patch' | 'put'
  * One route, as data, so a test can read the table that is mounted and not a copy of it.
  *
  * `path` is relative to `/api`. Its parameters are named after the fields of the tool's schema
- * (`:positionId`, not `:id`), because the schema is strict and a parameter it does not name would
- * be refused. A client cannot see a parameter's name, only the URL, so `/positions/:positionId`
- * and `/positions/:id` are the same route to it.
+ * (`:postingId`, not `:id`), because the schema is strict and a parameter it does not name would
+ * be refused. A client cannot see a parameter's name, only the URL, so `/postings/:postingId`
+ * and `/postings/:id` are the same route to it.
  *
  * `tools` and `schemas` run in step: `schemas[i]` is the very input schema object of the MCP tool
  * named `tools[i]`. A route that serves more than one tool lists each.

@@ -2,18 +2,18 @@ import { listPendingRescore, requestRescore } from '../../data/repositories/resc
 import { getBestScores, getScoreHistory } from '../../data/repositories/scores.ts'
 import {
   PendingRescoreQuerySchema,
-  PositionScoresQuerySchema,
+  PostingScoresQuerySchema,
   RescoreRequestInputSchema,
 } from '../../schemas/scores.ts'
 import { route, type RouteSpec } from './spec.ts'
 
-/** The routes that read a position's scores and ask for positions to be scored again. */
+/** The routes that read a posting's scores and ask for postings to be scored again. */
 export const scoreRoutes: readonly RouteSpec[] = [
-  route('get', '/positions/:positionId/scores', 'score_history', PositionScoresQuerySchema, async (args, db) =>
-    getScoreHistory(db, args.positionId),
+  route('get', '/postings/:postingId/scores', 'score_history', PostingScoresQuerySchema, async (args, db) =>
+    getScoreHistory(db, args.postingId),
   ),
-  route('get', '/positions/:positionId/best-scores', 'score_best', PositionScoresQuerySchema, async (args, db) =>
-    getBestScores(db, args.positionId),
+  route('get', '/postings/:postingId/best-scores', 'score_best', PostingScoresQuerySchema, async (args, db) =>
+    getBestScores(db, args.postingId),
   ),
   route('post', '/rescore-requests', 'rescore_request', RescoreRequestInputSchema, async (args, db) =>
     requestRescore(db, args),

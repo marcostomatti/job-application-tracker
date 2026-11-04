@@ -24,12 +24,12 @@ export const CompanyInputSchema = z.strictObject({
 export type CompanyInput = z.infer<typeof CompanyInputSchema>
 
 /**
- * The columns of a position that a caller may set, whether on creation or in a patch. Each
+ * The columns of a posting that a caller may set, whether on creation or in a patch. Each
  * nullable one accepts `null` to mean "no value", and leaves the column alone when absent.
  *
  * `priorityRank` is deliberately not among them. It is the user's own hand-ranking and no
- * import may write it, so only `PositionPatchSchema` carries it: a capture or bulk path
- * built on `PositionInputSchema` cannot set it, because a strict object refuses the key.
+ * import may write it, so only `PostingPatchSchema` carries it: a capture or bulk path
+ * built on `PostingInputSchema` cannot set it, because a strict object refuses the key.
  */
 const editableFields = {
   seenAt: calendarDay.optional(),
@@ -53,29 +53,29 @@ const editableFields = {
 const disambiguator = z.string().trim().refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
- * What a caller supplies to record one position. The employer is named rather than
+ * What a caller supplies to record one posting. The employer is named rather than
  * referenced by id, so a capture needs no lookup first and two spellings of one employer
- * reach one company row. `positionKey` is the stable handle for the role; left out, it is
- * derived from the employer and the role, which is what makes a repost the same position.
+ * reach one company row. `postingKey` is the stable handle for the role; left out, it is
+ * derived from the employer and the role, which is what makes a repost the same posting.
  */
-export const PositionInputSchema = z.strictObject({
+export const PostingInputSchema = z.strictObject({
   company: CompanyInputSchema,
   roleTitle: text,
   disambiguator: disambiguator.optional(),
-  positionKey: text.optional(),
+  postingKey: text.optional(),
   ...editableFields,
 })
 
-export type PositionInput = z.infer<typeof PositionInputSchema>
+export type PostingInput = z.infer<typeof PostingInputSchema>
 
 /**
- * A change to one position. It carries the role title and disambiguator, whose normalised
+ * A change to one posting. It carries the role title and disambiguator, whose normalised
  * form the repository keeps in step, and the user's hand-ranking, which is accepted here and
- * nowhere else. The employer and the key do not change after creation: a position moved to
+ * nowhere else. The employer and the key do not change after creation: a posting moved to
  * another employer is a different role. An empty patch names nothing to change, which is a
  * mistake worth reporting.
  */
-export const PositionPatchSchema = z
+export const PostingPatchSchema = z
   .strictObject({
     roleTitle: text.optional(),
     disambiguator: disambiguator.optional(),
@@ -86,10 +86,10 @@ export const PositionPatchSchema = z
     message: 'a patch must name at least one field to change',
   })
 
-export type PositionPatch = z.infer<typeof PositionPatchSchema>
+export type PostingPatch = z.infer<typeof PostingPatchSchema>
 
 /**
- * Which positions of one kind a search returns, for the two flags that take a row out of the
+ * Which postings of one kind a search returns, for the two flags that take a row out of the
  * default view: set-aside and client-hidden. Hiding them is the default because a search for
  * leads should not re-offer what the user already passed on or hid; the board asks for
  * `include` because it still draws set-aside cards, and `only` reads just that bucket.
@@ -97,17 +97,17 @@ export type PositionPatch = z.infer<typeof PositionPatchSchema>
 export const VISIBILITY_FILTERS = ['exclude', 'include', 'only'] as const
 
 /**
- * What a board or grid asks of the position list: the filters, then the page. Built on
+ * What a board or grid asks of the posting list: the filters, then the page. Built on
  * `PaginationSchema.extend` so it stays strict, and a filter name that does not exist is
  * refused instead of dropped.
  *
  * `criteriaSetId` names which set's latest score a row carries, and narrows `recommendApply`
  * to that set's answer; left out, a row carries the default set's score and `recommendApply`
  * is the across-sets rule of the spec's section 8: `true` when at least one non-superseded set
- * (the highest version of its name) recommends the position by its own threshold. A position
+ * (the highest version of its name) recommends the posting by its own threshold. A posting
  * with no score to test matches neither answer to `recommendApply`.
  */
-export const PositionQuerySchema = PaginationSchema.extend({
+export const PostingQuerySchema = PaginationSchema.extend({
   companyId: IdSchema.optional(),
   phaseId: IdSchema.optional(),
   criteriaSetId: IdSchema.optional(),
@@ -116,23 +116,23 @@ export const PositionQuerySchema = PaginationSchema.extend({
   clientHidden: z.enum(VISIBILITY_FILTERS).default('exclude'),
 })
 
-export type PositionQuery = z.infer<typeof PositionQuerySchema>
+export type PostingQuery = z.infer<typeof PostingQuerySchema>
 
-/** One position, named by id: what a read of a single position, or of its summary, takes. */
-export const PositionRefSchema = z.strictObject({ positionId: IdSchema })
+/** One posting, named by id: what a read of a single posting, or of its summary, takes. */
+export const PostingRefSchema = z.strictObject({ postingId: IdSchema })
 
-export type PositionRef = z.infer<typeof PositionRefSchema>
+export type PostingRef = z.infer<typeof PostingRefSchema>
 
-/** Up to `BULK_MAX` positions to record in one call, all or none. */
-export const PositionBulkSchema = bulkOf(PositionInputSchema)
+/** Up to `BULK_MAX` postings to record in one call, all or none. */
+export const PostingBulkSchema = bulkOf(PostingInputSchema)
 
-/** A patch and the position it applies to. The patch is a field of its own so the id is never mistaken for a column. */
-export const PositionUpdateInputSchema = z.strictObject({
-  positionId: IdSchema,
-  patch: PositionPatchSchema,
+/** A patch and the posting it applies to. The patch is a field of its own so the id is never mistaken for a column. */
+export const PostingUpdateInputSchema = z.strictObject({
+  postingId: IdSchema,
+  patch: PostingPatchSchema,
 })
 
-export type PositionUpdateInput = z.infer<typeof PositionUpdateInputSchema>
+export type PostingUpdateInput = z.infer<typeof PostingUpdateInputSchema>
 
-/** Up to `BULK_MAX` position updates in one call, all or none. */
-export const PositionUpdateBulkSchema = bulkOf(PositionUpdateInputSchema)
+/** Up to `BULK_MAX` posting updates in one call, all or none. */
+export const PostingUpdateBulkSchema = bulkOf(PostingUpdateInputSchema)

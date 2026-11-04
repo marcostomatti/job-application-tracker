@@ -1,4 +1,4 @@
-CREATE TABLE "position_penalty" (
+CREATE TABLE "posting_penalty" (
   "id" integer PRIMARY KEY,
   "amount" numeric NOT NULL,
   "penalty_fintech" numeric,

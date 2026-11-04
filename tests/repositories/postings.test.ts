@@ -5,34 +5,34 @@ import type { PgTable } from 'drizzle-orm/pg-core'
 import type { DrizzleClient } from '../../src/data/client.ts'
 import { upsertCompany } from '../../src/data/repositories/companies.ts'
 import {
-  addPositions,
-  getPosition,
-  searchPositions,
-  updatePosition,
-  type Position,
-} from '../../src/data/repositories/positions.ts'
+  addPostings,
+  getPosting,
+  searchPostings,
+  updatePosting,
+  type Posting,
+} from '../../src/data/repositories/postings.ts'
 import {
   addRegistryRows,
   archiveRegistryRow,
 } from '../../src/data/repositories/registries.ts'
 import { writeSummary } from '../../src/data/repositories/summaries.ts'
 import { criteriaSet, requirement } from '../../src/data/schema/criteria.ts'
-import { positionDisposition, positionStageEvent } from '../../src/data/schema/dispositions.ts'
-import { company, position } from '../../src/data/schema/positions.ts'
+import { postingDisposition, postingStageEvent } from '../../src/data/schema/dispositions.ts'
+import { company, posting } from '../../src/data/schema/postings.ts'
 import { origin } from '../../src/data/schema/provenance.ts'
-import { positionPenalty, positionRating, positionScore } from '../../src/data/schema/scores.ts'
+import { postingPenalty, postingRating, postingScore } from '../../src/data/schema/scores.ts'
 import { getBestScores } from '../../src/data/repositories/scores.ts'
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
 import { BULK_MAX, bulkOf } from '../../src/schemas/common.ts'
 import {
   CompanyInputSchema,
-  PositionInputSchema,
-  PositionPatchSchema,
-  PositionQuerySchema,
-  type PositionInput,
-  type PositionPatch,
-  type PositionQuery,
-} from '../../src/schemas/positions.ts'
+  PostingInputSchema,
+  PostingPatchSchema,
+  PostingQuerySchema,
+  type PostingInput,
+  type PostingPatch,
+  type PostingQuery,
+} from '../../src/schemas/postings.ts'
 import { SummaryInputSchema } from '../../src/schemas/summaries.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
@@ -46,7 +46,7 @@ function idOf(rows: readonly { readonly id: number }[], index = 0): number {
   return id
 }
 
-function role(employer: string, title: string, extra: Partial<PositionInput> = {}): PositionInput {
+function role(employer: string, title: string, extra: Partial<PostingInput> = {}): PostingInput {
   return { company: { name: employer }, roleTitle: title, ...extra }
 }
 
@@ -56,14 +56,14 @@ async function rowCount(db: DrizzleClient, table: PgTable): Promise<number> {
 }
 
 /** The query a surface would hand over after parsing `{}` plus these filters. */
-function queryOf(filters: Record<string, unknown> = {}): PositionQuery {
-  return PositionQuerySchema.parse(filters)
+function queryOf(filters: Record<string, unknown> = {}): PostingQuery {
+  return PostingQuerySchema.parse(filters)
 }
 
-/** Adds one position and returns the stored row, failing loudly when none came back. */
-async function addOne(db: DrizzleClient, input: PositionInput): Promise<Position> {
-  const [added] = await addPositions(db, [input])
-  if (!added) throw new Error('the arrangement stored no position')
+/** Adds one posting and returns the stored row, failing loudly when none came back. */
+async function addOne(db: DrizzleClient, input: PostingInput): Promise<Posting> {
+  const [added] = await addPostings(db, [input])
+  if (!added) throw new Error('the arrangement stored no posting')
   return added
 }
 
@@ -76,12 +76,12 @@ const TIED_ROWS = 10
  * which has the highest event id and so is the latest by the tie-break.
  *
  * A latest-event read asks for one row, so unlike a page it cannot be bound wider to force the
- * ordering. And the index on (position, time, id) hands back the highest id on its own, which
+ * ordering. And the index on (posting, time, id) hands back the highest id on its own, which
  * would hide a missing `id desc`. So the session is held to a sequential scan, where only the
  * ORDER BY clause decides among ten equal timestamps. Turning the two scan types off cannot
  * make a correct query fail; it only makes a query without the tie-break visible.
  */
-async function writeTiedStageEvents(db: DrizzleClient, positionId: number): Promise<number> {
+async function writeTiedStageEvents(db: DrizzleClient, postingId: number): Promise<number> {
   const stages = await addRegistryRows(
     db,
     'stage',
@@ -90,7 +90,7 @@ async function writeTiedStageEvents(db: DrizzleClient, positionId: number): Prom
   const at = new Date('2026-02-01T09:00:00Z')
   await db.execute(sql`set enable_indexscan = off`)
   await db.execute(sql`set enable_bitmapscan = off`)
-  await db.insert(positionStageEvent).values(stages.map((row) => ({ positionId, stageId: row.id, occurredAt: at })))
+  await db.insert(postingStageEvent).values(stages.map((row) => ({ postingId, stageId: row.id, occurredAt: at })))
   return idOf(stages, TIED_ROWS - 1)
 }
 
@@ -142,11 +142,11 @@ describe('upsertCompany', () => {
   })
 })
 
-describe('addPositions', () => {
+describe('addPostings', () => {
   test('writes every item in one transaction and shares a company between two spellings', async () => {
     // Arrange / Act
     const { added, companies } = await withMigratedScratchDatabase(async (db) => ({
-      added: await addPositions(db, [
+      added: await addPostings(db, [
         role('Café Ltd', 'Staff Engineer'),
         role('Cafe Ltd', 'Data Engineer'),
         role('Other Co', 'Staff Engineer'),
@@ -162,20 +162,20 @@ describe('addPositions', () => {
     expect(added.map((row) => row.roleNorm)).toEqual(['staff engineer', 'data engineer', 'staff engineer'])
   })
 
-  test('derives a position key and keeps one the caller supplies', async () => {
+  test('derives a posting key and keeps one the caller supplies', async () => {
     // Arrange / Act
     const added = await withMigratedScratchDatabase((db) =>
-      addPositions(db, [role('Acme', 'Staff Engineer'), role('Acme', 'Data Engineer', { positionKey: 'acme-data' })]),
+      addPostings(db, [role('Acme', 'Staff Engineer'), role('Acme', 'Data Engineer', { postingKey: 'acme-data' })]),
     )
 
     // Assert
-    expect(added[0]?.positionKey).toBe('acme/staff engineer')
-    expect(added[1]?.positionKey).toBe('acme-data')
+    expect(added[0]?.postingKey).toBe('acme/staff engineer')
+    expect(added[1]?.postingKey).toBe('acme-data')
   })
 
   test('returns an empty list for an empty call', async () => {
     // Arrange / Act
-    const added = await withMigratedScratchDatabase((db) => addPositions(db, []))
+    const added = await withMigratedScratchDatabase((db) => addPostings(db, []))
 
     // Assert
     expect(added).toEqual([])
@@ -183,83 +183,83 @@ describe('addPositions', () => {
 
   test('leaves nothing behind when item 2 of 3 fails, and names index 1', async () => {
     // Arrange / Act: the middle item repeats the first one's company, role and disambiguator
-    const { error, positions, companies } = await withMigratedScratchDatabase(async (db) => {
+    const { error, postings, companies } = await withMigratedScratchDatabase(async (db) => {
       const error = await thrownBulk(() =>
-        addPositions(db, [
+        addPostings(db, [
           role('Acme', 'Staff Engineer'),
           role('ACME', 'staff  engineer'),
           role('Third Co', 'Anything'),
         ]),
       )
-      return { error, positions: await rowCount(db, position), companies: await rowCount(db, company) }
+      return { error, postings: await rowCount(db, posting), companies: await rowCount(db, company) }
     })
 
-    // Assert: the right item is named, and neither the first item's position nor the
+    // Assert: the right item is named, and neither the first item's posting nor the
     // company it created survived, nor did the third item run
     expect(error.index).toBe(1)
     expect(error.cause).toBeInstanceOf(ConflictError)
-    expect(positions).toBe(0)
+    expect(postings).toBe(0)
     expect(companies).toBe(0)
     // The driver's fault rides on `cause`, and neither message carries the query it failed on
     const conflict = error.cause as ConflictError
     expect(conflict.cause).toBeDefined()
-    expect(`${error.message} ${conflict.message}`).not.toMatch(/insert into|select |position_position_key_unique/i)
+    expect(`${error.message} ${conflict.message}`).not.toMatch(/insert into|select |posting_posting_key_unique/i)
   })
 
   test('names the last index when the last item fails', async () => {
     // Arrange / Act
-    const { error, positions } = await withMigratedScratchDatabase(async (db) => {
+    const { error, postings } = await withMigratedScratchDatabase(async (db) => {
       const error = await thrownBulk(() =>
-        addPositions(db, [role('A', 'One'), role('B', 'Two'), role('A', 'one')]),
+        addPostings(db, [role('A', 'One'), role('B', 'Two'), role('A', 'one')]),
       )
-      return { error, positions: await rowCount(db, position) }
+      return { error, postings: await rowCount(db, posting) }
     })
 
     // Assert
     expect(error.index).toBe(2)
-    expect(positions).toBe(0)
+    expect(postings).toBe(0)
   })
 
   test('keeps rows written before the call when a later call fails', async () => {
     // Arrange / Act: the second call collides with a row the first one committed
-    const { error, positions } = await withMigratedScratchDatabase(async (db) => {
+    const { error, postings } = await withMigratedScratchDatabase(async (db) => {
       await addOne(db, role('Acme', 'Staff Engineer'))
       const error = await thrownBulk(() =>
-        addPositions(db, [role('New Co', 'Fresh'), role('Acme', 'Staff Engineer')]),
+        addPostings(db, [role('New Co', 'Fresh'), role('Acme', 'Staff Engineer')]),
       )
-      return { error, positions: await rowCount(db, position) }
+      return { error, postings: await rowCount(db, posting) }
     })
 
     // Assert: only the pre-existing row remains
     expect(error.index).toBe(1)
-    expect(positions).toBe(1)
+    expect(postings).toBe(1)
   })
 
-  test('reports a repeated position key as a conflict on the item that repeats it', async () => {
+  test('reports a repeated posting key as a conflict on the item that repeats it', async () => {
     // Arrange / Act: two different roles under one explicit key
-    const { error, positions } = await withMigratedScratchDatabase(async (db) => {
+    const { error, postings } = await withMigratedScratchDatabase(async (db) => {
       const error = await thrownBulk(() =>
-        addPositions(db, [
-          role('Acme', 'One', { positionKey: 'shared' }),
-          role('Acme', 'Two', { positionKey: 'shared' }),
+        addPostings(db, [
+          role('Acme', 'One', { postingKey: 'shared' }),
+          role('Acme', 'Two', { postingKey: 'shared' }),
         ]),
       )
-      return { error, positions: await rowCount(db, position) }
+      return { error, postings: await rowCount(db, posting) }
     })
 
     // Assert
     const cause = error.cause as ConflictError
     expect(error.index).toBe(1)
     expect(cause).toBeInstanceOf(ConflictError)
-    expect(cause.field).toBe('position_key')
+    expect(cause.field).toBe('posting_key')
     expect(cause.key).toBe('shared')
-    expect(positions).toBe(0)
+    expect(postings).toBe(0)
   })
 
   test('lets a disambiguator tell two roles with one title apart', async () => {
     // Arrange / Act
     const added = await withMigratedScratchDatabase((db) =>
-      addPositions(db, [
+      addPostings(db, [
         role('Acme', 'Engineer', { disambiguator: 'platform' }),
         role('Acme', 'Engineer', { disambiguator: 'data' }),
       ]),
@@ -271,27 +271,27 @@ describe('addPositions', () => {
 
   test('refuses an archived work format, names the item, and writes nothing', async () => {
     // Arrange / Act
-    const { error, positions } = await withMigratedScratchDatabase(async (db) => {
+    const { error, postings } = await withMigratedScratchDatabase(async (db) => {
       const formats = await addRegistryRows(db, 'work_format', [{ label: 'Retired format' }])
       const workFormatId = idOf(formats)
       await archiveRegistryRow(db, 'work_format', workFormatId)
       const error = await thrownBulk(() =>
-        addPositions(db, [role('Acme', 'One'), role('Acme', 'Two', { workFormatId })]),
+        addPostings(db, [role('Acme', 'One'), role('Acme', 'Two', { workFormatId })]),
       )
-      return { error, positions: await rowCount(db, position) }
+      return { error, postings: await rowCount(db, posting) }
     })
 
     // Assert
     expect(error.index).toBe(1)
     expect(error.cause).toBeInstanceOf(ArchivedError)
-    expect(positions).toBe(0)
+    expect(postings).toBe(0)
   })
 
   test('refuses a seniority and an apply route that do not exist', async () => {
     // Arrange / Act
     const { seniority, route } = await withMigratedScratchDatabase(async (db) => ({
-      seniority: await thrownBulk(() => addPositions(db, [role('Acme', 'One', { seniorityId: 9999 })])),
-      route: await thrownBulk(() => addPositions(db, [role('Acme', 'One', { applyRouteId: 9999 })])),
+      seniority: await thrownBulk(() => addPostings(db, [role('Acme', 'One', { seniorityId: 9999 })])),
+      route: await thrownBulk(() => addPostings(db, [role('Acme', 'One', { applyRouteId: 9999 })])),
     }))
 
     // Assert
@@ -320,12 +320,12 @@ describe('addPositions', () => {
       firstImportedAt: new Date('2001-01-01T00:00:00Z'),
       lastImportedAt: new Date('2001-01-01T00:00:00Z'),
       companyId: 999,
-    } as PositionInput
+    } as PostingInput
 
     // Act
     const stored = await withMigratedScratchDatabase(async (db) => {
       const created = await addOne(db, wider)
-      return { created, read: (await getPosition(db, created.id)).position }
+      return { created, read: (await getPosting(db, created.id)).posting }
     })
 
     // Assert: the ranking is empty and both timestamps are the column default, not 2001
@@ -343,7 +343,7 @@ describe('addPositions', () => {
     // database; the repository classifies only duplicates and vocabulary refusals as the
     // item's fault and does not guess at the rest
     const error = await withMigratedScratchDatabase((db) =>
-      thrownBy(() => addPositions(db, [role('Acme', 'One', { seenAt: 'not a date' })])),
+      thrownBy(() => addPostings(db, [role('Acme', 'One', { seenAt: 'not a date' })])),
     )
 
     // Assert: it reaches the caller as it is, rather than as a 400 naming an item
@@ -352,7 +352,7 @@ describe('addPositions', () => {
   })
 
   test('writes a call of exactly BULK_MAX items', async () => {
-    // Arrange: 500 positions across two registries, which is the guard's worst case
+    // Arrange: 500 postings across two registries, which is the guard's worst case
     const stored = await withMigratedScratchDatabase(async (db) => {
       const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'A level' }]))
       const workFormatId = idOf(await addRegistryRows(db, 'work_format', [{ label: 'A format' }]))
@@ -361,8 +361,8 @@ describe('addPositions', () => {
       )
 
       // Act
-      await addPositions(db, items)
-      return rowCount(db, position)
+      await addPostings(db, items)
+      return rowCount(db, posting)
     })
 
     // Assert
@@ -370,28 +370,28 @@ describe('addPositions', () => {
   }, 30_000)
 })
 
-describe('the position input schemas', () => {
+describe('the posting input schemas', () => {
   const minimal = { company: { name: 'Acme' }, roleTitle: 'Staff Engineer' }
 
   test('cannot carry a hand-ranking, and no other write schema can either', () => {
     // Assert: strictness is what makes the rule impossible rather than merely unused
-    expect(PositionInputSchema.safeParse({ ...minimal, priorityRank: 1 }).success).toBe(false)
-    expect(bulkOf(PositionInputSchema).safeParse({ items: [{ ...minimal, priorityRank: 1 }] }).success).toBe(false)
-    expect(Object.keys(PositionInputSchema.shape)).not.toContain('priorityRank')
+    expect(PostingInputSchema.safeParse({ ...minimal, priorityRank: 1 }).success).toBe(false)
+    expect(bulkOf(PostingInputSchema).safeParse({ items: [{ ...minimal, priorityRank: 1 }] }).success).toBe(false)
+    expect(Object.keys(PostingInputSchema.shape)).not.toContain('priorityRank')
     expect(Object.keys(SummaryInputSchema.shape)).not.toContain('priorityRank')
     expect(Object.keys(CompanyInputSchema.shape)).not.toContain('priorityRank')
-    expect(Object.keys(PositionPatchSchema.shape)).toContain('priorityRank')
+    expect(Object.keys(PostingPatchSchema.shape)).toContain('priorityRank')
   })
 
   test('refuses a field it does not name, so an import cannot set the import timestamps', () => {
     // Assert
-    expect(PositionInputSchema.safeParse({ ...minimal, lastImportedAt: '2026-01-01' }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, companyId: 3 }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, lastImportedAt: '2026-01-01' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, companyId: 3 }).success).toBe(false)
   })
 
   test('accepts a call of BULK_MAX items and refuses one more', () => {
     // Arrange
-    const bulk = bulkOf(PositionInputSchema)
+    const bulk = bulkOf(PostingInputSchema)
     const items = (n: number) => Array.from({ length: n }, () => minimal)
 
     // Assert
@@ -401,30 +401,30 @@ describe('the position input schemas', () => {
 
   test('refuses a NUL character, which Postgres cannot store, before it reaches the driver', () => {
     // Assert: refused as a validation message, so it never becomes a driver error with SQL in it
-    expect(PositionInputSchema.safeParse({ ...minimal, roleTitle: 'a\u0000b' }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, company: { name: 'a\u0000b' } }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, disambiguator: 'a\u0000b' }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, city: 'a\u0000b' }).success).toBe(false)
-    expect(PositionPatchSchema.safeParse({ applyContact: 'a\u0000b' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, roleTitle: 'a\u0000b' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, company: { name: 'a\u0000b' } }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, disambiguator: 'a\u0000b' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, city: 'a\u0000b' }).success).toBe(false)
+    expect(PostingPatchSchema.safeParse({ applyContact: 'a\u0000b' }).success).toBe(false)
   })
 
   test('refuses a blank company or role, and a date that is not a day', () => {
     // Assert
-    expect(PositionInputSchema.safeParse({ ...minimal, roleTitle: '   ' }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, company: { name: '' } }).success).toBe(false)
-    expect(PositionInputSchema.safeParse({ ...minimal, deadline: 'soon' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, roleTitle: '   ' }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, company: { name: '' } }).success).toBe(false)
+    expect(PostingInputSchema.safeParse({ ...minimal, deadline: 'soon' }).success).toBe(false)
   })
 })
 
-describe('getPosition', () => {
-  test('returns the position, its company and no summary or stage when it has none', async () => {
+describe('getPosting', () => {
+  test('returns the posting, its company and no summary or stage when it has none', async () => {
     // Arrange / Act
     const detail = await withMigratedScratchDatabase(async (db) =>
-      getPosition(db, (await addOne(db, role('Acme', 'One'))).id),
+      getPosting(db, (await addOne(db, role('Acme', 'One'))).id),
     )
 
     // Assert
-    expect(detail.position.roleTitle).toBe('One')
+    expect(detail.posting.roleTitle).toBe('One')
     expect(detail.company.name).toBe('Acme')
     expect(detail.summary).toBeNull()
     expect(detail.latestStage).toBeNull()
@@ -434,20 +434,20 @@ describe('getPosition', () => {
     expect(detail.references).toEqual({ workFormat: null, seniority: null, applyRoute: null })
   })
 
-  test('raises NotFoundError for an id with no position', async () => {
+  test('raises NotFoundError for an id with no posting', async () => {
     // Arrange / Act
-    const error = await withMigratedScratchDatabase((db) => thrownBy(() => getPosition(db, 4242)))
+    const error = await withMigratedScratchDatabase((db) => thrownBy(() => getPosting(db, 4242)))
 
     // Assert
     expect(error).toBeInstanceOf(NotFoundError)
   })
 
-  test('returns the summary beside the position', async () => {
+  test('returns the summary beside the posting', async () => {
     // Arrange / Act
     const detail = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
-      await writeSummary(db, { positionId: id, condensed: 'The posting, condensed', sourceHash: 'h1' })
-      return getPosition(db, id)
+      await writeSummary(db, { postingId: id, condensed: 'The posting, condensed', sourceHash: 'h1' })
+      return getPosting(db, id)
     })
 
     // Assert
@@ -462,11 +462,11 @@ describe('getPosition', () => {
         { key: 's1', label: 'Earlier stage' },
         { key: 's2', label: 'Later stage' },
       ])
-      await db.insert(positionStageEvent).values([
-        { positionId: id, stageId: idOf(stages, 1), occurredAt: new Date('2026-03-01T10:00:00Z'), note: 'later' },
-        { positionId: id, stageId: idOf(stages, 0), occurredAt: new Date('2026-01-01T10:00:00Z'), note: 'earlier' },
+      await db.insert(postingStageEvent).values([
+        { postingId: id, stageId: idOf(stages, 1), occurredAt: new Date('2026-03-01T10:00:00Z'), note: 'later' },
+        { postingId: id, stageId: idOf(stages, 0), occurredAt: new Date('2026-01-01T10:00:00Z'), note: 'earlier' },
       ])
-      return getPosition(db, id)
+      return getPosting(db, id)
     })
 
     // Assert
@@ -479,7 +479,7 @@ describe('getPosition', () => {
     const { detail, expected } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
       const expected = await writeTiedStageEvents(db, id)
-      return { detail: await getPosition(db, id), expected }
+      return { detail: await getPosting(db, id), expected }
     })
 
     // Assert: the highest id wins. Without the tie-break the single row asked for is whichever
@@ -498,15 +498,15 @@ describe('getPosition', () => {
       const workFormatId = idOf(await addRegistryRows(db, 'work_format', [{ label: 'A format' }]))
       const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'A level' }]))
       const { id } = await addOne(db, role('Acme', 'One', { workFormatId, seniorityId }))
-      await db.insert(positionStageEvent).values({ positionId: id, stageId })
+      await db.insert(postingStageEvent).values({ postingId: id, stageId })
       const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'A reason' }]))
-      await db.insert(positionDisposition).values({ positionId: id, kind: 'set_aside', setAsideReasonId: reasonId })
+      await db.insert(postingDisposition).values({ postingId: id, kind: 'set_aside', setAsideReasonId: reasonId })
       await archiveRegistryRow(db, 'stage', stageId)
       await archiveRegistryRow(db, 'phase', phaseId)
       await archiveRegistryRow(db, 'work_format', workFormatId)
       await archiveRegistryRow(db, 'seniority', seniorityId)
       await archiveRegistryRow(db, 'set_aside_reason', reasonId)
-      return getPosition(db, id)
+      return getPosting(db, id)
     })
 
     // Assert: archival hides a row from a pick-list, never from a reference that names it
@@ -537,24 +537,24 @@ describe('getPosition', () => {
       const setAId = idOf([setA as { id: number }])
       const setBId = idOf([setB as { id: number }])
       const scores = await db
-        .insert(positionScore)
+        .insert(postingScore)
         .values([
-          { positionId: id, criteriaSetId: setAId, scoredAt: '2026-01-01', overall: 0.2 },
-          { positionId: id, criteriaSetId: setAId, scoredAt: '2026-02-01', overall: 0.8, isRescore: true },
-          { positionId: id, criteriaSetId: setBId, scoredAt: '2026-01-15', overall: 0.5 },
+          { postingId: id, criteriaSetId: setAId, scoredAt: '2026-01-01', overall: 0.2 },
+          { postingId: id, criteriaSetId: setAId, scoredAt: '2026-02-01', overall: 0.8, isRescore: true },
+          { postingId: id, criteriaSetId: setBId, scoredAt: '2026-01-15', overall: 0.5 },
         ])
         .returning()
       const latestA = scores[1] as { id: number }
-      await db.insert(positionRating).values({
+      await db.insert(postingRating).values({
         scoreId: latestA.id,
         criteriaSetId: setAId,
         requirementId: idOf([reqA as { id: number }]),
         coverage: 1,
         confidence: 'supported',
       })
-      await db.insert(positionPenalty).values({ scoreId: latestA.id, penaltyKindId: kindId, amount: -0.1 })
+      await db.insert(postingPenalty).values({ scoreId: latestA.id, penaltyKindId: kindId, amount: -0.1 })
       await archiveRegistryRow(db, 'penalty_kind', kindId)
-      return { detail: await getPosition(db, id), setAId, setBId }
+      return { detail: await getPosting(db, id), setAId, setBId }
     })
 
     // Assert: two sets, so two scores, and set A's is the newer one
@@ -579,16 +579,16 @@ describe('getPosition', () => {
       const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
       const rejectionId = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
       const routeId = idOf(await addRegistryRows(db, 'route', [{ label: 'A search' }]))
-      await db.insert(positionDisposition).values([
-        { positionId: id, kind: 'set_aside', setAsideReasonId: reasonId, notedAt: new Date('2026-01-01T00:00:00Z') },
-        { positionId: id, kind: 'rejected', rejectionReasonId: rejectionId, notedAt: new Date('2026-02-01T00:00:00Z') },
+      await db.insert(postingDisposition).values([
+        { postingId: id, kind: 'set_aside', setAsideReasonId: reasonId, notedAt: new Date('2026-01-01T00:00:00Z') },
+        { postingId: id, kind: 'rejected', rejectionReasonId: rejectionId, notedAt: new Date('2026-02-01T00:00:00Z') },
       ])
       await db.insert(origin).values([
-        { positionId: id, routeId, touchedOn: '2026-01-05', note: 'a' },
-        { positionId: id, touchedOn: '2026-01-02', note: 'b' },
+        { postingId: id, routeId, touchedOn: '2026-01-05', note: 'a' },
+        { postingId: id, touchedOn: '2026-01-02', note: 'b' },
       ])
       await archiveRegistryRow(db, 'route', routeId)
-      return getPosition(db, id)
+      return getPosting(db, id)
     })
 
     // Assert: oldest first, labels kept after archival, and a null route stays null
@@ -603,36 +603,36 @@ describe('getPosition', () => {
   })
 })
 
-describe('searchPositions', () => {
+describe('searchPostings', () => {
   test('returns an empty list when nothing matches', async () => {
     // Arrange / Act
-    const rows = await withMigratedScratchDatabase((db) => searchPositions(db, queryOf()))
+    const rows = await withMigratedScratchDatabase((db) => searchPostings(db, queryOf()))
 
     // Assert
     expect(rows).toEqual([])
   })
 
-  test('hides a set-aside position by default and returns it when the filter asks for it', async () => {
+  test('hides a set-aside posting by default and returns it when the filter asks for it', async () => {
     // Arrange / Act
     const { byDefault, included, only } = await withMigratedScratchDatabase(async (db) => {
-      const [, passed] = await addPositions(db, [role('Acme', 'Kept'), role('Acme', 'Passed on')])
+      const [, passed] = await addPostings(db, [role('Acme', 'Kept'), role('Acme', 'Passed on')])
       const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
       await db
-        .insert(positionDisposition)
-        .values({ positionId: idOf([passed as { id: number }]), kind: 'set_aside', setAsideReasonId: reasonId })
+        .insert(postingDisposition)
+        .values({ postingId: idOf([passed as { id: number }]), kind: 'set_aside', setAsideReasonId: reasonId })
       return {
-        byDefault: await searchPositions(db, queryOf()),
-        included: await searchPositions(db, queryOf({ setAside: 'include' })),
-        only: await searchPositions(db, queryOf({ setAside: 'only' })),
+        byDefault: await searchPostings(db, queryOf()),
+        included: await searchPostings(db, queryOf({ setAside: 'include' })),
+        only: await searchPostings(db, queryOf({ setAside: 'only' })),
       }
     })
 
     // Assert
-    expect(byDefault.map((row) => row.position.roleTitle)).toEqual(['Kept'])
-    expect(included.map((row) => row.position.roleTitle).sort()).toEqual(['Kept', 'Passed on'])
-    expect(only.map((row) => row.position.roleTitle)).toEqual(['Passed on'])
-    expect(included.find((row) => row.position.roleTitle === 'Passed on')?.setAside).toBe(true)
-    expect(included.find((row) => row.position.roleTitle === 'Kept')?.setAside).toBe(false)
+    expect(byDefault.map((row) => row.posting.roleTitle)).toEqual(['Kept'])
+    expect(included.map((row) => row.posting.roleTitle).sort()).toEqual(['Kept', 'Passed on'])
+    expect(only.map((row) => row.posting.roleTitle)).toEqual(['Passed on'])
+    expect(included.find((row) => row.posting.roleTitle === 'Passed on')?.setAside).toBe(true)
+    expect(included.find((row) => row.posting.roleTitle === 'Kept')?.setAside).toBe(false)
   })
 
   test('does not count a rejection as a set-aside', async () => {
@@ -640,29 +640,29 @@ describe('searchPositions', () => {
     const rows = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'Rejected'))
       const reasonId = idOf(await addRegistryRows(db, 'rejection_reason', [{ label: 'No reply' }]))
-      await db.insert(positionDisposition).values({ positionId: id, kind: 'rejected', rejectionReasonId: reasonId })
-      return searchPositions(db, queryOf())
+      await db.insert(postingDisposition).values({ postingId: id, kind: 'rejected', rejectionReasonId: reasonId })
+      return searchPostings(db, queryOf())
     })
 
     // Assert
-    expect(rows.map((row) => row.position.roleTitle)).toEqual(['Rejected'])
+    expect(rows.map((row) => row.posting.roleTitle)).toEqual(['Rejected'])
   })
 
   test('filters by company', async () => {
     // Arrange / Act
     const { rows, wanted } = await withMigratedScratchDatabase(async (db) => {
-      const added = await addPositions(db, [role('Acme', 'One'), role('Other', 'Two'), role('Acme', 'Three')])
-      const wanted = (added[0] as Position).companyId
-      return { rows: await searchPositions(db, queryOf({ companyId: wanted })), wanted }
+      const added = await addPostings(db, [role('Acme', 'One'), role('Other', 'Two'), role('Acme', 'Three')])
+      const wanted = (added[0] as Posting).companyId
+      return { rows: await searchPostings(db, queryOf({ companyId: wanted })), wanted }
     })
 
     // Assert
-    expect(rows.map((row) => row.position.roleTitle).sort()).toEqual(['One', 'Three'])
+    expect(rows.map((row) => row.posting.roleTitle).sort()).toEqual(['One', 'Three'])
     expect(rows.every((row) => row.company.id === wanted)).toBe(true)
     expect(rows[0]?.company.name).toBe('Acme')
   })
 
-  test('filters by the phase of the latest stage event, so a position that moved on leaves the old phase', async () => {
+  test('filters by the phase of the latest stage event, so a posting that moved on leaves the old phase', async () => {
     // Arrange / Act
     const { inFirst, inSecond, row } = await withMigratedScratchDatabase(async (db) => {
       const phases = await addRegistryRows(db, 'phase', [
@@ -674,13 +674,13 @@ describe('searchPositions', () => {
         { key: 's2', label: 'In second', phaseId: idOf(phases, 1) },
       ])
       const { id } = await addOne(db, role('Acme', 'Mover'))
-      await db.insert(positionStageEvent).values([
-        { positionId: id, stageId: idOf(stages, 0), occurredAt: new Date('2026-01-01T00:00:00Z') },
-        { positionId: id, stageId: idOf(stages, 1), occurredAt: new Date('2026-02-01T00:00:00Z') },
+      await db.insert(postingStageEvent).values([
+        { postingId: id, stageId: idOf(stages, 0), occurredAt: new Date('2026-01-01T00:00:00Z') },
+        { postingId: id, stageId: idOf(stages, 1), occurredAt: new Date('2026-02-01T00:00:00Z') },
       ])
-      const inSecond = await searchPositions(db, queryOf({ phaseId: idOf(phases, 1) }))
+      const inSecond = await searchPostings(db, queryOf({ phaseId: idOf(phases, 1) }))
       return {
-        inFirst: await searchPositions(db, queryOf({ phaseId: idOf(phases, 0) })),
+        inFirst: await searchPostings(db, queryOf({ phaseId: idOf(phases, 0) })),
         inSecond,
         row: inSecond[0],
       }
@@ -693,13 +693,13 @@ describe('searchPositions', () => {
     expect(row?.phase?.label).toBe('Second phase')
   })
 
-  test('shows the same latest stage as getPosition when two events share a timestamp', async () => {
+  test('shows the same latest stage as getPosting when two events share a timestamp', async () => {
     // Arrange / Act
     const { row, detail } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
       await writeTiedStageEvents(db, id)
-      const [row] = await searchPositions(db, queryOf())
-      return { row, detail: await getPosition(db, id) }
+      const [row] = await searchPostings(db, queryOf())
+      return { row, detail: await getPosting(db, id) }
     })
 
     // Assert: the board and the modal must not disagree about where a card sits
@@ -713,10 +713,10 @@ describe('searchPositions', () => {
       const phaseId = idOf(await addRegistryRows(db, 'phase', [{ key: 'p1', label: 'A phase' }]))
       const stageId = idOf(await addRegistryRows(db, 'stage', [{ key: 's1', label: 'A stage', phaseId }]))
       const { id } = await addOne(db, role('Acme', 'One'))
-      await db.insert(positionStageEvent).values({ positionId: id, stageId })
+      await db.insert(postingStageEvent).values({ postingId: id, stageId })
       await archiveRegistryRow(db, 'stage', stageId)
       await archiveRegistryRow(db, 'phase', phaseId)
-      return searchPositions(db, queryOf())
+      return searchPostings(db, queryOf())
     })
 
     // Assert: archival hides a row from a pick-list, never from a card that sits in it
@@ -736,12 +736,12 @@ describe('searchPositions', () => {
           { name: 'other', version: 1 },
         ])
         .returning()
-      await db.insert(positionScore).values([
-        { positionId: id, criteriaSetId: idOf(created, 0), scoredAt: '2026-01-01', overall: 0.9, recommendApply: true },
-        { positionId: id, criteriaSetId: idOf(created, 1), scoredAt: '2026-02-01', overall: 0.2 },
-        { positionId: id, criteriaSetId: idOf(created, 2), scoredAt: '2026-02-01', overall: 0.4 },
+      await db.insert(postingScore).values([
+        { postingId: id, criteriaSetId: idOf(created, 0), scoredAt: '2026-01-01', overall: 0.9, recommendApply: true },
+        { postingId: id, criteriaSetId: idOf(created, 1), scoredAt: '2026-02-01', overall: 0.2 },
+        { postingId: id, criteriaSetId: idOf(created, 2), scoredAt: '2026-02-01', overall: 0.4 },
       ])
-      return { detail: await getPosition(db, id), best: await getBestScores(db, id) }
+      return { detail: await getPosting(db, id), best: await getBestScores(db, id) }
     })
 
     // Assert: the modal and the "+n" chip count the same lenses
@@ -750,7 +750,7 @@ describe('searchPositions', () => {
     expect(detail.scores.map((entry) => entry.score.overall).sort()).toEqual([0.2, 0.4])
   })
 
-  test('shows the same latest score per criteria set as getPosition', async () => {
+  test('shows the same latest score per criteria set as getPosting', async () => {
     // Arrange / Act: scores written newest first, so id order and date order disagree
     const { setAId, setBId, detail, forA, forB } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
@@ -763,19 +763,19 @@ describe('searchPositions', () => {
         .returning()
       const setAId = idOf(sets, 0)
       const setBId = idOf(sets, 1)
-      await db.insert(positionScore).values([
-        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-03-01', overall: 0.9 },
-        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-01-01', overall: 0.1 },
-        { positionId: id, criteriaSetId: setAId, scoredAt: '2026-02-01', overall: 0.5 },
-        { positionId: id, criteriaSetId: setBId, scoredAt: '2026-02-15', overall: 0.7 },
-        { positionId: id, criteriaSetId: setBId, scoredAt: '2026-01-15', overall: 0.2 },
+      await db.insert(postingScore).values([
+        { postingId: id, criteriaSetId: setAId, scoredAt: '2026-03-01', overall: 0.9 },
+        { postingId: id, criteriaSetId: setAId, scoredAt: '2026-01-01', overall: 0.1 },
+        { postingId: id, criteriaSetId: setAId, scoredAt: '2026-02-01', overall: 0.5 },
+        { postingId: id, criteriaSetId: setBId, scoredAt: '2026-02-15', overall: 0.7 },
+        { postingId: id, criteriaSetId: setBId, scoredAt: '2026-01-15', overall: 0.2 },
       ])
       return {
         setAId,
         setBId,
-        detail: await getPosition(db, id),
-        forA: await searchPositions(db, queryOf({ criteriaSetId: setAId })),
-        forB: await searchPositions(db, queryOf({ criteriaSetId: setBId })),
+        detail: await getPosting(db, id),
+        forA: await searchPostings(db, queryOf({ criteriaSetId: setAId })),
+        forB: await searchPostings(db, queryOf({ criteriaSetId: setBId })),
       }
     })
 
@@ -790,34 +790,34 @@ describe('searchPositions', () => {
   test('filters on recommend-apply against the set asked for, using that set\'s latest score', async () => {
     // Arrange / Act
     const { yes, no, none, row } = await withMigratedScratchDatabase(async (db) => {
-      const [recommended, declined] = await addPositions(db, [
+      const [recommended, declined] = await addPostings(db, [
         role('Acme', 'Recommended'),
         role('Acme', 'Declined'),
         role('Acme', 'Unscored'),
       ])
       const [set] = await db.insert(criteriaSet).values({ name: 'set', version: 1 }).returning()
       const setId = idOf([set as { id: number }])
-      await db.insert(positionScore).values([
+      await db.insert(postingScore).values([
         // An old recommendation that a later score withdrew must not count
-        { positionId: idOf([recommended as { id: number }]), criteriaSetId: setId, scoredAt: '2026-01-01', overall: 0.4, recommendApply: false },
-        { positionId: idOf([recommended as { id: number }]), criteriaSetId: setId, scoredAt: '2026-02-01', overall: 0.9, recommendApply: true },
-        { positionId: idOf([declined as { id: number }]), criteriaSetId: setId, scoredAt: '2026-01-01', overall: 0.1, recommendApply: false },
+        { postingId: idOf([recommended as { id: number }]), criteriaSetId: setId, scoredAt: '2026-01-01', overall: 0.4, recommendApply: false },
+        { postingId: idOf([recommended as { id: number }]), criteriaSetId: setId, scoredAt: '2026-02-01', overall: 0.9, recommendApply: true },
+        { postingId: idOf([declined as { id: number }]), criteriaSetId: setId, scoredAt: '2026-01-01', overall: 0.1, recommendApply: false },
       ])
-      const yes = await searchPositions(db, queryOf({ criteriaSetId: setId, recommendApply: true }))
+      const yes = await searchPostings(db, queryOf({ criteriaSetId: setId, recommendApply: true }))
       return {
         yes,
-        no: await searchPositions(db, queryOf({ criteriaSetId: setId, recommendApply: false })),
-        none: await searchPositions(db, queryOf({ criteriaSetId: setId })),
+        no: await searchPostings(db, queryOf({ criteriaSetId: setId, recommendApply: false })),
+        none: await searchPostings(db, queryOf({ criteriaSetId: setId })),
         row: yes[0],
       }
     })
 
-    // Assert: an unscored position matches neither answer, and a row carries its score
-    expect(yes.map((r) => r.position.roleTitle)).toEqual(['Recommended'])
-    expect(no.map((r) => r.position.roleTitle)).toEqual(['Declined'])
+    // Assert: an unscored posting matches neither answer, and a row carries its score
+    expect(yes.map((r) => r.posting.roleTitle)).toEqual(['Recommended'])
+    expect(no.map((r) => r.posting.roleTitle)).toEqual(['Declined'])
     expect(none).toHaveLength(3)
     expect(row?.score).toMatchObject({ overall: 0.9, recommendApply: true })
-    expect(none.find((r) => r.position.roleTitle === 'Unscored')?.score).toBeNull()
+    expect(none.find((r) => r.posting.roleTitle === 'Unscored')?.score).toBeNull()
   })
 
   describe('the recommend-apply filter without a set named (the across-sets rule)', () => {
@@ -835,13 +835,13 @@ describe('searchPositions', () => {
       return rows.map((_, index) => idOf(rows, index))
     }
 
-    function score(positionId: number, setId: number, recommendApply: boolean, scoredAt = '2026-02-01'): typeof positionScore.$inferInsert {
-      return { positionId, criteriaSetId: setId, scoredAt, overall: recommendApply ? 0.9 : 0.1, recommendApply }
+    function score(postingId: number, setId: number, recommendApply: boolean, scoredAt = '2026-02-01'): typeof postingScore.$inferInsert {
+      return { postingId, criteriaSetId: setId, scoredAt, overall: recommendApply ? 0.9 : 0.1, recommendApply }
     }
 
-    const titles = (rows: { position: { roleTitle: string } }[]): string[] => rows.map((row) => row.position.roleTitle).sort()
+    const titles = (rows: { posting: { roleTitle: string } }[]): string[] => rows.map((row) => row.posting.roleTitle).sort()
 
-    test('lists a position that only a set other than the default recommends', async () => {
+    test('lists a posting that only a set other than the default recommends', async () => {
       // Arrange / Act: the default set declines it, a second set recommends it
       const { yes, no } = await withMigratedScratchDatabase(async (db) => {
         const { id } = await addOne(db, role('Acme', 'Only B'))
@@ -849,13 +849,13 @@ describe('searchPositions', () => {
           { name: 'standard', version: 1, isDefault: true },
           { name: 'other', version: 1 },
         ])
-        await db.insert(positionScore).values([
+        await db.insert(postingScore).values([
           score(id, need(defaultId), false),
           score(id, need(otherId), true),
         ])
         return {
-          yes: await searchPositions(db, queryOf({ recommendApply: true })),
-          no: await searchPositions(db, queryOf({ recommendApply: false })),
+          yes: await searchPostings(db, queryOf({ recommendApply: true })),
+          no: await searchPostings(db, queryOf({ recommendApply: false })),
         }
       })
 
@@ -864,10 +864,10 @@ describe('searchPositions', () => {
       expect(no).toEqual([])
     })
 
-    test('does not list a position that only a superseded version recommends', async () => {
-      // Arrange / Act: v1 recommends it; v2 of the same name scored it and declined, and a second position was never scored under v2
+    test('does not list a posting that only a superseded version recommends', async () => {
+      // Arrange / Act: v1 recommends it; v2 of the same name scored it and declined, and a second posting was never scored under v2
       const { yes, no } = await withMigratedScratchDatabase(async (db) => {
-        const [declined, unscored] = await addPositions(db, [role('Acme', 'Declined by v2'), role('Acme', 'Not yet under v2')])
+        const [declined, unscored] = await addPostings(db, [role('Acme', 'Declined by v2'), role('Acme', 'Not yet under v2')])
         const [v1, v2] = await sets(db, [
           { name: 'web-search', version: 1 },
           { name: 'web-search', version: 2, isDefault: true },
@@ -876,36 +876,36 @@ describe('searchPositions', () => {
         const v2Id = need(v2)
         const declinedId = idOf([declined as { id: number }])
         const unscoredId = idOf([unscored as { id: number }])
-        await db.insert(positionScore).values([
+        await db.insert(postingScore).values([
           score(declinedId, v1Id, true, '2026-01-01'),
           score(declinedId, v2Id, false, '2026-02-01'),
           score(unscoredId, v1Id, true, '2026-01-01'),
         ])
         return {
-          yes: await searchPositions(db, queryOf({ recommendApply: true })),
-          no: await searchPositions(db, queryOf({ recommendApply: false })),
+          yes: await searchPostings(db, queryOf({ recommendApply: true })),
+          no: await searchPostings(db, queryOf({ recommendApply: false })),
         }
       })
 
-      // Assert: v1's old yes does not count, and a position v2 has not scored matches neither answer
+      // Assert: v1's old yes does not count, and a posting v2 has not scored matches neither answer
       expect(yes).toEqual([])
       expect(titles(no)).toEqual(['Declined by v2'])
     })
 
     test('shows the score that caused the match, not the default set\'s denial', async () => {
-      // Arrange / Act: the default set declines the position; another set recommends it
+      // Arrange / Act: the default set declines the posting; another set recommends it
       const { yes, no, unfiltered, otherId } = await withMigratedScratchDatabase(async (db) => {
         const { id } = await addOne(db, role('Acme', 'Only B'))
         const [defaultId, otherId] = await sets(db, [
           { name: 'standard', version: 1, isDefault: true },
           { name: 'other', version: 1 },
         ])
-        await db.insert(positionScore).values([score(id, need(defaultId), false), score(id, need(otherId), true)])
+        await db.insert(postingScore).values([score(id, need(defaultId), false), score(id, need(otherId), true)])
         return {
           otherId: need(otherId),
-          yes: await searchPositions(db, queryOf({ recommendApply: true })),
-          no: await searchPositions(db, queryOf({ recommendApply: false })),
-          unfiltered: await searchPositions(db, queryOf()),
+          yes: await searchPostings(db, queryOf({ recommendApply: true })),
+          no: await searchPostings(db, queryOf({ recommendApply: false })),
+          unfiltered: await searchPostings(db, queryOf()),
         }
       })
 
@@ -918,26 +918,26 @@ describe('searchPositions', () => {
     test('shows the best-scoring of several recommending sets, ties going to the later score', async () => {
       // Arrange / Act
       const { rows, highId, lateId } = await withMigratedScratchDatabase(async (db) => {
-        const [high, tied] = await addPositions(db, [role('Acme', 'High'), role('Acme', 'Tied')])
+        const [high, tied] = await addPostings(db, [role('Acme', 'High'), role('Acme', 'Tied')])
         const [a, b, c] = await sets(db, [
           { name: 'a', version: 1, isDefault: true },
           { name: 'b', version: 1 },
           { name: 'c', version: 1 },
         ])
-        const highPosition = idOf([high as { id: number }])
-        const tiedPosition = idOf([tied as { id: number }])
-        await db.insert(positionScore).values([
-          { ...score(highPosition, need(a), true), overall: 0.6 },
-          { ...score(highPosition, need(b), true), overall: 0.95 },
-          { ...score(highPosition, need(c), false), overall: 0.99 },
-          { ...score(tiedPosition, need(a), true, '2026-01-01'), overall: 0.8 },
-          { ...score(tiedPosition, need(b), true, '2026-03-01'), overall: 0.8 },
+        const highPosting = idOf([high as { id: number }])
+        const tiedPosting = idOf([tied as { id: number }])
+        await db.insert(postingScore).values([
+          { ...score(highPosting, need(a), true), overall: 0.6 },
+          { ...score(highPosting, need(b), true), overall: 0.95 },
+          { ...score(highPosting, need(c), false), overall: 0.99 },
+          { ...score(tiedPosting, need(a), true, '2026-01-01'), overall: 0.8 },
+          { ...score(tiedPosting, need(b), true, '2026-03-01'), overall: 0.8 },
         ])
-        return { rows: await searchPositions(db, queryOf({ recommendApply: true })), highId: need(b), lateId: need(b) }
+        return { rows: await searchPostings(db, queryOf({ recommendApply: true })), highId: need(b), lateId: need(b) }
       })
 
       // Assert: a declining set never supplies the score, even with the highest overall
-      const byTitle = (title: string) => rows.find((row) => row.position.roleTitle === title)?.score
+      const byTitle = (title: string) => rows.find((row) => row.posting.roleTitle === title)?.score
       expect(byTitle('High')).toMatchObject({ criteriaSetId: highId, overall: 0.95 })
       expect(byTitle('Tied')).toMatchObject({ criteriaSetId: lateId, scoredAt: '2026-03-01' })
     })
@@ -950,15 +950,15 @@ describe('searchPositions', () => {
           { name: 'a', version: 1, isDefault: true },
           { name: 'b', version: 1 },
         ])
-        await db.insert(positionScore).values([{ ...score(id, need(a), false), overall: 0.2 }, { ...score(id, need(b), false), overall: 0.4 }])
-        return searchPositions(db, queryOf({ recommendApply: false }))
+        await db.insert(postingScore).values([{ ...score(id, need(a), false), overall: 0.2 }, { ...score(id, need(b), false), overall: 0.4 }])
+        return searchPostings(db, queryOf({ recommendApply: false }))
       })
 
       // Assert: the declined row is not left without a score, and shows its best declining one
       expect(no[0]?.score).toMatchObject({ recommendApply: false, overall: 0.4 })
     })
 
-    test('lists a position recommended by a higher version whatever an older version says', async () => {
+    test('lists a posting recommended by a higher version whatever an older version says', async () => {
       // Arrange / Act
       const yes = await withMigratedScratchDatabase(async (db) => {
         const { id } = await addOne(db, role('Acme', 'Lifted by v2'))
@@ -966,11 +966,11 @@ describe('searchPositions', () => {
           { name: 'web-search', version: 1 },
           { name: 'web-search', version: 2 },
         ])
-        await db.insert(positionScore).values([
+        await db.insert(postingScore).values([
           score(id, need(v1), false, '2026-01-01'),
           score(id, need(v2), true, '2026-02-01'),
         ])
-        return searchPositions(db, queryOf({ recommendApply: true }))
+        return searchPostings(db, queryOf({ recommendApply: true }))
       })
 
       // Assert
@@ -983,10 +983,10 @@ describe('searchPositions', () => {
         const { id } = await addOne(db, role('Acme', 'Withdrawn'))
         const [setId] = await sets(db, [{ name: 'only', version: 1 }])
         const only = need(setId)
-        await db.insert(positionScore).values([score(id, only, true, '2026-01-01'), score(id, only, false, '2026-02-01')])
+        await db.insert(postingScore).values([score(id, only, true, '2026-01-01'), score(id, only, false, '2026-02-01')])
         return {
-          yes: await searchPositions(db, queryOf({ recommendApply: true })),
-          no: await searchPositions(db, queryOf({ recommendApply: false })),
+          yes: await searchPostings(db, queryOf({ recommendApply: true })),
+          no: await searchPostings(db, queryOf({ recommendApply: false })),
         }
       })
 
@@ -1005,11 +1005,11 @@ describe('searchPositions', () => {
         ])
         const v1Id = need(v1)
         const v2Id = need(v2)
-        await db.insert(positionScore).values([score(id, v1Id, true, '2026-01-01'), score(id, v2Id, false, '2026-02-01')])
+        await db.insert(postingScore).values([score(id, v1Id, true, '2026-01-01'), score(id, v2Id, false, '2026-02-01')])
         return {
-          forV1: await searchPositions(db, queryOf({ criteriaSetId: v1Id, recommendApply: true })),
-          forV2: await searchPositions(db, queryOf({ criteriaSetId: v2Id, recommendApply: true })),
-          unfiltered: await searchPositions(db, queryOf({ recommendApply: true })),
+          forV1: await searchPostings(db, queryOf({ criteriaSetId: v1Id, recommendApply: true })),
+          forV2: await searchPostings(db, queryOf({ criteriaSetId: v2Id, recommendApply: true })),
+          unfiltered: await searchPostings(db, queryOf({ recommendApply: true })),
         }
       })
 
@@ -1024,23 +1024,23 @@ describe('searchPositions', () => {
       const yes = await withMigratedScratchDatabase(async (db) => {
         const { id } = await addOne(db, role('Acme', 'Archived lens'))
         const [setId] = await sets(db, [{ name: 'retired', version: 1, archived: true }])
-        await db.insert(positionScore).values(score(id, need(setId), true))
-        return searchPositions(db, queryOf({ recommendApply: true }))
+        await db.insert(postingScore).values(score(id, need(setId), true))
+        return searchPostings(db, queryOf({ recommendApply: true }))
       })
 
       // Assert
       expect(titles(yes)).toEqual(['Archived lens'])
     })
 
-    test('gives a position with no score under any set neither answer', async () => {
+    test('gives a posting with no score under any set neither answer', async () => {
       // Arrange / Act
       const { yes, no, all } = await withMigratedScratchDatabase(async (db) => {
         await addOne(db, role('Acme', 'Unscored'))
         await sets(db, [{ name: 'standard', version: 1, isDefault: true }])
         return {
-          yes: await searchPositions(db, queryOf({ recommendApply: true })),
-          no: await searchPositions(db, queryOf({ recommendApply: false })),
-          all: await searchPositions(db, queryOf()),
+          yes: await searchPostings(db, queryOf({ recommendApply: true })),
+          no: await searchPostings(db, queryOf({ recommendApply: false })),
+          all: await searchPostings(db, queryOf()),
         }
       })
 
@@ -1061,11 +1061,11 @@ describe('searchPositions', () => {
           { name: 'standard', version: 1, isDefault: true },
         ])
         .returning()
-      await db.insert(positionScore).values([
-        { positionId: id, criteriaSetId: idOf([other as { id: number }]), overall: 0.3, recommendApply: false },
-        { positionId: id, criteriaSetId: idOf([standard as { id: number }]), overall: 0.7, recommendApply: true },
+      await db.insert(postingScore).values([
+        { postingId: id, criteriaSetId: idOf([other as { id: number }]), overall: 0.3, recommendApply: false },
+        { postingId: id, criteriaSetId: idOf([standard as { id: number }]), overall: 0.7, recommendApply: true },
       ])
-      return searchPositions(db, queryOf({ recommendApply: true }))
+      return searchPostings(db, queryOf({ recommendApply: true }))
     })
 
     // Assert
@@ -1076,37 +1076,37 @@ describe('searchPositions', () => {
   test('pages in a stable order, newest first', async () => {
     // Arrange / Act
     const { first, second, third } = await withMigratedScratchDatabase(async (db) => {
-      await addPositions(db, [
+      await addPostings(db, [
         role('Acme', 'A', { seenAt: '2026-01-01' }),
         role('Acme', 'B', { seenAt: '2026-03-01' }),
         role('Acme', 'C', { seenAt: '2026-03-01' }),
         role('Acme', 'D', { seenAt: '2026-02-01' }),
       ])
       return {
-        first: await searchPositions(db, queryOf({ limit: 2, offset: 0 })),
-        second: await searchPositions(db, queryOf({ limit: 2, offset: 2 })),
-        third: await searchPositions(db, queryOf({ limit: 2, offset: 4 })),
+        first: await searchPostings(db, queryOf({ limit: 2, offset: 0 })),
+        second: await searchPostings(db, queryOf({ limit: 2, offset: 2 })),
+        third: await searchPostings(db, queryOf({ limit: 2, offset: 4 })),
       }
     })
 
     // Assert: the same day falls back to the later id, and the pages tile without overlap
-    const titles = (rows: typeof first) => rows.map((row) => row.position.roleTitle)
+    const titles = (rows: typeof first) => rows.map((row) => row.posting.roleTitle)
     expect(titles(first)).toEqual(['C', 'B'])
     expect(titles(second)).toEqual(['D', 'A'])
     expect(third).toEqual([])
   })
 
-  test('takes the highest ids when many positions share a sort key and a page is bound', async () => {
-    // Arrange / Act: ten positions seen on one day, ids ascending in the order written
+  test('takes the highest ids when many postings share a sort key and a page is bound', async () => {
+    // Arrange / Act: ten postings seen on one day, ids ascending in the order written
     const { written, firstPage, secondPage } = await withMigratedScratchDatabase(async (db) => {
-      const written = await addPositions(
+      const written = await addPostings(
         db,
         Array.from({ length: TIED_ROWS }, (_, index) => role('Acme', `Role ${index}`, { seenAt: '2026-03-01' })),
       )
       return {
         written,
-        firstPage: await searchPositions(db, queryOf({ limit: 3 })),
-        secondPage: await searchPositions(db, queryOf({ limit: 3, offset: 3 })),
+        firstPage: await searchPostings(db, queryOf({ limit: 3 })),
+        secondPage: await searchPostings(db, queryOf({ limit: 3, offset: 3 })),
       }
     })
 
@@ -1114,38 +1114,38 @@ describe('searchPositions', () => {
     // be the three highest ids; without the tie-break it is the first three the scan meets,
     // which are the lowest. The next page continues downwards with no gap and no overlap.
     const ids = written.map((row) => row.id)
-    expect(firstPage.map((row) => row.position.id)).toEqual(ids.slice(-3).reverse())
-    expect(secondPage.map((row) => row.position.id)).toEqual(ids.slice(-6, -3).reverse())
+    expect(firstPage.map((row) => row.posting.id)).toEqual(ids.slice(-3).reverse())
+    expect(secondPage.map((row) => row.posting.id)).toEqual(ids.slice(-6, -3).reverse())
   })
 
-  test('hides a client-hidden position by default, and returns it when asked', async () => {
+  test('hides a client-hidden posting by default, and returns it when asked', async () => {
     // Arrange / Act
     const { byDefault, included, only } = await withMigratedScratchDatabase(async (db) => {
-      await addPositions(db, [role('Acme', 'Shown'), role('Acme', 'Hidden', { clientHidden: true })])
+      await addPostings(db, [role('Acme', 'Shown'), role('Acme', 'Hidden', { clientHidden: true })])
       return {
-        byDefault: await searchPositions(db, queryOf()),
-        included: await searchPositions(db, queryOf({ clientHidden: 'include' })),
-        only: await searchPositions(db, queryOf({ clientHidden: 'only' })),
+        byDefault: await searchPostings(db, queryOf()),
+        included: await searchPostings(db, queryOf({ clientHidden: 'include' })),
+        only: await searchPostings(db, queryOf({ clientHidden: 'only' })),
       }
     })
 
     // Assert
-    expect(byDefault.map((row) => row.position.roleTitle)).toEqual(['Shown'])
-    expect(included.map((row) => row.position.roleTitle).sort()).toEqual(['Hidden', 'Shown'])
-    expect(only.map((row) => row.position.roleTitle)).toEqual(['Hidden'])
+    expect(byDefault.map((row) => row.posting.roleTitle)).toEqual(['Shown'])
+    expect(included.map((row) => row.posting.roleTitle).sort()).toEqual(['Hidden', 'Shown'])
+    expect(only.map((row) => row.posting.roleTitle)).toEqual(['Hidden'])
   })
 
   test('applies the set-aside and client-hidden filters independently', async () => {
-    // Arrange / Act: one position that is both, which each filter must be able to bring back alone
+    // Arrange / Act: one posting that is both, which each filter must be able to bring back alone
     const { neither, setAsideOnly, hiddenOnly, both } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'Both', { clientHidden: true }))
       const reasonId = idOf(await addRegistryRows(db, 'set_aside_reason', [{ label: 'Too far' }]))
-      await db.insert(positionDisposition).values({ positionId: id, kind: 'set_aside', setAsideReasonId: reasonId })
+      await db.insert(postingDisposition).values({ postingId: id, kind: 'set_aside', setAsideReasonId: reasonId })
       return {
-        neither: await searchPositions(db, queryOf()),
-        setAsideOnly: await searchPositions(db, queryOf({ setAside: 'include' })),
-        hiddenOnly: await searchPositions(db, queryOf({ clientHidden: 'include' })),
-        both: await searchPositions(db, queryOf({ setAside: 'include', clientHidden: 'include' })),
+        neither: await searchPostings(db, queryOf()),
+        setAsideOnly: await searchPostings(db, queryOf({ setAside: 'include' })),
+        hiddenOnly: await searchPostings(db, queryOf({ clientHidden: 'include' })),
+        both: await searchPostings(db, queryOf({ setAside: 'include', clientHidden: 'include' })),
       }
     })
 
@@ -1157,10 +1157,10 @@ describe('searchPositions', () => {
   })
 })
 
-describe('the position query schema', () => {
+describe('the posting query schema', () => {
   test('composes the filters with pagination, so a filter does not trip the strict page schema', () => {
     // Act: a query string carries every value as text
-    const parsed = PositionQuerySchema.parse({ companyId: '3', limit: '10', setAside: 'only' })
+    const parsed = PostingQuerySchema.parse({ companyId: '3', limit: '10', setAside: 'only' })
 
     // Assert
     expect(parsed).toMatchObject({ companyId: 3, limit: 10, offset: 0, setAside: 'only' })
@@ -1168,26 +1168,26 @@ describe('the position query schema', () => {
 
   test('still refuses a key it does not name', () => {
     // Assert
-    expect(PositionQuerySchema.safeParse({ company: 3 }).success).toBe(false)
-    expect(PositionQuerySchema.safeParse({ setAside: 'maybe' }).success).toBe(false)
+    expect(PostingQuerySchema.safeParse({ company: 3 }).success).toBe(false)
+    expect(PostingQuerySchema.safeParse({ setAside: 'maybe' }).success).toBe(false)
   })
 
-  test('defaults to hiding set-aside and client-hidden positions', () => {
+  test('defaults to hiding set-aside and client-hidden postings', () => {
     // Assert
-    expect(PositionQuerySchema.parse({}).setAside).toBe('exclude')
-    expect(PositionQuerySchema.parse({}).clientHidden).toBe('exclude')
-    expect(PositionQuerySchema.safeParse({ clientHidden: 'maybe' }).success).toBe(false)
+    expect(PostingQuerySchema.parse({}).setAside).toBe('exclude')
+    expect(PostingQuerySchema.parse({}).clientHidden).toBe('exclude')
+    expect(PostingQuerySchema.safeParse({ clientHidden: 'maybe' }).success).toBe(false)
   })
 })
 
-describe('updatePosition', () => {
+describe('updatePosting', () => {
   test('returns a new object and does not mutate its input', async () => {
     // Arrange / Act
     const { before, patch, updated } = await withMigratedScratchDatabase(async (db) => {
       const stored = await addOne(db, role('Acme', 'One', { city: 'Lisbon' }))
-      const before = await getPosition(db, stored.id)
+      const before = await getPosting(db, stored.id)
       const patch = Object.freeze({ city: 'Porto', priorityRank: 2 })
-      return { before: before.position, patch, updated: await updatePosition(db, stored.id, patch) }
+      return { before: before.posting, patch, updated: await updatePosting(db, stored.id, patch) }
     })
 
     // Assert: a frozen patch would throw on mutation, and the row read before is unchanged
@@ -1202,8 +1202,8 @@ describe('updatePosition', () => {
     const { ranked, cleared } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
       return {
-        ranked: await updatePosition(db, id, { priorityRank: 3 }),
-        cleared: await updatePosition(db, id, { priorityRank: null }),
+        ranked: await updatePosting(db, id, { priorityRank: 3 }),
+        cleared: await updatePosting(db, id, { priorityRank: null }),
       }
     })
 
@@ -1216,7 +1216,7 @@ describe('updatePosition', () => {
     // Arrange / Act
     const updated = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
-      return updatePosition(db, id, { roleTitle: 'Café Lead' })
+      return updatePosting(db, id, { roleTitle: 'Café Lead' })
     })
 
     // Assert
@@ -1224,13 +1224,13 @@ describe('updatePosition', () => {
     expect(updated.roleNorm).toBe('cafe lead')
   })
 
-  test('reports a title that now collides with another position as a conflict', async () => {
+  test('reports a title that now collides with another posting as a conflict', async () => {
     // Arrange / Act
     const { error, unchanged } = await withMigratedScratchDatabase(async (db) => {
       await addOne(db, role('Acme', 'One'))
       const { id } = await addOne(db, role('Acme', 'Two'))
-      const error = await thrownBy(() => updatePosition(db, id, { roleTitle: 'one' }))
-      return { error, unchanged: (await getPosition(db, id)).position.roleTitle }
+      const error = await thrownBy(() => updatePosting(db, id, { roleTitle: 'one' }))
+      return { error, unchanged: (await getPosting(db, id)).posting.roleTitle }
     })
 
     // Assert
@@ -1244,8 +1244,8 @@ describe('updatePosition', () => {
       const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'Retired level' }]))
       await archiveRegistryRow(db, 'seniority', seniorityId)
       const { id } = await addOne(db, role('Acme', 'One'))
-      const error = await thrownBy(() => updatePosition(db, id, { seniorityId, city: 'Porto' }))
-      return { error, stored: (await getPosition(db, id)).position }
+      const error = await thrownBy(() => updatePosting(db, id, { seniorityId, city: 'Porto' }))
+      return { error, stored: (await getPosting(db, id)).posting }
     })
 
     // Assert
@@ -1259,8 +1259,8 @@ describe('updatePosition', () => {
       const seniorityId = idOf(await addRegistryRows(db, 'seniority', [{ label: 'Retired later' }]))
       const { id } = await addOne(db, role('Acme', 'One', { seniorityId }))
       await archiveRegistryRow(db, 'seniority', seniorityId)
-      const updated = await updatePosition(db, id, { seniorityId, city: 'Porto' })
-      return { updated, stored: (await getPosition(db, id)).position }
+      const updated = await updatePosting(db, id, { seniorityId, city: 'Porto' })
+      return { updated, stored: (await getPosting(db, id)).posting }
     })
 
     // Assert: archival blocks a new reference, not one already held
@@ -1274,8 +1274,8 @@ describe('updatePosition', () => {
       const levels = await addRegistryRows(db, 'seniority', [{ label: 'Held' }, { label: 'Retired' }])
       await archiveRegistryRow(db, 'seniority', idOf(levels, 1))
       const { id } = await addOne(db, role('Acme', 'One', { seniorityId: idOf(levels, 0) }))
-      const error = await thrownBy(() => updatePosition(db, id, { seniorityId: idOf(levels, 1) }))
-      return { error, stored: (await getPosition(db, id)).position }
+      const error = await thrownBy(() => updatePosting(db, id, { seniorityId: idOf(levels, 1) }))
+      return { error, stored: (await getPosting(db, id)).posting }
     })
 
     // Assert
@@ -1287,29 +1287,29 @@ describe('updatePosition', () => {
     // Arrange: more than the patch type allows, as a UI object spread into a patch would carry
     const original = await withMigratedScratchDatabase(async (db) => {
       const created = await addOne(db, role('Acme', 'One'))
-      const [other] = await addPositions(db, [role('Other Co', 'Two')])
+      const [other] = await addPostings(db, [role('Other Co', 'Two')])
       const wider = {
         city: 'Porto',
-        companyId: (other as Position).companyId,
-        positionKey: 'hijacked',
+        companyId: (other as Posting).companyId,
+        postingKey: 'hijacked',
         firstImportedAt: new Date('2001-01-01T00:00:00Z'),
         lastImportedAt: new Date('2001-01-01T00:00:00Z'),
-      } as PositionPatch
-      return { created, updated: await updatePosition(db, created.id, wider) }
+      } as PostingPatch
+      return { created, updated: await updatePosting(db, created.id, wider) }
     })
 
     // Assert: the editable column changed, and nothing the type says is not patchable did
     const { created, updated } = original
     expect(updated.city).toBe('Porto')
     expect(updated.companyId).toBe(created.companyId)
-    expect(updated.positionKey).toBe(created.positionKey)
+    expect(updated.postingKey).toBe(created.postingKey)
     expect(updated.firstImportedAt).toEqual(created.firstImportedAt)
     expect(updated.lastImportedAt).toEqual(created.lastImportedAt)
   })
 
-  test('raises NotFoundError for an id with no position', async () => {
+  test('raises NotFoundError for an id with no posting', async () => {
     // Arrange / Act
-    const error = await withMigratedScratchDatabase((db) => thrownBy(() => updatePosition(db, 4242, { city: 'Porto' })))
+    const error = await withMigratedScratchDatabase((db) => thrownBy(() => updatePosting(db, 4242, { city: 'Porto' })))
 
     // Assert
     expect(error).toBeInstanceOf(NotFoundError)
@@ -1320,9 +1320,9 @@ describe('updatePosition', () => {
     const { stored, same, missing } = await withMigratedScratchDatabase(async (db) => {
       const { id } = await addOne(db, role('Acme', 'One'))
       return {
-        stored: (await getPosition(db, id)).position,
-        same: await updatePosition(db, id, {}),
-        missing: await thrownBy(() => updatePosition(db, 4242, {})),
+        stored: (await getPosting(db, id)).posting,
+        same: await updatePosting(db, id, {}),
+        missing: await thrownBy(() => updatePosting(db, 4242, {})),
       }
     })
 
@@ -1333,10 +1333,10 @@ describe('updatePosition', () => {
 
   test('the patch schema refuses a field that is not editable and an empty patch', () => {
     // Assert
-    expect(PositionPatchSchema.safeParse({ priorityRank: 1 }).success).toBe(true)
-    expect(PositionPatchSchema.safeParse({ companyId: 2 }).success).toBe(false)
-    expect(PositionPatchSchema.safeParse({ positionKey: 'x' }).success).toBe(false)
-    expect(PositionPatchSchema.safeParse({ firstImportedAt: '2026-01-01' }).success).toBe(false)
-    expect(PositionPatchSchema.safeParse({}).success).toBe(false)
+    expect(PostingPatchSchema.safeParse({ priorityRank: 1 }).success).toBe(true)
+    expect(PostingPatchSchema.safeParse({ companyId: 2 }).success).toBe(false)
+    expect(PostingPatchSchema.safeParse({ postingKey: 'x' }).success).toBe(false)
+    expect(PostingPatchSchema.safeParse({ firstImportedAt: '2026-01-01' }).success).toBe(false)
+    expect(PostingPatchSchema.safeParse({}).success).toBe(false)
   })
 })

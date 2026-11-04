@@ -4,18 +4,18 @@ import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
 import type { DrizzleClient } from '../../src/data/client.ts'
-import { addPositions } from '../../src/data/repositories/positions.ts'
+import { addPostings } from '../../src/data/repositories/postings.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
-import { getBestScores, getScoreHistory, scorePosition } from '../../src/data/repositories/scores.ts'
+import { getBestScores, getScoreHistory, scorePosting } from '../../src/data/repositories/scores.ts'
 import { criteriaSet, detour, insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
-import { positionStageEvent } from '../../src/data/schema/dispositions.ts'
-import { positionPenalty, positionRating, positionRatingDetour, positionScore } from '../../src/data/schema/scores.ts'
+import { postingStageEvent } from '../../src/data/schema/dispositions.ts'
+import { postingPenalty, postingRating, postingRatingDetour, postingScore } from '../../src/data/schema/scores.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
 import {
   PenaltyInputSchema,
   RatingInputSchema,
-  ScorePositionBulkSchema,
-  ScorePositionInputSchema,
+  ScorePostingBulkSchema,
+  ScorePostingInputSchema,
 } from '../../src/schemas/scores.ts'
 import { BULK_MAX } from '../../src/schemas/common.ts'
 import { requestRescore } from '../../src/data/repositories/rescore.ts'
@@ -28,7 +28,7 @@ const LONG_AGO = '2026-01-01'
 const LONGER_AGO = '2025-12-01'
 
 type Arranged = {
-  readonly positionId: number
+  readonly postingId: number
   readonly setId: number
   readonly otherSetId: number
   readonly gate: number
@@ -49,13 +49,13 @@ function idOf(rows: readonly { readonly id: number }[], index = 0): number {
 }
 
 /**
- * One position and two criteria sets. The first set has a threshold of 0.6 and three
+ * One posting and two criteria sets. The first set has a threshold of 0.6 and three
  * requirements: a gate with no weight, and two soft ones weighted 3 and 1. The second set has
  * one soft requirement, so a requirement id from it is foreign to the first.
  */
 async function arrange(db: DrizzleClient): Promise<Arranged> {
-  const [created] = await addPositions(db, [{ company: { name: 'Acme' }, roleTitle: 'Engineer' }])
-  if (!created) throw new Error('the arrangement stored no position')
+  const [created] = await addPostings(db, [{ company: { name: 'Acme' }, roleTitle: 'Engineer' }])
+  if (!created) throw new Error('the arrangement stored no posting')
   const set = await insertCriteriaSet(db, { name: 'Mine', applyThreshold: 0.6 })
   const otherSet = await insertCriteriaSet(db, { name: 'Theirs', applyThreshold: 0.6 })
   const rows = await db
@@ -76,7 +76,7 @@ async function arrange(db: DrizzleClient): Promise<Arranged> {
     ])
     .returning()
   return {
-    positionId: created.id,
+    postingId: created.id,
     setId: set.id,
     otherSetId: otherSet.id,
     gate: idOf(rows, 0),
@@ -111,23 +111,23 @@ async function aPenaltyKind(db: DrizzleClient, label = 'Relocation'): Promise<nu
   return idOf(await addRegistryRows(db, 'penalty_kind', [{ label }]))
 }
 
-async function countRows(db: DrizzleClient, table: typeof positionScore | typeof positionRating | typeof positionRatingDetour | typeof positionPenalty | typeof positionStageEvent): Promise<number> {
+async function countRows(db: DrizzleClient, table: typeof postingScore | typeof postingRating | typeof postingRatingDetour | typeof postingPenalty | typeof postingStageEvent): Promise<number> {
   const [found] = await db.select({ n: count() }).from(table)
   return found?.n ?? 0
 }
 
-describe('scorePosition', () => {
+describe('scorePosting', () => {
   test('stores the overall, floor, ceiling and limiter the function returned', async () => {
     // Arrange / Act
     const { arranged, score, stageEvents } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const score = await scorePosition(db, {
-        positionId: arranged.positionId,
+      const score = await scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 1), supported(arranged.b, 0.5)],
         penalties: [],
       })
-      return { arranged, score, stageEvents: await countRows(db, positionStageEvent) }
+      return { arranged, score, stageEvents: await countRows(db, postingStageEvent) }
     })
 
     // Assert: (3*1 + 1*0.5) / 4, every requirement rated, so the three numbers agree
@@ -152,13 +152,13 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { arranged, score, stored } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const score = await scorePosition(db, {
-        positionId: arranged.positionId,
+      const score = await scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 1), supported(arranged.b, null)],
         penalties: [],
       })
-      const stored = await db.select().from(positionRating).where(eq(positionRating.requirementId, arranged.b))
+      const stored = await db.select().from(postingRating).where(eq(postingRating.requirementId, arranged.b))
       return { arranged, score, stored }
     })
 
@@ -176,13 +176,13 @@ describe('scorePosition', () => {
     const { score, rows } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       await db.update(requirement).set({ weight: null }).where(eq(requirement.criteriaSetId, arranged.setId))
-      const score = await scorePosition(db, {
-        positionId: arranged.positionId,
+      const score = await scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 1)],
         penalties: [],
       })
-      return { score, rows: await countRows(db, positionScore) }
+      return { score, rows: await countRows(db, postingScore) }
     })
 
     // Assert
@@ -195,7 +195,7 @@ describe('scorePosition', () => {
     const score = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const empty = await insertCriteriaSet(db, { name: 'Fresh install', applyThreshold: 0.6 })
-      return scorePosition(db, { positionId: arranged.positionId, criteriaSetId: empty.id, ratings: [], penalties: [] })
+      return scorePosting(db, { postingId: arranged.postingId, criteriaSetId: empty.id, ratings: [], penalties: [] })
     })
 
     // Assert
@@ -217,8 +217,8 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { arranged, ratings } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      await scorePosition(db, {
-        positionId: arranged.positionId,
+      await scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [
           supported(arranged.gate, 1, 'stated in the posting'),
@@ -227,7 +227,7 @@ describe('scorePosition', () => {
         ],
         penalties: [],
       })
-      return { arranged, ratings: await db.select().from(positionRating).orderBy(positionRating.requirementId) }
+      return { arranged, ratings: await db.select().from(postingRating).orderBy(postingRating.requirementId) }
     })
 
     // Assert: a rated 0 stays 0, and each row carries the set it was scored under
@@ -244,14 +244,14 @@ describe('scorePosition', () => {
     const { score, penalties, kindId } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const kindId = await aPenaltyKind(db)
-      const score = await scorePosition(db, {
-        positionId: arranged.positionId,
+      const score = await scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 1), supported(arranged.b, 0.5)],
         penalties: [{ penaltyKindId: kindId, amount: -0.25, reason: 'moving is required' }],
         note: 'a note',
       })
-      return { score, kindId, penalties: await db.select().from(positionPenalty) }
+      return { score, kindId, penalties: await db.select().from(postingPenalty) }
     })
 
     // Assert
@@ -267,12 +267,12 @@ describe('scorePosition', () => {
       const arranged = await arrange(db)
       const kindId = await aPenaltyKind(db)
       await archiveRegistryRow(db, 'penalty_kind', kindId)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)] }
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)] }
       return {
-        archivedError: await thrownBy(() => scorePosition(db, { ...base, penalties: [{ penaltyKindId: kindId, amount: -0.1 }] })),
-        missingError: await thrownBy(() => scorePosition(db, { ...base, penalties: [{ penaltyKindId: 9999, amount: -0.1 }] })),
-        scores: await countRows(db, positionScore),
-        penalties: await countRows(db, positionPenalty),
+        archivedError: await thrownBy(() => scorePosting(db, { ...base, penalties: [{ penaltyKindId: kindId, amount: -0.1 }] })),
+        missingError: await thrownBy(() => scorePosting(db, { ...base, penalties: [{ penaltyKindId: 9999, amount: -0.1 }] })),
+        scores: await countRows(db, postingScore),
+        penalties: await countRows(db, postingPenalty),
       }
     })
 
@@ -288,14 +288,14 @@ describe('scorePosition', () => {
     const { arranged, first, second, scores, ratings, penalties } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const kindId = await aPenaltyKind(db)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId }
-      const first = await scorePosition(db, {
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId }
+      const first = await scorePosting(db, {
         ...base,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 0), supported(arranged.b, 0)],
         penalties: [{ penaltyKindId: kindId, amount: -0.5 }],
         note: 'first pass',
       })
-      const second = await scorePosition(db, {
+      const second = await scorePosting(db, {
         ...base,
         ratings: [supported(arranged.gate, 1), supported(arranged.a, 1)],
         penalties: [],
@@ -304,9 +304,9 @@ describe('scorePosition', () => {
         arranged,
         first,
         second,
-        scores: await db.select().from(positionScore),
-        ratings: await db.select().from(positionRating).orderBy(positionRating.requirementId),
-        penalties: await countRows(db, positionPenalty),
+        scores: await db.select().from(postingScore),
+        ratings: await db.select().from(postingRating).orderBy(postingRating.requirementId),
+        penalties: await countRows(db, postingPenalty),
       }
     })
 
@@ -325,12 +325,12 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { arranged, scores } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const input = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
-      await scorePosition(db, { ...input, ratings: [supported(arranged.a, 0)] })
-      await db.update(positionScore).set({ scoredAt: LONG_AGO })
-      await scorePosition(db, { ...input, ratings: [supported(arranged.a, 1)] })
-      await scorePosition(db, { ...input, ratings: [supported(arranged.a, 0.5)] })
-      return { arranged, scores: await db.select().from(positionScore).orderBy(positionScore.scoredAt) }
+      const input = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
+      await scorePosting(db, { ...input, ratings: [supported(arranged.a, 0)] })
+      await db.update(postingScore).set({ scoredAt: LONG_AGO })
+      await scorePosting(db, { ...input, ratings: [supported(arranged.a, 1)] })
+      await scorePosting(db, { ...input, ratings: [supported(arranged.a, 0.5)] })
+      return { arranged, scores: await db.select().from(postingScore).orderBy(postingScore.scoredAt) }
     })
 
     // Assert
@@ -343,13 +343,13 @@ describe('scorePosition', () => {
     expect(scores.map((row) => row.criteriaSetId)).toEqual([arranged.setId, arranged.setId])
   })
 
-  test('scores the same position against another set the same day as a new row that is not a rescore', async () => {
+  test('scores the same posting against another set the same day as a new row that is not a rescore', async () => {
     // Arrange / Act
     const scores = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
-      await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.otherSetId, ratings: [supported(arranged.other, 1)], penalties: [] })
-      return db.select().from(positionScore)
+      await scorePosting(db, { postingId: arranged.postingId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
+      await scorePosting(db, { postingId: arranged.postingId, criteriaSetId: arranged.otherSetId, ratings: [supported(arranged.other, 1)], penalties: [] })
+      return db.select().from(postingScore)
     })
 
     // Assert
@@ -362,38 +362,38 @@ describe('scorePosition', () => {
     const { error, scores, ratings } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const error = await thrownBy(() =>
-        scorePosition(db, {
-          positionId: arranged.positionId,
+        scorePosting(db, {
+          postingId: arranged.postingId,
           criteriaSetId: arranged.setId,
           ratings: [supported(arranged.a, 1), supported(arranged.other, 1)],
           penalties: [],
         }),
       )
-      return { error, scores: await countRows(db, positionScore), ratings: await countRows(db, positionRating) }
+      return { error, scores: await countRows(db, postingScore), ratings: await countRows(db, postingRating) }
     })
 
     // Assert: the composite foreign key is still the guarantee; the fault is typed on its way out
     expect(error).toBeInstanceOf(ConflictError)
     expect(statusFor(error)).toBe(409)
     expect(error).toMatchObject({ field: 'criteria set' })
-    expect((error as Error).message).not.toMatch(/insert|select|position_rating|violates|\$\d/i)
-    expect(violationText((error as Error).cause)).toContain('position_rating_set_requirement_fk')
+    expect((error as Error).message).not.toMatch(/insert|select|posting_rating|violates|\$\d/i)
+    expect(violationText((error as Error).cause)).toContain('posting_rating_set_requirement_fk')
     expect(scores).toBe(0)
     expect(ratings).toBe(0)
   })
 
-  test('refuses a position or a criteria set that does not exist', async () => {
+  test('refuses a posting or a criteria set that does not exist', async () => {
     // Arrange / Act
-    const { missingPosition, missingSet } = await withMigratedScratchDatabase(async (db) => {
+    const { missingPosting, missingSet } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       return {
-        missingPosition: await thrownBy(() => scorePosition(db, { positionId: 9999, criteriaSetId: arranged.setId, ratings: [], penalties: [] })),
-        missingSet: await thrownBy(() => scorePosition(db, { positionId: arranged.positionId, criteriaSetId: 9999, ratings: [], penalties: [] })),
+        missingPosting: await thrownBy(() => scorePosting(db, { postingId: 9999, criteriaSetId: arranged.setId, ratings: [], penalties: [] })),
+        missingSet: await thrownBy(() => scorePosting(db, { postingId: arranged.postingId, criteriaSetId: 9999, ratings: [], penalties: [] })),
       }
     })
 
     // Assert
-    expect(missingPosition).toBeInstanceOf(NotFoundError)
+    expect(missingPosting).toBeInstanceOf(NotFoundError)
     expect(missingSet).toBeInstanceOf(NotFoundError)
   })
 
@@ -401,9 +401,9 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { direct, lifted } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
-      const direct = await scorePosition(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
-      const lifted = await scorePosition(db, {
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
+      const direct = await scorePosting(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
+      const lifted = await scorePosting(db, {
         ...base,
         ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.halfDetour, coverage: 1 })],
       })
@@ -419,13 +419,13 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { unrated, byDetour, stored } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
-      const unrated = await scorePosition(db, { ...base, ratings: [supported(arranged.a, null), supported(arranged.b, 1)] })
-      const byDetour = await scorePosition(db, {
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
+      const unrated = await scorePosting(db, { ...base, ratings: [supported(arranged.a, null), supported(arranged.b, 1)] })
+      const byDetour = await scorePosting(db, {
         ...base,
         ratings: [viaDetours(supported(arranged.a, null), { detourId: arranged.halfDetour, coverage: 0.8 }), supported(arranged.b, 1)],
       })
-      return { unrated, byDetour, stored: await db.select().from(positionRating).where(eq(positionRating.requirementId, arranged.a)) }
+      return { unrated, byDetour, stored: await db.select().from(postingRating).where(eq(postingRating.requirementId, arranged.a)) }
     })
 
     // Assert: with a unrated, overall is b alone (1); with a detour, a counts as 0.8 x 0.5 = 0.4,
@@ -442,8 +442,8 @@ describe('scorePosition', () => {
     // Arrange / Act
     const score = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      return scorePosition(db, {
-        positionId: arranged.positionId,
+      return scorePosting(db, {
+        postingId: arranged.postingId,
         criteriaSetId: arranged.setId,
         ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.freeDetour, coverage: 0.9 })],
         penalties: [],
@@ -458,9 +458,9 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { direct, nullCoverage } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
-      const direct = await scorePosition(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
-      const nullCoverage = await scorePosition(db, {
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
+      const direct = await scorePosting(db, { ...base, ratings: [supported(arranged.a, 0.2)] })
+      const nullCoverage = await scorePosting(db, {
         ...base,
         ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.halfDetour, coverage: null })],
       })
@@ -476,8 +476,8 @@ describe('scorePosition', () => {
     // Arrange / Act
     const { arranged, afterFirst, afterSecond } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const base = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
-      await scorePosition(db, {
+      const base = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
+      await scorePosting(db, {
         ...base,
         ratings: [
           viaDetours(
@@ -487,9 +487,9 @@ describe('scorePosition', () => {
           ),
         ],
       })
-      const afterFirst = await db.select().from(positionRatingDetour).orderBy(positionRatingDetour.detourId)
-      await scorePosition(db, { ...base, ratings: [viaDetours(supported(arranged.a, 1), { detourId: arranged.halfDetour, coverage: 0 })] })
-      return { arranged, afterFirst, afterSecond: await db.select().from(positionRatingDetour) }
+      const afterFirst = await db.select().from(postingRatingDetour).orderBy(postingRatingDetour.detourId)
+      await scorePosting(db, { ...base, ratings: [viaDetours(supported(arranged.a, 1), { detourId: arranged.halfDetour, coverage: 0 })] })
+      return { arranged, afterFirst, afterSecond: await db.select().from(postingRatingDetour) }
     })
 
     // Assert: a same-day re-score leaves exactly the second call's detour coverages
@@ -505,31 +505,31 @@ describe('scorePosition', () => {
     const { error, scores, stored, direct, bDetourId } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       const error = await thrownBy(() =>
-        scorePosition(db, {
-          positionId: arranged.positionId,
+        scorePosting(db, {
+          postingId: arranged.postingId,
           criteriaSetId: arranged.setId,
           ratings: [viaDetours(supported(arranged.a, 0.2), { detourId: arranged.bDetour, coverage: 1 })],
           penalties: [],
         }),
       )
       // The same pair written straight to the table is refused by the same constraint
-      const scoreId = idOf(await db.insert(positionScore).values({ positionId: arranged.positionId, criteriaSetId: arranged.setId }).returning())
-      await db.insert(positionRating).values({ scoreId, criteriaSetId: arranged.setId, requirementId: arranged.a })
+      const scoreId = idOf(await db.insert(postingScore).values({ postingId: arranged.postingId, criteriaSetId: arranged.setId }).returning())
+      await db.insert(postingRating).values({ scoreId, criteriaSetId: arranged.setId, requirementId: arranged.a })
       const direct = await thrownBy(() =>
-        db.insert(positionRatingDetour).values({ scoreId, requirementId: arranged.a, detourId: arranged.bDetour, coverage: 1 }),
+        db.insert(postingRatingDetour).values({ scoreId, requirementId: arranged.a, detourId: arranged.bDetour, coverage: 1 }),
       )
-      return { error, scores: await countRows(db, positionScore), stored: await countRows(db, positionRatingDetour), direct, bDetourId: arranged.bDetour }
+      return { error, scores: await countRows(db, postingScore), stored: await countRows(db, postingRatingDetour), direct, bDetourId: arranged.bDetour }
     })
 
     // Assert
     expect(error).toBeInstanceOf(ConflictError)
     expect(statusFor(error)).toBe(409)
-    expect((error as Error).message).not.toMatch(/insert|select|position_rating|violates|\$\d/i)
+    expect((error as Error).message).not.toMatch(/insert|select|posting_rating|violates|\$\d/i)
     expect(error).toMatchObject({ field: 'requirement detour' })
     expect((error as ConflictError).key).toBe(String(bDetourId))
     expect((error as Error).message).toContain('not a detour of the requirement')
-    expect(violationText((error as Error).cause)).toContain('position_rating_detour_detour_fk')
-    expect(violationText(direct)).toContain('position_rating_detour_detour_fk')
+    expect(violationText((error as Error).cause)).toContain('posting_rating_detour_detour_fk')
+    expect(violationText(direct)).toContain('posting_rating_detour_detour_fk')
     expect(scores).toBe(1)
     expect(stored).toBe(0)
   })
@@ -542,12 +542,12 @@ describe('scorePosition', () => {
       const second = postgres(url.toString(), { max: 1, onnotice: () => {} })
       try {
         const arranged = await arrange(db)
-        const input = { positionId: arranged.positionId, criteriaSetId: arranged.setId, penalties: [] }
+        const input = { postingId: arranged.postingId, criteriaSetId: arranged.setId, penalties: [] }
         await Promise.all([
-          scorePosition(db, { ...input, ratings: [supported(arranged.a, 0), supported(arranged.b, 0)] }),
-          scorePosition(drizzle(second), { ...input, ratings: [supported(arranged.a, 1), supported(arranged.b, 1)] }),
+          scorePosting(db, { ...input, ratings: [supported(arranged.a, 0), supported(arranged.b, 0)] }),
+          scorePosting(drizzle(second), { ...input, ratings: [supported(arranged.a, 1), supported(arranged.b, 1)] }),
         ])
-        return { arranged, scores: await db.select().from(positionScore), ratings: await db.select().from(positionRating) }
+        return { arranged, scores: await db.select().from(postingScore), ratings: await db.select().from(postingRating) }
       } finally {
         await second.end()
       }
@@ -567,17 +567,17 @@ describe('a criteria set that has been archived', () => {
   const archive = (db: DrizzleClient, setId: number): Promise<unknown> =>
     db.update(criteriaSet).set({ archivedAt: new Date() }).where(eq(criteriaSet.id, setId))
 
-  test('is refused by scorePosition and requestRescore, with nothing written', async () => {
+  test('is refused by scorePosting and requestRescore, with nothing written', async () => {
     // Arrange / Act
     const { scoreError, requestError, scores, pending } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       await archive(db, arranged.setId)
       return {
         scoreError: await thrownBy(() =>
-          scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] }),
+          scorePosting(db, { postingId: arranged.postingId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] }),
         ),
         requestError: await thrownBy(() => requestRescore(db, { criteriaSetId: arranged.setId, sinceDate: '2026-01-01' })),
-        scores: await countRows(db, positionScore),
+        scores: await countRows(db, postingScore),
         pending: await db.execute(sql`select count(*)::int as n from rescore_request`),
       }
     })
@@ -596,9 +596,9 @@ describe('a criteria set that has been archived', () => {
     // Arrange / Act
     const { arranged, history, best } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
+      await scorePosting(db, { postingId: arranged.postingId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
       await archive(db, arranged.setId)
-      return { arranged, history: await getScoreHistory(db, arranged.positionId), best: await getBestScores(db, arranged.positionId) }
+      return { arranged, history: await getScoreHistory(db, arranged.postingId), best: await getBestScores(db, arranged.postingId) }
     })
 
     // Assert
@@ -609,26 +609,26 @@ describe('a criteria set that has been archived', () => {
 
 describe('getBestScores across versions of one set name', () => {
   /** Inserts a bare score row, which is all the version rule reads. */
-  async function insertScore(db: DrizzleClient, positionId: number, criteriaSetId: number, overall: number, scoredAt: string): Promise<void> {
-    await db.insert(positionScore).values({ positionId, criteriaSetId, overall, scoredAt, recommendApply: overall >= 0.5 })
+  async function insertScore(db: DrizzleClient, postingId: number, criteriaSetId: number, overall: number, scoredAt: string): Promise<void> {
+    await db.insert(postingScore).values({ postingId, criteriaSetId, overall, scoredAt, recommendApply: overall >= 0.5 })
   }
 
-  async function arrangeVersions(db: DrizzleClient): Promise<{ positionId: number; v1: number; v2: number; other: number }> {
-    const [created] = await addPositions(db, [{ company: { name: 'Acme' }, roleTitle: 'Engineer' }])
-    if (!created) throw new Error('the arrangement stored no position')
+  async function arrangeVersions(db: DrizzleClient): Promise<{ postingId: number; v1: number; v2: number; other: number }> {
+    const [created] = await addPostings(db, [{ company: { name: 'Acme' }, roleTitle: 'Engineer' }])
+    if (!created) throw new Error('the arrangement stored no posting')
     const v1 = await insertCriteriaSet(db, { name: 'web-search', version: 1, applyThreshold: 0.5 })
     const v2 = await insertCriteriaSet(db, { name: 'web-search', version: 2, applyThreshold: 0.5 })
     const other = await insertCriteriaSet(db, { name: 'perspective-b', version: 1, applyThreshold: 0.5 })
-    return { positionId: created.id, v1: v1.id, v2: v2.id, other: other.id }
+    return { postingId: created.id, v1: v1.id, v2: v2.id, other: other.id }
   }
 
-  test('a position scored under v1 and v2 of one name has one best score, and it is v2\'s', async () => {
+  test('a posting scored under v1 and v2 of one name has one best score, and it is v2\'s', async () => {
     // Arrange / Act
     const { arranged, best, history } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrangeVersions(db)
-      await insertScore(db, arranged.positionId, arranged.v1, 0.9, LONGER_AGO)
-      await insertScore(db, arranged.positionId, arranged.v2, 0.2, LONG_AGO)
-      return { arranged, best: await getBestScores(db, arranged.positionId), history: await getScoreHistory(db, arranged.positionId) }
+      await insertScore(db, arranged.postingId, arranged.v1, 0.9, LONGER_AGO)
+      await insertScore(db, arranged.postingId, arranged.v2, 0.2, LONG_AGO)
+      return { arranged, best: await getBestScores(db, arranged.postingId), history: await getScoreHistory(db, arranged.postingId) }
     })
 
     // Assert: history keeps both, best keeps the non-superseded one
@@ -637,12 +637,12 @@ describe('getBestScores across versions of one set name', () => {
     expect(best[0]).toMatchObject({ criteriaSetId: arranged.v2, criteriaSetName: 'web-search', criteriaSetVersion: 2, overall: 0.2 })
   })
 
-  test('a name whose newest version has not scored the position yields no row for the older version', async () => {
+  test('a name whose newest version has not scored the posting yields no row for the older version', async () => {
     // Arrange / Act
     const best = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrangeVersions(db)
-      await insertScore(db, arranged.positionId, arranged.v1, 0.9, LONG_AGO)
-      return getBestScores(db, arranged.positionId)
+      await insertScore(db, arranged.postingId, arranged.v1, 0.9, LONG_AGO)
+      return getBestScores(db, arranged.postingId)
     })
 
     // Assert: the old version is superseded as soon as the new one exists, scored or not
@@ -653,10 +653,10 @@ describe('getBestScores across versions of one set name', () => {
     // Arrange / Act
     const { arranged, best } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrangeVersions(db)
-      await insertScore(db, arranged.positionId, arranged.v2, 0.7, LONG_AGO)
-      await insertScore(db, arranged.positionId, arranged.v2, 0.8, '2026-02-01')
-      await insertScore(db, arranged.positionId, arranged.other, 0.3, LONG_AGO)
-      return { arranged, best: await getBestScores(db, arranged.positionId) }
+      await insertScore(db, arranged.postingId, arranged.v2, 0.7, LONG_AGO)
+      await insertScore(db, arranged.postingId, arranged.v2, 0.8, '2026-02-01')
+      await insertScore(db, arranged.postingId, arranged.other, 0.3, LONG_AGO)
+      return { arranged, best: await getBestScores(db, arranged.postingId) }
     })
 
     // Assert: newest first, one row per name, the latest day within a name
@@ -666,12 +666,12 @@ describe('getBestScores across versions of one set name', () => {
     ])
   })
 
-  test('scorePosition and the history carry the set name and version too', async () => {
+  test('scorePosting and the history carry the set name and version too', async () => {
     // Arrange / Act
     const { arranged, scored, history } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
-      const scored = await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
-      return { arranged, scored, history: await getScoreHistory(db, arranged.positionId) }
+      const scored = await scorePosting(db, { postingId: arranged.postingId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
+      return { arranged, scored, history: await getScoreHistory(db, arranged.postingId) }
     })
 
     // Assert
@@ -701,12 +701,12 @@ describe('getScoreHistory and getBestScores', () => {
   /** Two scores against the first set on different days, and one against the second set. */
   async function scored(db: DrizzleClient): Promise<Arranged> {
     const arranged = await arrange(db)
-    const input = { positionId: arranged.positionId, penalties: [] }
-    await scorePosition(db, { ...input, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 0)] })
-    await db.update(positionScore).set({ scoredAt: LONGER_AGO })
-    await scorePosition(db, { ...input, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 0.5)] })
-    await db.update(positionScore).set({ scoredAt: LONG_AGO }).where(eq(positionScore.overall, 0.5))
-    await scorePosition(db, { ...input, criteriaSetId: arranged.otherSetId, ratings: [supported(arranged.other, 1)] })
+    const input = { postingId: arranged.postingId, penalties: [] }
+    await scorePosting(db, { ...input, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 0)] })
+    await db.update(postingScore).set({ scoredAt: LONGER_AGO })
+    await scorePosting(db, { ...input, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 0.5)] })
+    await db.update(postingScore).set({ scoredAt: LONG_AGO }).where(eq(postingScore.overall, 0.5))
+    await scorePosting(db, { ...input, criteriaSetId: arranged.otherSetId, ratings: [supported(arranged.other, 1)] })
     return arranged
   }
 
@@ -714,7 +714,7 @@ describe('getScoreHistory and getBestScores', () => {
     // Arrange / Act
     const { arranged, history } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await scored(db)
-      return { arranged, history: await getScoreHistory(db, arranged.positionId) }
+      return { arranged, history: await getScoreHistory(db, arranged.postingId) }
     })
 
     // Assert: today's score against the other set, then the two older ones
@@ -731,7 +731,7 @@ describe('getScoreHistory and getBestScores', () => {
     // Arrange / Act
     const { arranged, best } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await scored(db)
-      return { arranged, best: await getBestScores(db, arranged.positionId) }
+      return { arranged, best: await getBestScores(db, arranged.postingId) }
     })
 
     // Assert
@@ -741,13 +741,13 @@ describe('getScoreHistory and getBestScores', () => {
     ])
   })
 
-  test('a position never scored has no history, and one that does not exist is refused', async () => {
+  test('a posting never scored has no history, and one that does not exist is refused', async () => {
     // Arrange / Act
     const { history, best, missing } = await withMigratedScratchDatabase(async (db) => {
       const arranged = await arrange(db)
       return {
-        history: await getScoreHistory(db, arranged.positionId),
-        best: await getBestScores(db, arranged.positionId),
+        history: await getScoreHistory(db, arranged.postingId),
+        best: await getBestScores(db, arranged.postingId),
         missing: await thrownBy(() => getScoreHistory(db, 9999)),
       }
     })
@@ -779,7 +779,7 @@ describe('the score schemas', () => {
   test('evidence, a note and a penalty reason refuse NUL', () => {
     expect(RatingInputSchema.safeParse({ ...rating, evidence: 'a\u0000b' }).success).toBe(false)
     expect(PenaltyInputSchema.safeParse({ penaltyKindId: 1, amount: -0.1, reason: 'a\u0000' }).success).toBe(false)
-    expect(ScorePositionInputSchema.safeParse({ positionId: 1, criteriaSetId: 1, ratings: [], penalties: [], note: 'x\u0000' }).success).toBe(false)
+    expect(ScorePostingInputSchema.safeParse({ postingId: 1, criteriaSetId: 1, ratings: [], penalties: [], note: 'x\u0000' }).success).toBe(false)
   })
 
   test('a penalty is a finite amount that is never positive', () => {
@@ -791,27 +791,27 @@ describe('the score schemas', () => {
   })
 
   test('a rating may carry detour coverages, each from 0 to 1 or null, and refuses a detour named twice', () => {
-    const withDetours = (detours: unknown[]): unknown => ({ positionId: 1, criteriaSetId: 1, penalties: [], ratings: [{ ...rating, detours }] })
-    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 3, coverage: null }])).success).toBe(true)
-    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 1.5 }])).success).toBe(false)
-    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5, extra: 1 }])).success).toBe(false)
-    expect(ScorePositionInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 2, coverage: 0 }])).success).toBe(false)
+    const withDetours = (detours: unknown[]): unknown => ({ postingId: 1, criteriaSetId: 1, penalties: [], ratings: [{ ...rating, detours }] })
+    expect(ScorePostingInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 3, coverage: null }])).success).toBe(true)
+    expect(ScorePostingInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 1.5 }])).success).toBe(false)
+    expect(ScorePostingInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5, extra: 1 }])).success).toBe(false)
+    expect(ScorePostingInputSchema.safeParse(withDetours([{ detourId: 2, coverage: 0.5 }, { detourId: 2, coverage: 0 }])).success).toBe(false)
   })
 
   test('a score input refuses a requirement rated twice, a penalty kind used twice and an unknown key', () => {
-    const base = { positionId: 1, criteriaSetId: 1, ratings: [rating], penalties: [] }
-    expect(ScorePositionInputSchema.safeParse(base).success).toBe(true)
-    expect(ScorePositionInputSchema.safeParse({ ...base, ratings: [rating, rating] }).success).toBe(false)
+    const base = { postingId: 1, criteriaSetId: 1, ratings: [rating], penalties: [] }
+    expect(ScorePostingInputSchema.safeParse(base).success).toBe(true)
+    expect(ScorePostingInputSchema.safeParse({ ...base, ratings: [rating, rating] }).success).toBe(false)
     const penalty = { penaltyKindId: 3, amount: -0.1 }
-    expect(ScorePositionInputSchema.safeParse({ ...base, penalties: [penalty, penalty] }).success).toBe(false)
-    expect(ScorePositionInputSchema.safeParse({ ...base, overall: 1 }).success).toBe(false)
+    expect(ScorePostingInputSchema.safeParse({ ...base, penalties: [penalty, penalty] }).success).toBe(false)
+    expect(ScorePostingInputSchema.safeParse({ ...base, overall: 1 }).success).toBe(false)
   })
 
   test('the bulk form is the single form in a bounded, non-empty envelope', () => {
-    const item = { positionId: 1, criteriaSetId: 1, ratings: [], penalties: [] }
-    expect(ScorePositionBulkSchema.safeParse({ items: [item] }).success).toBe(true)
-    expect(ScorePositionBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX }, () => item) }).success).toBe(true)
-    expect(ScorePositionBulkSchema.safeParse({ items: [] }).success).toBe(false)
-    expect(ScorePositionBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX + 1 }, () => item) }).success).toBe(false)
+    const item = { postingId: 1, criteriaSetId: 1, ratings: [], penalties: [] }
+    expect(ScorePostingBulkSchema.safeParse({ items: [item] }).success).toBe(true)
+    expect(ScorePostingBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX }, () => item) }).success).toBe(true)
+    expect(ScorePostingBulkSchema.safeParse({ items: [] }).success).toBe(false)
+    expect(ScorePostingBulkSchema.safeParse({ items: Array.from({ length: BULK_MAX + 1 }, () => item) }).success).toBe(false)
   })
 })

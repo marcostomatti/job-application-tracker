@@ -77,7 +77,7 @@ export function sendFailure(res: Response, error: unknown, log?: HttpLog): void 
  * The one object a schema parses: the path's parameters, the query and the body, in that order.
  *
  * The brief's order lets a body field overwrite a path parameter of the same name, which would
- * let `PATCH /positions/5` with a body naming position 9 change position 9 under a URL that says
+ * let `PATCH /postings/5` with a body naming posting 9 change posting 9 under a URL that says
  * 5. So a name claimed by the path may not also arrive in the query or the body; that is a 400
  * naming the field, and nothing is overwritten. Between the query and the body, which the path
  * does not name, the body wins, as the order says.

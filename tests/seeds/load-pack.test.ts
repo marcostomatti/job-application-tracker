@@ -309,9 +309,9 @@ describe('loadPack', () => {
     expect(layers).toEqual([])
   })
 
-  test('a loaded pack scores a fixture position to a null overall', async () => {
+  test('a loaded pack scores a fixture posting to a null overall', async () => {
     // Arrange / Act: load the shipped pack, read it back as the scorer would, rate every
-    // requirement as fully covered. The best possible position still has nothing to be
+    // requirement as fully covered. The best possible posting still has nothing to be
     // weighed against, because the weights belong to the user's seed interview.
     const result = await rolledBack(async (tx, token) => {
       const loaded = await loadPack(shippedAs(token).file, tx)

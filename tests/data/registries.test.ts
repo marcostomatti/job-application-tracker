@@ -184,6 +184,6 @@ describe('registries', () => {
     // an empty registry the right state is no penalty rows, not penalty rows without a kind.
     // The exception is listed by name, so any other NOT NULL registry reference still fails.
     const notNull = toRegistries.filter((row) => !row.nullable).map((row) => `${row.owner}.${row.column}`)
-    expect(notNull).toEqual(['position_penalty.penalty_kind_id'])
+    expect(notNull).toEqual(['posting_penalty.penalty_kind_id'])
   })
 })

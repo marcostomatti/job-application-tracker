@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
 import { criteriaSet, requirement } from '../../src/data/schema/criteria.ts'
-import { company, position } from '../../src/data/schema/positions.ts'
+import { company, posting } from '../../src/data/schema/postings.ts'
 import { penaltyKind } from '../../src/data/schema/registries.ts'
-import { positionPenalty, positionScore } from '../../src/data/schema/scores.ts'
+import { postingPenalty, postingScore } from '../../src/data/schema/scores.ts'
 import { thrownBy, violationText } from './rolled-back.ts'
 import { withMigratedScratchDatabase } from './scratch-database.ts'
 
@@ -44,13 +44,13 @@ describe('weights and penalty amounts are finite', () => {
     const outcome = await withMigratedScratchDatabase(async (db) => {
       const [owner] = await db.insert(company).values({ name: 'finite-co', nameNorm: 'finite-co' }).returning()
       const [role] = await db
-        .insert(position)
-        .values({ positionKey: 'finite-position', companyId: owner?.id as number, roleTitle: 'Role', roleNorm: 'role' })
+        .insert(posting)
+        .values({ postingKey: 'finite-posting', companyId: owner?.id as number, roleTitle: 'Role', roleNorm: 'role' })
         .returning()
       const [set] = await db.insert(criteriaSet).values({ name: 'finite-amounts', version: 1 }).returning()
       const [score] = await db
-        .insert(positionScore)
-        .values({ positionId: role?.id as number, criteriaSetId: set?.id as number })
+        .insert(postingScore)
+        .values({ postingId: role?.id as number, criteriaSetId: set?.id as number })
         .returning()
       const kinds = await db
         .insert(penaltyKind)
@@ -59,7 +59,7 @@ describe('weights and penalty amounts are finite', () => {
       const insertAmount = (index: number, amount: number) =>
         thrownBy(() =>
           db
-            .insert(positionPenalty)
+            .insert(postingPenalty)
             .values({ scoreId: score?.id as number, penaltyKindId: kinds[index]?.id as number, amount }),
         )
       return {
@@ -71,8 +71,8 @@ describe('weights and penalty amounts are finite', () => {
     })
 
     // Assert
-    expect(violationText(outcome.negativeInfinity)).toContain('position_penalty_amount_check')
-    expect(violationText(outcome.notANumber)).toContain('position_penalty_amount_check')
+    expect(violationText(outcome.negativeInfinity)).toContain('posting_penalty_amount_check')
+    expect(violationText(outcome.notANumber)).toContain('posting_penalty_amount_check')
     expect(outcome.finite).toBeUndefined()
     expect(outcome.zero).toBeUndefined()
   })

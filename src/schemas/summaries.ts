@@ -7,7 +7,7 @@ const freeText = z.string().refine(hasNoNul, NO_NUL_MESSAGE)
 const requiredText = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
- * What a caller supplies to write the summary of one position. A summary is written whole,
+ * What a caller supplies to write the summary of one posting. A summary is written whole,
  * because it is regenerated from the posting each time: a field left out is cleared, not
  * kept, so a repost cannot leave last month's description beside this month's text.
  *
@@ -16,7 +16,7 @@ const requiredText = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
  * name something.
  */
 export const SummaryInputSchema = z.strictObject({
-  positionId: IdSchema,
+  postingId: IdSchema,
   stack: z.array(requiredText).optional(),
   description: freeText.nullable().optional(),
   industry: freeText.nullable().optional(),
@@ -31,12 +31,12 @@ export type SummaryInput = z.infer<typeof SummaryInputSchema>
 export const SummaryBulkSchema = bulkOf(SummaryInputSchema)
 
 /**
- * The question "has this posting changed since its summary was written?": the position, and the
+ * The question "has this posting changed since its summary was written?": the posting, and the
  * hash of the posting text as it reads now. The hash must name something, as it must when a
  * summary is written, so an empty one cannot match a stored value by accident.
  */
 export const PostingChangedQuerySchema = z.strictObject({
-  positionId: IdSchema,
+  postingId: IdSchema,
   sourceHash: requiredText,
 })
 

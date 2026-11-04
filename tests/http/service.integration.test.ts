@@ -77,7 +77,7 @@ describe('the service with a key and no web bundle', () => {
   })
 
   test('/api without a bearer token answers 401', async () => {
-    const response = await fetch(`${origin}/api/positions`)
+    const response = await fetch(`${origin}/api/postings`)
 
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({
@@ -87,8 +87,8 @@ describe('the service with a key and no web bundle', () => {
   })
 
   test('the 401 and a route failure share one envelope, so body.error.message reads on both', async () => {
-    const refused = await fetch(`${origin}/api/positions`)
-    const missing = await fetch(`${origin}/api/positions/2147483647`, { headers: bearer(TEST_KEY) })
+    const refused = await fetch(`${origin}/api/postings`)
+    const missing = await fetch(`${origin}/api/postings/2147483647`, { headers: bearer(TEST_KEY) })
 
     expect(refused.status).toBe(401)
     expect(missing.status).toBe(404)
@@ -101,7 +101,7 @@ describe('the service with a key and no web bundle', () => {
   })
 
   test('a body that is not JSON is answered by the chassis with a string error, the case the README documents as outside the envelope', async () => {
-    const response = await fetch(`${origin}/api/positions`, {
+    const response = await fetch(`${origin}/api/postings`, {
       method: 'POST',
       headers: { ...bearer(TEST_KEY), 'content-type': 'application/json' },
       body: '{not json',
@@ -113,13 +113,13 @@ describe('the service with a key and no web bundle', () => {
   })
 
   test('/api with a wrong token answers 401', async () => {
-    const response = await fetch(`${origin}/api/positions`, { headers: bearer('not-the-key') })
+    const response = await fetch(`${origin}/api/postings`, { headers: bearer('not-the-key') })
 
     expect(response.status).toBe(401)
   })
 
   test('/api with the right token answers 200', async () => {
-    const response = await fetch(`${origin}/api/positions`, { headers: bearer(TEST_KEY) })
+    const response = await fetch(`${origin}/api/postings`, { headers: bearer(TEST_KEY) })
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as { success: boolean; data: unknown }
@@ -146,7 +146,7 @@ describe('the service with a key and no web bundle', () => {
 
   test('does not rate-limit a burst a web board could send', async () => {
     const responses = await Promise.all(
-      Array.from({ length: BURST }, () => fetch(`${origin}/api/positions`, { headers: bearer(TEST_KEY) })),
+      Array.from({ length: BURST }, () => fetch(`${origin}/api/postings`, { headers: bearer(TEST_KEY) })),
     )
 
     expect(responses.filter((response) => response.status === 429)).toHaveLength(0)
@@ -175,7 +175,7 @@ describe('the service with a web bundle', () => {
     const service = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: bundle })
 
     const page = await fetch(`${service.origin}/index.html`)
-    const api = await fetch(`${service.origin}/api/positions`)
+    const api = await fetch(`${service.origin}/api/postings`)
     const output = await service.stop()
 
     expect(page.status).toBe(200)
@@ -193,9 +193,9 @@ describe('what the service logs', () => {
   test('no log line carries the key or a presented token while an authorized and an unauthorized request are served', async () => {
     const service = await spawnService({ API_KEY: LOG_KEY, FIXTURE_WEB_DIST: NO_BUNDLE })
 
-    await fetch(`${service.origin}/api/positions`, { headers: bearer(LOG_KEY) }).then((response) => response.text())
-    await fetch(`${service.origin}/api/positions`).then((response) => response.text())
-    await fetch(`${service.origin}/api/positions`, { headers: bearer(WRONG_TOKEN) }).then((response) => response.text())
+    await fetch(`${service.origin}/api/postings`, { headers: bearer(LOG_KEY) }).then((response) => response.text())
+    await fetch(`${service.origin}/api/postings`).then((response) => response.text())
+    await fetch(`${service.origin}/api/postings`, { headers: bearer(WRONG_TOKEN) }).then((response) => response.text())
     const { code, raw, entries } = await service.stop()
 
     expect(code).toBe(0)

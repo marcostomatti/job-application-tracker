@@ -104,7 +104,7 @@ describe('registerTools', () => {
       description: 'Always conflicts.',
       input: z.strictObject({}),
       run: async () => {
-        throw new ConflictError('position_key', 'acme-dev', { cause: new Error('insert into "positions"') })
+        throw new ConflictError('posting_key', 'acme-dev', { cause: new Error('insert into "postings"') })
       },
     })
     const client = await connect([failing])
@@ -142,7 +142,7 @@ describe('registerTools', () => {
       description: 'Throws before returning a promise.',
       input: z.strictObject({}),
       run: () => {
-        throw new NotFoundError('position', 7)
+        throw new NotFoundError('posting', 7)
       },
     })
     const client = await connect([sync])

@@ -6,14 +6,14 @@ import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
 const note = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
- * One move of one position. `stageId` is required but nullable, like a rating's coverage: the
+ * One move of one posting. `stageId` is required but nullable, like a rating's coverage: the
  * stage registry ships empty, so an event with no stage is a real state of a fresh install, and
  * a caller who leaves the field out has most likely forgotten it. `occurredAt` arrives as an
  * ISO-8601 instant with its offset, because a bare local time says nothing about which
  * instant it is, and leaves the event dated when it is recorded when absent.
  */
 export const StageEventInputSchema = z.strictObject({
-  positionId: IdSchema,
+  postingId: IdSchema,
   stageId: IdSchema.nullable(),
   occurredAt: z.iso
     .datetime({ offset: true })
@@ -32,7 +32,7 @@ export const StageEventBulkSchema = bulkOf(StageEventInputSchema)
  * with no reason would record nothing the criteria could learn from.
  */
 export const SetAsideInputSchema = z.strictObject({
-  positionId: IdSchema,
+  postingId: IdSchema,
   setAsideReasonId: IdSchema,
   note: note.optional(),
 })
@@ -46,7 +46,7 @@ export type SetAsideInput = z.infer<typeof SetAsideInputSchema>
  * expressible.
  */
 export const RecordRejectionInputSchema = z.strictObject({
-  positionId: IdSchema,
+  postingId: IdSchema,
   rejectionReasonId: IdSchema,
   note: note.optional(),
 })

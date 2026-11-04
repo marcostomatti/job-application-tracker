@@ -13,9 +13,9 @@ import {
   routeCounts,
   wasReposted,
 } from '../../src/data/repositories/provenance.ts'
-import { addPositions, type Position } from '../../src/data/repositories/positions.ts'
+import { addPostings, type Posting } from '../../src/data/repositories/postings.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
-import { position } from '../../src/data/schema/positions.ts'
+import { posting } from '../../src/data/schema/postings.ts'
 import { origin } from '../../src/data/schema/provenance.ts'
 import type { Origin } from '../../src/entities/provenance.ts'
 import { ArchivedError, ConflictError, NotFoundError, statusFor } from '../../src/errors.ts'
@@ -35,9 +35,9 @@ function idOf(rows: readonly { readonly id: number }[], index = 0): number {
   return id
 }
 
-async function addPosition(db: DrizzleClient, title = 'Staff Engineer'): Promise<Position> {
-  const [added] = await addPositions(db, [{ company: { name: `${title} Co` }, roleTitle: title }])
-  if (!added) throw new Error('the arrangement stored no position')
+async function addPosting(db: DrizzleClient, title = 'Staff Engineer'): Promise<Posting> {
+  const [added] = await addPostings(db, [{ company: { name: `${title} Co` }, roleTitle: title }])
+  if (!added) throw new Error('the arrangement stored no posting')
   return added
 }
 
@@ -62,12 +62,12 @@ async function dayFromToday(db: DrizzleClient, offset: number): Promise<string> 
 }
 
 /**
- * Reads first touch both ways, from the view and from `firstTouch` over the position's rows
+ * Reads first touch both ways, from the view and from `firstTouch` over the posting's rows
  * at the database's clock, and fails unless they agree. Returns the shared answer.
  */
-async function firstTouchBothWays(db: DrizzleClient, positionId: number): Promise<Origin | null> {
-  const fromView = await getFirstTouch(db, positionId)
-  const fromFunction = firstTouch(await listOrigins(db, positionId), await databaseNow(db))
+async function firstTouchBothWays(db: DrizzleClient, postingId: number): Promise<Origin | null> {
+  const fromView = await getFirstTouch(db, postingId)
+  const fromFunction = firstTouch(await listOrigins(db, postingId), await databaseNow(db))
   expect(fromView).toEqual(fromFunction)
   return fromView
 }
@@ -84,13 +84,13 @@ async function waitUntilABackendWaitsOnALock(observer: postgres.Sql): Promise<vo
 }
 
 describe('recordOrigin', () => {
-  test('stores a touch with no position, no route and no note as nulls', async () => {
+  test('stores a touch with no posting, no route and no note as nulls', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Act
       const stored = await recordOrigin(db, { touchedOn: '2026-01-05' })
 
       // Assert
-      expect(stored.positionId).toBeNull()
+      expect(stored.postingId).toBeNull()
       expect(stored.routeId).toBeNull()
       expect(stored.note).toBeNull()
       expect(stored.searchRunId).toBeNull()
@@ -120,7 +120,7 @@ describe('recordOrigin', () => {
     })
   })
 
-  test('refuses an archived route, an unknown route, an unknown position and an unknown search run', async () => {
+  test('refuses an archived route, an unknown route, an unknown posting and an unknown search run', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
       const routeId = await addRoute(db, 'corridor')
@@ -129,33 +129,33 @@ describe('recordOrigin', () => {
       // Act
       const archived = await thrownBy(() => recordOrigin(db, { touchedOn: '2026-01-05', routeId }))
       const noRoute = await thrownBy(() => recordOrigin(db, { touchedOn: '2026-01-05', routeId: 9999 }))
-      const noPosition = await thrownBy(() => recordOrigin(db, { touchedOn: '2026-01-05', positionId: 9999 }))
+      const noPosting = await thrownBy(() => recordOrigin(db, { touchedOn: '2026-01-05', postingId: 9999 }))
       const noRun = await thrownBy(() => recordOrigin(db, { touchedOn: '2026-01-05', searchRunId: 9999 }))
       const stored = await db.select().from(origin)
 
       // Assert
       expect(archived).toBeInstanceOf(ArchivedError)
       expect(noRoute).toBeInstanceOf(NotFoundError)
-      expect(noPosition).toBeInstanceOf(NotFoundError)
+      expect(noPosting).toBeInstanceOf(NotFoundError)
       expect(noRun).toBeInstanceOf(NotFoundError)
-      expect(statusFor(noPosition)).toBe(404)
-      expect((noPosition as Error).message).not.toMatch(/insert|select|violates/i)
-      expect((noPosition as Error).cause).toBeDefined()
+      expect(statusFor(noPosting)).toBe(404)
+      expect((noPosting as Error).message).not.toMatch(/insert|select|violates/i)
+      expect((noPosting as Error).cause).toBeDefined()
       expect(stored).toHaveLength(0)
     })
   })
 
-  test('attaches a touch to a position and a search run at once', async () => {
+  test('attaches a touch to a posting and a search run at once', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
-      const target = await addPosition(db)
+      const target = await addPosting(db)
       const run = await recordSearchRun(db, { query: 'staff engineer remote', source: 'a job board' })
 
       // Act
-      const stored = await recordOrigin(db, { positionId: target.id, searchRunId: run.id, touchedOn: '2026-01-05' })
+      const stored = await recordOrigin(db, { postingId: target.id, searchRunId: run.id, touchedOn: '2026-01-05' })
 
       // Assert
-      expect(stored.positionId).toBe(target.id)
+      expect(stored.postingId).toBe(target.id)
       expect(stored.searchRunId).toBe(run.id)
     })
   })
@@ -176,10 +176,10 @@ describe('getFirstTouch', () => {
   test('agrees with firstTouch over the same rows, and a backdated conversation wins', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange: a query, a recruiter message, and a conversation from the 3rd entered last
-      const target = await addPosition(db)
-      const query = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
-      await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-12' })
-      const conversation = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-03' })
+      const target = await addPosting(db)
+      const query = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-10' })
+      await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-12' })
+      const conversation = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-03' })
 
       // Act
       const shared = await firstTouchBothWays(db, target.id)
@@ -193,10 +193,10 @@ describe('getFirstTouch', () => {
   test('breaks a same-day tie by when the row was recorded, then by id, as the function does', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange: three touches on one day, recorded out of id order
-      const target = await addPosition(db)
-      const first = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
-      const second = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
-      const third = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
+      const target = await addPosting(db)
+      const first = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-10' })
+      const second = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-10' })
+      const third = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-10' })
       await db.update(origin).set({ recordedAt: new Date('2026-01-11T09:00:00Z') }).where(eq(origin.id, first.id))
       await db.update(origin).set({ recordedAt: new Date('2026-01-11T08:00:00Z') }).where(eq(origin.id, second.id))
       await db.update(origin).set({ recordedAt: new Date('2026-01-11T08:00:00Z') }).where(eq(origin.id, third.id))
@@ -209,14 +209,14 @@ describe('getFirstTouch', () => {
     })
   })
 
-  test('skips a future-dated origin: a position with only future origins has none, on both sides', async () => {
+  test('skips a future-dated origin: a posting with only future origins has none, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      // Arrange: the future dates are the earliest rows these positions have, so only the cutoff decides
-      const lone = await addPosition(db, 'Lone')
-      const several = await addPosition(db, 'Several')
-      await recordOrigin(db, { positionId: lone.id, touchedOn: '2126-10-28' })
-      await recordOrigin(db, { positionId: several.id, touchedOn: '2126-10-28' })
-      await recordOrigin(db, { positionId: several.id, touchedOn: '2127-01-01' })
+      // Arrange: the future dates are the earliest rows these postings have, so only the cutoff decides
+      const lone = await addPosting(db, 'Lone')
+      const several = await addPosting(db, 'Several')
+      await recordOrigin(db, { postingId: lone.id, touchedOn: '2126-10-28' })
+      await recordOrigin(db, { postingId: several.id, touchedOn: '2126-10-28' })
+      await recordOrigin(db, { postingId: several.id, touchedOn: '2127-01-01' })
 
       // Act / Assert
       expect(await firstTouchBothWays(db, lone.id)).toBeNull()
@@ -231,9 +231,9 @@ describe('getFirstTouch', () => {
       // leading sort key, so the typo loses on the first comparison and this test does not
       // isolate the cutoff: the future-only fixtures above, where no other row exists, carry that.
       // What it checks is that entry order never lets a mistyped date win over a real one.
-      const target = await addPosition(db)
-      const typo = await recordOrigin(db, { positionId: target.id, touchedOn: '2126-10-28' })
-      const real = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
+      const target = await addPosting(db)
+      const typo = await recordOrigin(db, { postingId: target.id, touchedOn: '2126-10-28' })
+      const real = await recordOrigin(db, { postingId: target.id, touchedOn: await dayFromToday(db, 0) })
       await db.update(origin).set({ recordedAt: new Date('2020-01-01T00:00:00Z') }).where(eq(origin.id, typo.id))
 
       // Act
@@ -247,9 +247,9 @@ describe('getFirstTouch', () => {
 
   test('counts an origin dated today and skips a future one beside it, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      const target = await addPosition(db)
-      const today = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
-      await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 400) })
+      const target = await addPosting(db)
+      const today = await recordOrigin(db, { postingId: target.id, touchedOn: await dayFromToday(db, 0) })
+      await recordOrigin(db, { postingId: target.id, touchedOn: await dayFromToday(db, 400) })
 
       expect((await firstTouchBothWays(db, target.id))?.id).toBe(today.id)
     })
@@ -257,8 +257,8 @@ describe('getFirstTouch', () => {
 
   test('counts an origin dated today when it is the only one, on both sides', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      const target = await addPosition(db)
-      const today = await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 0) })
+      const target = await addPosting(db)
+      const today = await recordOrigin(db, { postingId: target.id, touchedOn: await dayFromToday(db, 0) })
 
       expect((await firstTouchBothWays(db, target.id))?.id).toBe(today.id)
     })
@@ -266,30 +266,30 @@ describe('getFirstTouch', () => {
 
   test('skips tomorrow: the day after today is the first one the cutoff refuses', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      const target = await addPosition(db)
-      await recordOrigin(db, { positionId: target.id, touchedOn: await dayFromToday(db, 1) })
+      const target = await addPosting(db)
+      await recordOrigin(db, { postingId: target.id, touchedOn: await dayFromToday(db, 1) })
 
       expect(await firstTouchBothWays(db, target.id)).toBeNull()
     })
   })
 
-  test('is null for a position that has no origin, and NotFoundError for one that does not exist', async () => {
+  test('is null for a posting that has no origin, and NotFoundError for one that does not exist', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      const target = await addPosition(db)
+      const target = await addPosting(db)
       expect(await getFirstTouch(db, target.id)).toBeNull()
       expect(await thrownBy(() => getFirstTouch(db, 9999))).toBeInstanceOf(NotFoundError)
     })
   })
 })
 
-describe('an origin with no position', () => {
+describe('an origin with no posting', () => {
   test('may exist and attach later, and then counts as the first touch', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange: a meetup conversation logged before any posting existed
       const routeId = await addRoute(db, 'meetup')
       const floating = await recordOrigin(db, { routeId, touchedOn: '2026-01-03', note: 'Dana mentioned an opening' })
-      const target = await addPosition(db)
-      const board = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-10' })
+      const target = await addPosting(db)
+      const board = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-10' })
       const before = await getFirstTouch(db, target.id)
 
       // Act
@@ -297,20 +297,20 @@ describe('an origin with no position', () => {
       const after = await getFirstTouch(db, target.id)
 
       // Assert
-      expect(floating.positionId).toBeNull()
+      expect(floating.postingId).toBeNull()
       expect(before?.id).toBe(board.id)
-      expect(attached.positionId).toBe(target.id)
+      expect(attached.postingId).toBe(target.id)
       expect(attached.note).toBe('Dana mentioned an opening')
       expect(after?.id).toBe(floating.id)
       expect((await listOrigins(db, target.id)).map((row) => row.id)).toEqual([floating.id, board.id])
     })
   })
 
-  test('attaching twice to the same position is harmless, and to another position is a ConflictError', async () => {
+  test('attaching twice to the same posting is harmless, and to another posting is a ConflictError', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
-      const one = await addPosition(db, 'One')
-      const other = await addPosition(db, 'Other')
+      const one = await addPosting(db, 'One')
+      const other = await addPosting(db, 'Other')
       const floating = await recordOrigin(db, { touchedOn: '2026-01-03' })
       await attachOrigin(db, floating.id, one.id)
 
@@ -319,34 +319,34 @@ describe('an origin with no position', () => {
       const elsewhere = await thrownBy(() => attachOrigin(db, floating.id, other.id))
 
       // Assert
-      expect(again.positionId).toBe(one.id)
+      expect(again.postingId).toBe(one.id)
       expect(elsewhere).toBeInstanceOf(ConflictError)
       expect(statusFor(elsewhere)).toBe(409)
       expect((await listOrigins(db, other.id))).toHaveLength(0)
     })
   })
 
-  test('two callers attaching one origin to different positions cannot both succeed', async () => {
-    // Arrange / Act: another connection attaches it to one position and holds that open, so the
-    // attach to the other position waits on the row, then re-reads it once the first commits
+  test('two callers attaching one origin to different postings cannot both succeed', async () => {
+    // Arrange / Act: another connection attaches it to one posting and holds that open, so the
+    // attach to the other posting waits on the row, then re-reads it once the first commits
     const { error, rows, firstId } = await withMigratedScratchDatabase(async (db, sql) => {
       const url = new URL(process.env.DATABASE_URL ?? '')
       url.pathname = `/${sql.options.database}`
       const writer = postgres(url.toString(), { max: 1, onnotice: () => {} })
       const observer = postgres(url.toString(), { max: 1, onnotice: () => {} })
       try {
-        const winner = await addPosition(db, 'Winner')
-        const loser = await addPosition(db, 'Loser')
+        const winner = await addPosting(db, 'Winner')
+        const loser = await addPosting(db, 'Loser')
         const floating = await recordOrigin(db, { touchedOn: '2026-01-03' })
         let attempt: Promise<unknown> = Promise.resolve()
         await writer.begin(async (transaction) => {
-          await transaction`update origin set position_id = ${winner.id} where id = ${floating.id}`
+          await transaction`update origin set posting_id = ${winner.id} where id = ${floating.id}`
           attempt = thrownBy(() => attachOrigin(db, floating.id, loser.id))
           await waitUntilABackendWaitsOnALock(observer)
         })
         const error = await attempt
-        const rows = await observer`select position_id from origin where id = ${floating.id}`
-        return { error, rows: rows.map((row) => row.position_id), firstId: winner.id }
+        const rows = await observer`select posting_id from origin where id = ${floating.id}`
+        return { error, rows: rows.map((row) => row.posting_id), firstId: winner.id }
       } finally {
         await writer.end()
         await observer.end()
@@ -358,50 +358,50 @@ describe('an origin with no position', () => {
     expect(rows).toEqual([firstId])
   })
 
-  test('refuses an origin or a position that does not exist', async () => {
+  test('refuses an origin or a posting that does not exist', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
-      const target = await addPosition(db)
+      const target = await addPosting(db)
       const floating = await recordOrigin(db, { touchedOn: '2026-01-03' })
 
       // Act
       const noOrigin = await thrownBy(() => attachOrigin(db, 9999, target.id))
-      const noPosition = await thrownBy(() => attachOrigin(db, floating.id, 9999))
+      const noPosting = await thrownBy(() => attachOrigin(db, floating.id, 9999))
       const stillFloating = await db.select().from(origin).where(eq(origin.id, floating.id))
 
       // Assert
       expect(noOrigin).toBeInstanceOf(NotFoundError)
-      expect(noPosition).toBeInstanceOf(NotFoundError)
-      expect((noPosition as Error).message).not.toMatch(/update|select|violates/i)
-      expect((noPosition as Error).cause).toBeDefined()
-      expect(stillFloating[0]?.positionId).toBeNull()
+      expect(noPosting).toBeInstanceOf(NotFoundError)
+      expect((noPosting as Error).message).not.toMatch(/update|select|violates/i)
+      expect((noPosting as Error).cause).toBeDefined()
+      expect(stillFloating[0]?.postingId).toBeNull()
     })
   })
 
-  test('is what deleting a position leaves behind: its origins, unattached', async () => {
+  test('is what deleting a posting leaves behind: its origins, unattached', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
-      const target = await addPosition(db)
-      const touch = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-05' })
+      const target = await addPosting(db)
+      const touch = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-05' })
 
       // Act
-      await db.delete(position).where(eq(position.id, target.id))
+      await db.delete(posting).where(eq(posting.id, target.id))
       const left = await db.select().from(origin).where(eq(origin.id, touch.id))
 
       // Assert
       expect(left).toHaveLength(1)
-      expect(left[0]?.positionId).toBeNull()
+      expect(left[0]?.postingId).toBeNull()
     })
   })
 })
 
 describe('listOrigins', () => {
-  test('lists a position\'s origins in first-touch order, and a missing position is NotFoundError', async () => {
+  test('lists a posting\'s origins in first-touch order, and a missing posting is NotFoundError', async () => {
     await withMigratedScratchDatabase(async (db) => {
-      const target = await addPosition(db)
-      const late = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-12' })
-      const early = await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-03' })
-      const empty = await addPosition(db, 'Empty')
+      const target = await addPosting(db)
+      const late = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-12' })
+      const early = await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-03' })
+      const empty = await addPosting(db, 'Empty')
 
       expect((await listOrigins(db, target.id)).map((row) => row.id)).toEqual([early.id, late.id])
       expect(await listOrigins(db, empty.id)).toEqual([])
@@ -411,53 +411,53 @@ describe('listOrigins', () => {
 })
 
 describe('routeCounts', () => {
-  test('counts a position once per route it was reached through', async () => {
+  test('counts a posting once per route it was reached through', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange: A is reached through the board twice and a friend once; B only through the board
       const board = await addRoute(db, 'board')
       const friend = await addRoute(db, 'friend')
-      const a = await addPosition(db, 'A')
-      const b = await addPosition(db, 'B')
-      await recordOrigin(db, { positionId: a.id, routeId: board, touchedOn: '2026-01-05' })
-      await recordOrigin(db, { positionId: a.id, routeId: board, touchedOn: '2026-01-09' })
-      await recordOrigin(db, { positionId: a.id, routeId: friend, touchedOn: '2026-01-03' })
-      await recordOrigin(db, { positionId: b.id, routeId: board, touchedOn: '2026-01-06' })
+      const a = await addPosting(db, 'A')
+      const b = await addPosting(db, 'B')
+      await recordOrigin(db, { postingId: a.id, routeId: board, touchedOn: '2026-01-05' })
+      await recordOrigin(db, { postingId: a.id, routeId: board, touchedOn: '2026-01-09' })
+      await recordOrigin(db, { postingId: a.id, routeId: friend, touchedOn: '2026-01-03' })
+      await recordOrigin(db, { postingId: b.id, routeId: board, touchedOn: '2026-01-06' })
 
       // Act
       const counts = await routeCounts(db)
 
       // Assert
       expect(counts).toEqual([
-        { routeId: board, routeLabel: 'board', positions: 2 },
-        { routeId: friend, routeLabel: 'friend', positions: 1 },
+        { routeId: board, routeLabel: 'board', postings: 2 },
+        { routeId: friend, routeLabel: 'friend', postings: 1 },
       ])
     })
   })
 
-  test('groups touches with no route under a null route, and leaves out touches with no position', async () => {
+  test('groups touches with no route under a null route, and leaves out touches with no posting', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
       const board = await addRoute(db, 'board')
-      const a = await addPosition(db, 'A')
-      await recordOrigin(db, { positionId: a.id, touchedOn: '2026-01-05' })
+      const a = await addPosting(db, 'A')
+      await recordOrigin(db, { postingId: a.id, touchedOn: '2026-01-05' })
       await recordOrigin(db, { routeId: board, touchedOn: '2026-01-05' })
 
       // Act
       const counts = await routeCounts(db)
 
       // Assert
-      expect(counts).toEqual([{ routeId: null, routeLabel: null, positions: 1 }])
+      expect(counts).toEqual([{ routeId: null, routeLabel: null, postings: 1 }])
     })
   })
 
-  test('still renders the label of a route archived after positions were reached through it', async () => {
+  test('still renders the label of a route archived after postings were reached through it', async () => {
     await withMigratedScratchDatabase(async (db) => {
       const board = await addRoute(db, 'board')
-      const a = await addPosition(db, 'A')
-      await recordOrigin(db, { positionId: a.id, routeId: board, touchedOn: '2026-01-05' })
+      const a = await addPosting(db, 'A')
+      await recordOrigin(db, { postingId: a.id, routeId: board, touchedOn: '2026-01-05' })
       await archiveRegistryRow(db, 'route', board)
 
-      expect(await routeCounts(db)).toEqual([{ routeId: board, routeLabel: 'board', positions: 1 }])
+      expect(await routeCounts(db)).toEqual([{ routeId: board, routeLabel: 'board', postings: 1 }])
     })
   })
 
@@ -466,11 +466,11 @@ describe('routeCounts', () => {
       expect(await routeCounts(db)).toEqual([])
       const quiet = await addRoute(db, 'quiet')
       const busy = await addRoute(db, 'busy')
-      const a = await addPosition(db, 'A')
-      const b = await addPosition(db, 'B')
-      await recordOrigin(db, { positionId: a.id, routeId: quiet, touchedOn: '2026-01-05' })
-      await recordOrigin(db, { positionId: a.id, routeId: busy, touchedOn: '2026-01-05' })
-      await recordOrigin(db, { positionId: b.id, routeId: busy, touchedOn: '2026-01-05' })
+      const a = await addPosting(db, 'A')
+      const b = await addPosting(db, 'B')
+      await recordOrigin(db, { postingId: a.id, routeId: quiet, touchedOn: '2026-01-05' })
+      await recordOrigin(db, { postingId: a.id, routeId: busy, touchedOn: '2026-01-05' })
+      await recordOrigin(db, { postingId: b.id, routeId: busy, touchedOn: '2026-01-05' })
 
       expect((await routeCounts(db)).map((row) => row.routeId)).toEqual([busy, quiet])
     })
@@ -478,16 +478,16 @@ describe('routeCounts', () => {
 })
 
 describe('wasReposted', () => {
-  test('is false for no origin and for one, true for two, and NotFoundError for a missing position', async () => {
+  test('is false for no origin and for one, true for two, and NotFoundError for a missing posting', async () => {
     await withMigratedScratchDatabase(async (db) => {
       // Arrange
-      const target = await addPosition(db)
+      const target = await addPosting(db)
       const none = await wasReposted(db, target.id)
-      await recordOrigin(db, { positionId: target.id, touchedOn: '2026-01-05' })
+      await recordOrigin(db, { postingId: target.id, touchedOn: '2026-01-05' })
       const one = await wasReposted(db, target.id)
 
       // Act
-      await recordOrigin(db, { positionId: target.id, touchedOn: '2026-02-05' })
+      await recordOrigin(db, { postingId: target.id, touchedOn: '2026-02-05' })
       const two = await wasReposted(db, target.id)
 
       // Assert
@@ -515,12 +515,12 @@ describe('the provenance input schemas', () => {
   })
 
   test('ids arrive as numbers or numeric text, and null clears a reference', () => {
-    expect(OriginInputSchema.parse({ touchedOn: '2026-01-05', positionId: '4', routeId: null })).toEqual({
+    expect(OriginInputSchema.parse({ touchedOn: '2026-01-05', postingId: '4', routeId: null })).toEqual({
       touchedOn: '2026-01-05',
-      positionId: 4,
+      postingId: 4,
       routeId: null,
     })
-    expect(OriginInputSchema.safeParse({ touchedOn: '2026-01-05', positionId: 0 }).success).toBe(false)
+    expect(OriginInputSchema.safeParse({ touchedOn: '2026-01-05', postingId: 0 }).success).toBe(false)
   })
 
   test('a search run needs a query and a source, free of NUL', () => {

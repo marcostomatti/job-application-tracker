@@ -33,10 +33,10 @@ describe('ALL_TOOLS', () => {
   test('each collection write has a bulk sibling', () => {
     const names = new Set(ALL_TOOLS.map((tool) => tool.name))
     for (const single of [
-      'position_add',
-      'position_update',
+      'posting_add',
+      'posting_update',
       'summary_write',
-      'score_position',
+      'score_posting',
       'registry_add',
       'text_add',
       'stage_append',

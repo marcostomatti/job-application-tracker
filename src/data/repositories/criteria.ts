@@ -69,7 +69,7 @@ const newerSet = alias(criteriaSet, NEWER_SET_ALIAS)
  * A subquery of the ids of the criteria sets that are not superseded (spec section 8): for each
  * set `name`, the one with the highest `version`. A set is superseded when another set of the
  * same name has a higher version, whether or not that version has scored anything yet, so a
- * position scored only under v1 has no standing under that name once v2 exists. The version is
+ * posting scored only under v1 has no standing under that name once v2 exists. The version is
  * a sequence per name and no column links one to the next, so the name is the only key.
  *
  * Archival takes no part. A set is non-superseded by name and version alone, and an archived

@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { currentStage } from '../../src/data/repositories/dispositions.ts'
-import { addPositions } from '../../src/data/repositories/positions.ts'
+import { addPostings } from '../../src/data/repositories/postings.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
 import { recordOrigin } from '../../src/data/repositories/provenance.ts'
-import { scorePosition } from '../../src/data/repositories/scores.ts'
+import { scorePosting } from '../../src/data/repositories/scores.ts'
 import { writeSummary } from '../../src/data/repositories/summaries.ts'
 import { addText } from '../../src/data/repositories/texts.ts'
 import { mountRoutes, ROUTES } from '../../src/http/routes/index.ts'
 import { ALL_TOOLS } from '../../src/mcp/tools/index.ts'
-import { PositionRefSchema } from '../../src/schemas/positions.ts'
-import { PositionScoresQuerySchema } from '../../src/schemas/scores.ts'
+import { PostingRefSchema } from '../../src/schemas/postings.ts'
+import { PostingScoresQuerySchema } from '../../src/schemas/scores.ts'
 import { archiveCriteriaSetForTest, arrangeSet } from '../mcp/tools/criteria-arrangement.ts'
 import { idOf, untouchableDb, useSharedScratchDatabase } from '../mcp/tools/harness.ts'
 import { startTestServer, type HttpOutcome, type TestServer } from './harness.ts'
@@ -32,15 +32,15 @@ afterAll(async () => {
 
 /** The route table of the brief (§11.2), copied here so a route added or dropped fails a test. */
 const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> = [
-  ['GET', '/api/positions', ['position_search']],
-  ['GET', '/api/positions/:id', ['position_get']],
-  ['PATCH', '/api/positions/:id', ['position_update']],
-  ['GET', '/api/positions/:id/summary', ['summary_get']],
-  ['GET', '/api/positions/:id/scores', ['score_history']],
-  ['GET', '/api/positions/:id/best-scores', ['score_best']],
-  ['POST', '/api/positions/:id/stage', ['stage_append']],
-  ['POST', '/api/positions/:id/disposition', ['position_set_aside', 'position_reject']],
-  ['GET', '/api/positions/:id/origins', ['origin_list']],
+  ['GET', '/api/postings', ['posting_search']],
+  ['GET', '/api/postings/:id', ['posting_get']],
+  ['PATCH', '/api/postings/:id', ['posting_update']],
+  ['GET', '/api/postings/:id/summary', ['summary_get']],
+  ['GET', '/api/postings/:id/scores', ['score_history']],
+  ['GET', '/api/postings/:id/best-scores', ['score_best']],
+  ['POST', '/api/postings/:id/stage', ['stage_append']],
+  ['POST', '/api/postings/:id/disposition', ['posting_set_aside', 'posting_reject']],
+  ['GET', '/api/postings/:id/origins', ['origin_list']],
   ['GET', '/api/set-aside', ['set_aside_list']],
   ['GET', '/api/criteria-sets', ['criteria_sets']],
   ['POST', '/api/criteria-sets', ['criteria_version_create']],
@@ -113,13 +113,13 @@ describe('the route table', () => {
     expect(checked).toBe(24)
   })
 
-  test('two routes may share one schema because two tools do: the position reads and the score reads', () => {
+  test('two routes may share one schema because two tools do: the posting reads and the score reads', () => {
     const schemaOf = (tool: string): unknown => ROUTES.find((spec) => spec.tools.includes(tool))?.schemas[0]
 
-    expect(schemaOf('position_get')).toBe(PositionRefSchema)
-    expect(schemaOf('summary_get')).toBe(PositionRefSchema)
-    expect(schemaOf('score_history')).toBe(PositionScoresQuerySchema)
-    expect(schemaOf('score_best')).toBe(PositionScoresQuerySchema)
+    expect(schemaOf('posting_get')).toBe(PostingRefSchema)
+    expect(schemaOf('summary_get')).toBe(PostingRefSchema)
+    expect(schemaOf('score_history')).toBe(PostingScoresQuerySchema)
+    expect(schemaOf('score_best')).toBe(PostingScoresQuerySchema)
   })
 
   test('answers without any credential, because the key check is mounted by the server entry and not here', async () => {
@@ -129,106 +129,106 @@ describe('the route table', () => {
   })
 })
 
-async function newPositionId(title: string, seenAt?: string): Promise<number> {
-  return idOf(await addPositions(database(), [{ company: { name: `${title} Co` }, roleTitle: title, ...(seenAt ? { seenAt } : {}) }]))
+async function newPostingId(title: string, seenAt?: string): Promise<number> {
+  return idOf(await addPostings(database(), [{ company: { name: `${title} Co` }, roleTitle: title, ...(seenAt ? { seenAt } : {}) }]))
 }
 
-describe('the position routes', () => {
-  test('GET /api/positions lists positions and takes filters beside pagination', async () => {
-    const first = await newPositionId('Listed one')
-    const second = await newPositionId('Listed two')
+describe('the posting routes', () => {
+  test('GET /api/postings lists postings and takes filters beside pagination', async () => {
+    const first = await newPostingId('Listed one')
+    const second = await newPostingId('Listed two')
 
-    const listed = await live.request('GET', '/api/positions')
-    const paged = await live.request('GET', '/api/positions?limit=1&setAside=include')
+    const listed = await live.request('GET', '/api/postings')
+    const paged = await live.request('GET', '/api/postings?limit=1&setAside=include')
 
-    const ids = (dataOf(listed) as Array<{ position: { id: number } }>).map((row) => row.position.id)
+    const ids = (dataOf(listed) as Array<{ posting: { id: number } }>).map((row) => row.posting.id)
     expect(ids).toEqual(expect.arrayContaining([first, second]))
     expect(dataOf(paged)).toHaveLength(1)
   })
 
-  test('GET /api/positions refuses an unknown filter and an out-of-range page, naming each', async () => {
-    const unknown = await live.request('GET', '/api/positions?limit=1&bogus=1')
-    const range = await live.request('GET', '/api/positions?limit=0')
+  test('GET /api/postings refuses an unknown filter and an out-of-range page, naming each', async () => {
+    const unknown = await live.request('GET', '/api/postings?limit=1&bogus=1')
+    const range = await live.request('GET', '/api/postings?limit=0')
 
     expect([unknown.status, range.status]).toEqual([400, 400])
     expect(errorOf(unknown).message).toContain('bogus')
     expect(errorOf(range).message).toContain('limit')
   })
 
-  test('GET and PATCH /api/positions/:id read and change one position', async () => {
-    const id = await newPositionId('Patched')
+  test('GET and PATCH /api/postings/:id read and change one posting', async () => {
+    const id = await newPostingId('Patched')
 
-    const patched = await live.request('PATCH', `/api/positions/${id}`, { patch: { city: 'Lisbon' } })
-    const read = await live.request('GET', `/api/positions/${id}`)
+    const patched = await live.request('PATCH', `/api/postings/${id}`, { patch: { city: 'Lisbon' } })
+    const read = await live.request('GET', `/api/postings/${id}`)
 
     expect(patched.status).toBe(200)
     expect(dataOf(patched)).toMatchObject({ id, city: 'Lisbon' })
-    expect(dataOf(read)).toMatchObject({ position: { id, city: 'Lisbon', roleTitle: 'Patched' } })
+    expect(dataOf(read)).toMatchObject({ posting: { id, city: 'Lisbon', roleTitle: 'Patched' } })
   })
 
-  test('an unknown position is a 404 and a malformed id is a 400 naming positionId', async () => {
-    const missing = await live.request('GET', '/api/positions/999999')
-    const malformed = await live.request('GET', '/api/positions/abc')
+  test('an unknown posting is a 404 and a malformed id is a 400 naming postingId', async () => {
+    const missing = await live.request('GET', '/api/postings/999999')
+    const malformed = await live.request('GET', '/api/postings/abc')
 
     expect(missing.status).toBe(404)
-    expect(errorOf(missing)).toEqual({ name: 'NotFoundError', message: 'position 999999 does not exist' })
+    expect(errorOf(missing)).toEqual({ name: 'NotFoundError', message: 'posting 999999 does not exist' })
     expect(malformed.status).toBe(400)
-    expect(errorOf(malformed).message).toContain('positionId')
+    expect(errorOf(malformed).message).toContain('postingId')
   })
 
-  test('a patch that names the position again in its body is refused instead of retargeting the path', async () => {
-    const target = await newPositionId('Path target')
-    const other = await newPositionId('Body target')
+  test('a patch that names the posting again in its body is refused instead of retargeting the path', async () => {
+    const target = await newPostingId('Path target')
+    const other = await newPostingId('Body target')
 
-    const outcome = await live.request('PATCH', `/api/positions/${target}`, { positionId: other, patch: { city: 'Porto' } })
-    const untouched = await live.request('GET', `/api/positions/${other}`)
+    const outcome = await live.request('PATCH', `/api/postings/${target}`, { postingId: other, patch: { city: 'Porto' } })
+    const untouched = await live.request('GET', `/api/postings/${other}`)
 
     expect(outcome.status).toBe(400)
-    expect(errorOf(outcome).message).toContain('positionId')
-    expect(dataOf(untouched)).toMatchObject({ position: { city: null } })
+    expect(errorOf(outcome).message).toContain('postingId')
+    expect(dataOf(untouched)).toMatchObject({ posting: { city: null } })
   })
 
-  test('GET /api/positions/:id/summary returns the summary, and null before one is written', async () => {
-    const id = await newPositionId('Summarised')
-    const before = await live.request('GET', `/api/positions/${id}/summary`)
-    await writeSummary(database(), { positionId: id, condensed: 'A condensed posting', sourceHash: 'hash-1' })
+  test('GET /api/postings/:id/summary returns the summary, and null before one is written', async () => {
+    const id = await newPostingId('Summarised')
+    const before = await live.request('GET', `/api/postings/${id}/summary`)
+    await writeSummary(database(), { postingId: id, condensed: 'A condensed posting', sourceHash: 'hash-1' })
 
-    const after = await live.request('GET', `/api/positions/${id}/summary`)
+    const after = await live.request('GET', `/api/postings/${id}/summary`)
 
     expect(dataOf(before)).toBeNull()
-    expect(dataOf(after)).toMatchObject({ positionId: id, condensed: 'A condensed posting' })
+    expect(dataOf(after)).toMatchObject({ postingId: id, condensed: 'A condensed posting' })
   })
 
-  test('GET /api/positions/:id/origins lists the touches of one position', async () => {
-    const id = await newPositionId('Touched')
-    await recordOrigin(database(), { positionId: id, touchedOn: '2026-05-01', note: 'a referral' })
+  test('GET /api/postings/:id/origins lists the touches of one posting', async () => {
+    const id = await newPostingId('Touched')
+    await recordOrigin(database(), { postingId: id, touchedOn: '2026-05-01', note: 'a referral' })
 
-    const outcome = await live.request('GET', `/api/positions/${id}/origins`)
+    const outcome = await live.request('GET', `/api/postings/${id}/origins`)
 
-    expect(dataOf(outcome)).toEqual([expect.objectContaining({ positionId: id, note: 'a referral' })])
+    expect(dataOf(outcome)).toEqual([expect.objectContaining({ postingId: id, note: 'a referral' })])
   })
 })
 
 describe('the score routes', () => {
   test('GET scores and best-scores read the history and the latest score per set', async () => {
-    const id = await newPositionId('Scored')
+    const id = await newPostingId('Scored')
     const { setId, requirementId } = await arrangeSet(database(), 'Score set')
-    await scorePosition(database(), {
-      positionId: id,
+    await scorePosting(database(), {
+      postingId: id,
       criteriaSetId: setId,
       ratings: [{ requirementId, coverage: 1, confidence: 'supported' }],
       penalties: [],
     })
 
-    const history = await live.request('GET', `/api/positions/${id}/scores`)
-    const best = await live.request('GET', `/api/positions/${id}/best-scores`)
+    const history = await live.request('GET', `/api/postings/${id}/scores`)
+    const best = await live.request('GET', `/api/postings/${id}/best-scores`)
 
-    expect(dataOf(history)).toEqual([expect.objectContaining({ positionId: id, criteriaSetId: setId })])
-    expect(dataOf(best)).toEqual([expect.objectContaining({ positionId: id, criteriaSetId: setId })])
+    expect(dataOf(history)).toEqual([expect.objectContaining({ postingId: id, criteriaSetId: setId })])
+    expect(dataOf(best)).toEqual([expect.objectContaining({ postingId: id, criteriaSetId: setId })])
   })
 
-  test('POST /api/rescore-requests records a request and GET /pending lists the position waiting under it', async () => {
-    const id = await newPositionId('Waiting', '2026-06-01')
+  test('POST /api/rescore-requests records a request and GET /pending lists the posting waiting under it', async () => {
+    const id = await newPostingId('Waiting', '2026-06-01')
     const { setId } = await arrangeSet(database(), 'Rescore set')
 
     const requested = await live.request('POST', '/api/rescore-requests', { criteriaSetId: setId, sinceDate: '2026-01-01' })
@@ -236,7 +236,7 @@ describe('the score routes', () => {
     const pending = await live.request('GET', `/api/rescore-requests/pending?rescoreRequestId=${requestId}`)
 
     expect(requested.status).toBe(200)
-    expect(dataOf(pending)).toEqual(expect.arrayContaining([{ rescoreRequestId: requestId, positionId: id, criteriaSetId: setId }]))
+    expect(dataOf(pending)).toEqual(expect.arrayContaining([{ rescoreRequestId: requestId, postingId: id, criteriaSetId: setId }]))
   })
 
   test('a rescore request for a set that does not exist is a 404, and a bad date is a 400 naming sinceDate', async () => {
@@ -250,61 +250,61 @@ describe('the score routes', () => {
 })
 
 describe('the stage and disposition routes', () => {
-  test('POST /api/positions/:id/stage appends an event and returns the new current stage', async () => {
-    const id = await newPositionId('Staged')
+  test('POST /api/postings/:id/stage appends an event and returns the new current stage', async () => {
+    const id = await newPostingId('Staged')
     const stageId = idOf(await addRegistryRows(database(), 'stage', [{ key: 'staged-1', label: 'Staged 1' }]))
 
-    const outcome = await live.request('POST', `/api/positions/${id}/stage`, { stageId, note: 'Sent the form' })
+    const outcome = await live.request('POST', `/api/postings/${id}/stage`, { stageId, note: 'Sent the form' })
     const current = await currentStage(database(), id)
 
     expect(outcome.status).toBe(200)
-    expect(dataOf(outcome)).toMatchObject({ positionId: id, stageId, note: 'Sent the form' })
+    expect(dataOf(outcome)).toMatchObject({ postingId: id, stageId, note: 'Sent the form' })
     expect(current?.event.id).toBe((dataOf(outcome) as { id: number }).id)
     expect(current?.stage.id).toBe(stageId)
   })
 
-  test('a stage event needs a stageId, which may be null, and a position that exists', async () => {
-    const id = await newPositionId('Stage rules')
+  test('a stage event needs a stageId, which may be null, and a posting that exists', async () => {
+    const id = await newPostingId('Stage rules')
     const archived = idOf(await addRegistryRows(database(), 'stage', [{ key: 'retired-stage', label: 'Retired stage' }]))
     await archiveRegistryRow(database(), 'stage', archived)
 
-    const nullStage = await live.request('POST', `/api/positions/${id}/stage`, { stageId: null })
-    const missingField = await live.request('POST', `/api/positions/${id}/stage`, {})
-    const unknownPosition = await live.request('POST', '/api/positions/999999/stage', { stageId: null })
-    const archivedStage = await live.request('POST', `/api/positions/${id}/stage`, { stageId: archived })
+    const nullStage = await live.request('POST', `/api/postings/${id}/stage`, { stageId: null })
+    const missingField = await live.request('POST', `/api/postings/${id}/stage`, {})
+    const unknownPosting = await live.request('POST', '/api/postings/999999/stage', { stageId: null })
+    const archivedStage = await live.request('POST', `/api/postings/${id}/stage`, { stageId: archived })
 
-    expect(dataOf(nullStage)).toMatchObject({ positionId: id, stageId: null })
-    expect([missingField.status, unknownPosition.status, archivedStage.status]).toEqual([400, 404, 409])
+    expect(dataOf(nullStage)).toMatchObject({ postingId: id, stageId: null })
+    expect([missingField.status, unknownPosting.status, archivedStage.status]).toEqual([400, 404, 409])
     expect(errorOf(missingField).message).toContain('stageId')
     expect(errorOf(archivedStage).message).toBe(`stage ${archived} is archived`)
   })
 
-  test('POST /disposition with a setAsideReasonId serves position_set_aside', async () => {
-    const id = await newPositionId('Set aside by route')
+  test('POST /disposition with a setAsideReasonId serves posting_set_aside', async () => {
+    const id = await newPostingId('Set aside by route')
     const reasonId = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Too far' }]))
 
-    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { setAsideReasonId: reasonId, note: 'Two hours away' })
+    const outcome = await live.request('POST', `/api/postings/${id}/disposition`, { setAsideReasonId: reasonId, note: 'Two hours away' })
     const listed = await live.request('GET', '/api/set-aside')
 
-    expect(dataOf(outcome)).toMatchObject({ positionId: id, setAsideReasonId: reasonId, note: 'Two hours away' })
-    const groups = dataOf(listed) as Array<{ reasonId: number; positions: Array<{ position: { id: number } }> }>
-    expect(groups.find((group) => group.reasonId === reasonId)?.positions.map((row) => row.position.id)).toEqual([id])
+    expect(dataOf(outcome)).toMatchObject({ postingId: id, setAsideReasonId: reasonId, note: 'Two hours away' })
+    const groups = dataOf(listed) as Array<{ reasonId: number; postings: Array<{ posting: { id: number } }> }>
+    expect(groups.find((group) => group.reasonId === reasonId)?.postings.map((row) => row.posting.id)).toEqual([id])
   })
 
-  test('POST /disposition with a rejectionReasonId serves position_reject', async () => {
-    const id = await newPositionId('Rejected by route')
+  test('POST /disposition with a rejectionReasonId serves posting_reject', async () => {
+    const id = await newPostingId('Rejected by route')
     const reasonId = idOf(await addRegistryRows(database(), 'rejection_reason', [{ label: 'No fit' }]))
 
-    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: reasonId })
+    const outcome = await live.request('POST', `/api/postings/${id}/disposition`, { rejectionReasonId: reasonId })
 
-    expect(dataOf(outcome)).toMatchObject({ positionId: id, rejectionReasonId: reasonId, setAsideReasonId: null })
+    expect(dataOf(outcome)).toMatchObject({ postingId: id, rejectionReasonId: reasonId, setAsideReasonId: null })
   })
 
   test('POST /disposition refuses a body with both reasons or with neither, naming the two fields', async () => {
-    const id = await newPositionId('Ambiguous')
+    const id = await newPostingId('Ambiguous')
 
-    const both = await live.request('POST', `/api/positions/${id}/disposition`, { setAsideReasonId: 1, rejectionReasonId: 1 })
-    const neither = await live.request('POST', `/api/positions/${id}/disposition`, { note: 'why' })
+    const both = await live.request('POST', `/api/postings/${id}/disposition`, { setAsideReasonId: 1, rejectionReasonId: 1 })
+    const neither = await live.request('POST', `/api/postings/${id}/disposition`, { note: 'why' })
 
     for (const outcome of [both, neither]) {
       expect(outcome.status).toBe(400)
@@ -314,10 +314,10 @@ describe('the stage and disposition routes', () => {
   })
 
   test('POST /disposition parses with the chosen tool schema, which is strict, so a stray field is refused by name', async () => {
-    const id = await newPositionId('Stray field')
+    const id = await newPostingId('Stray field')
 
-    const rejection = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: 1, extra: true })
-    const setAside = await live.request('POST', `/api/positions/${id}/disposition`, { setAsideReasonId: 1, extra: true })
+    const rejection = await live.request('POST', `/api/postings/${id}/disposition`, { rejectionReasonId: 1, extra: true })
+    const setAside = await live.request('POST', `/api/postings/${id}/disposition`, { setAsideReasonId: 1, extra: true })
 
     expect([rejection.status, setAside.status]).toEqual([400, 400])
     expect(errorOf(rejection).message).toContain('extra')
@@ -325,9 +325,9 @@ describe('the stage and disposition routes', () => {
   })
 
   test('POST /disposition with both reasons, one of them null, is the both-reasons refusal and not a silent pick', async () => {
-    const id = await newPositionId('Null beside a reason')
+    const id = await newPostingId('Null beside a reason')
 
-    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { rejectionReasonId: 1, setAsideReasonId: null })
+    const outcome = await live.request('POST', `/api/postings/${id}/disposition`, { rejectionReasonId: 1, setAsideReasonId: null })
 
     expect(outcome.status).toBe(400)
     expect(errorOf(outcome).message).toContain('setAsideReasonId')
@@ -335,11 +335,11 @@ describe('the stage and disposition routes', () => {
   })
 
   test('POST /disposition refuses an archived reason with 409', async () => {
-    const id = await newPositionId('Archived reason')
+    const id = await newPostingId('Archived reason')
     const reasonId = idOf(await addRegistryRows(database(), 'set_aside_reason', [{ label: 'Retired reason' }]))
     await archiveRegistryRow(database(), 'set_aside_reason', reasonId)
 
-    const outcome = await live.request('POST', `/api/positions/${id}/disposition`, { setAsideReasonId: reasonId })
+    const outcome = await live.request('POST', `/api/postings/${id}/disposition`, { setAsideReasonId: reasonId })
 
     expect(outcome.status).toBe(409)
     expect(errorOf(outcome).message).toBe(`set_aside_reason ${reasonId} is archived`)

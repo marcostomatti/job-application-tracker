@@ -2,42 +2,42 @@ import { and, asc, desc, eq, inArray, sql, type InferSelectModel, type SQL } fro
 import { alias } from 'drizzle-orm/pg-core'
 
 import { BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
-import type { PositionInput, PositionPatch, PositionQuery } from '../../schemas/positions.ts'
+import type { PostingInput, PostingPatch, PostingQuery } from '../../schemas/postings.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
-import { positionDisposition, positionStageEvent } from '../schema/dispositions.ts'
-import { company as companyTable, normaliseName, position } from '../schema/positions.ts'
+import { postingDisposition, postingStageEvent } from '../schema/dispositions.ts'
+import { company as companyTable, normaliseName, posting } from '../schema/postings.ts'
 import { origin } from '../schema/provenance.ts'
 import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReason, stage as stageTable } from '../schema/registries.ts'
-import { positionPenalty, positionRating, positionScore } from '../schema/scores.ts'
+import { postingPenalty, postingRating, postingScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
 import { nonSupersededSetIds } from './criteria.ts'
 import type { Db } from './db.ts'
 import { isItemFault } from './item-fault.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived, findRegistryRow, type RegistryName, type RegistryRowOf } from './registries.ts'
-import { findSummary, type PositionSummary } from './summaries.ts'
+import { findSummary, type PostingSummary } from './summaries.ts'
 
-export type Position = InferSelectModel<typeof position>
-type StageEvent = InferSelectModel<typeof positionStageEvent>
-type Score = InferSelectModel<typeof positionScore>
-type Rating = InferSelectModel<typeof positionRating>
-type Penalty = InferSelectModel<typeof positionPenalty>
-type Disposition = InferSelectModel<typeof positionDisposition>
+export type Posting = InferSelectModel<typeof posting>
+type StageEvent = InferSelectModel<typeof postingStageEvent>
+type Score = InferSelectModel<typeof postingScore>
+type Rating = InferSelectModel<typeof postingRating>
+type Penalty = InferSelectModel<typeof postingPenalty>
+type Disposition = InferSelectModel<typeof postingDisposition>
 type Origin = InferSelectModel<typeof origin>
 
 /**
- * The registry rows a position names, each read whatever its archival state: a row archived
- * after the position was stored must still render, so a label never goes blank because of
+ * The registry rows a posting names, each read whatever its archival state: a row archived
+ * after the posting was stored must still render, so a label never goes blank because of
  * what happened to the vocabulary later.
  */
-export type PositionReferences = {
+export type PostingReferences = {
   readonly workFormat: RegistryRowOf<'work_format'> | null
   readonly seniority: RegistryRowOf<'seniority'> | null
   readonly applyRoute: RegistryRowOf<'apply_route'> | null
 }
 
-/** The latest stage event of a position, with the stage it names and that stage's phase. */
+/** The latest stage event of a posting, with the stage it names and that stage's phase. */
 export type LatestStage = {
   readonly event: StageEvent
   readonly stage: RegistryRowOf<'stage'> | null
@@ -64,12 +64,12 @@ export type DispositionDetail = { readonly disposition: Disposition; readonly re
 
 export type OriginDetail = { readonly origin: Origin; readonly routeLabel: string | null }
 
-/** Everything the detail modal shows for one position. */
-export type PositionDetail = {
-  readonly position: Position
+/** Everything the detail modal shows for one posting. */
+export type PostingDetail = {
+  readonly posting: Posting
   readonly company: Company
-  readonly references: PositionReferences
-  readonly summary: PositionSummary | null
+  readonly references: PostingReferences
+  readonly summary: PostingSummary | null
   readonly latestStage: LatestStage | null
   readonly scores: readonly ScoreDetail[]
   readonly dispositions: readonly DispositionDetail[]
@@ -77,14 +77,14 @@ export type PositionDetail = {
 }
 
 /**
- * One row of the board and the grid. `stage` and `phase` come from the position's latest
+ * One row of the board and the grid. `stage` and `phase` come from the posting's latest
  * stage event; `score` is the latest score under the criteria set the query named; else, when
  * the query asked for an answer to `recommendApply`, the standing score that gives it; else the
  * default set's latest. `setAside` says whether any disposition of kind `set_aside` exists, so a
- * caller that asked to include set-aside positions can tell which they are.
+ * caller that asked to include set-aside postings can tell which they are.
  */
-export type PositionListRow = {
-  readonly position: Position
+export type PostingListRow = {
+  readonly posting: Posting
   readonly company: Company
   readonly stage: RegistryRowOf<'stage'> | null
   readonly phase: RegistryRowOf<'phase'> | null
@@ -95,21 +95,21 @@ export type PositionListRow = {
 /** The internal discriminator of a disposition that sets a lead aside. */
 export const SET_ASIDE_KIND = 'set_aside'
 
-/** The constraint names in `0002_positions.sql`, which Postgres reports on a duplicate. */
-const KEY_CONSTRAINT = 'position_position_key_unique'
-const ROLE_CONSTRAINT = 'position_company_role_disambiguator_unique'
+/** The constraint names Postgres reports on a duplicate, as `0012_rename_position_to_posting.sql` renamed them. */
+const KEY_CONSTRAINT = 'posting_posting_key_unique'
+const ROLE_CONSTRAINT = 'posting_company_role_disambiguator_unique'
 
 /**
- * The columns of a position that name a registry row, and the registry each names. They are
+ * The columns of a posting that name a registry row, and the registry each names. They are
  * data so the archival guard stays a loop: nothing here branches on which registry it is.
  */
-const POSITION_REFERENCES = [
+const POSTING_REFERENCES = [
   ['workFormatId', 'work_format'],
   ['seniorityId', 'seniority'],
   ['applyRouteId', 'apply_route'],
-] as const satisfies readonly (readonly [keyof Position, RegistryName])[]
+] as const satisfies readonly (readonly [keyof Posting, RegistryName])[]
 
-type ReferencedIds = Partial<Record<(typeof POSITION_REFERENCES)[number][0], number | null>>
+type ReferencedIds = Partial<Record<(typeof POSTING_REFERENCES)[number][0], number | null>>
 
 /**
  * The columns a caller may set directly, on creation or in a patch: the whole list, in one
@@ -132,13 +132,13 @@ const EDITABLE_COLUMNS = [
   'applicantCountRaw',
   'applyContact',
   'clientHidden',
-] as const satisfies readonly (keyof Position)[]
+] as const satisfies readonly (keyof Posting)[]
 
 /**
  * What a patch may additionally set. `priorityRank` is the user's own hand-ranking: it is
  * listed here, and in no list a creation reads, which is the whole of "no import may write it".
  */
-const PATCH_ONLY_COLUMNS = ['disambiguator', 'priorityRank'] as const satisfies readonly (keyof Position)[]
+const PATCH_ONLY_COLUMNS = ['disambiguator', 'priorityRank'] as const satisfies readonly (keyof Posting)[]
 
 /**
  * Refuses a write that names a registry row it may not name. It runs before the write so an
@@ -146,18 +146,18 @@ const PATCH_ONLY_COLUMNS = ['disambiguator', 'priorityRank'] as const satisfies 
  * carries: `null` clears a reference and absent leaves it alone.
  */
 async function assertReferencesUsable(db: Db, ids: ReferencedIds): Promise<void> {
-  for (const [column, registry] of POSITION_REFERENCES) {
+  for (const [column, registry] of POSTING_REFERENCES) {
     const id = ids[column]
     if (typeof id === 'number') await assertNotArchived(db, registry, id)
   }
 }
 
 /**
- * The key a position gets when the caller names none: employer and role, each in its
+ * The key a posting gets when the caller names none: employer and role, each in its
  * normalised form, with the disambiguator when there is one. The same role reposted derives
- * the same key, which is what makes a repost one position.
+ * the same key, which is what makes a repost one posting.
  */
-function derivedPositionKey(companyNorm: string, roleNorm: string, disambiguatorText: string): string {
+function derivedPostingKey(companyNorm: string, roleNorm: string, disambiguatorText: string): string {
   const key = `${companyNorm}/${roleNorm}`
   return disambiguatorText === '' ? key : `${key}/${disambiguatorText}`
 }
@@ -170,21 +170,21 @@ function derivedPositionKey(companyNorm: string, roleNorm: string, disambiguator
  */
 function asConflict(error: unknown, describe: { readonly role: string; readonly key: string }): unknown {
   if (isUniqueViolation(error, KEY_CONSTRAINT)) {
-    return new ConflictError('position_key', describe.key, { cause: error })
+    return new ConflictError('posting_key', describe.key, { cause: error })
   }
   if (isUniqueViolation(error, ROLE_CONSTRAINT)) {
-    return new ConflictError('position', describe.role, { cause: error })
+    return new ConflictError('posting', describe.role, { cause: error })
   }
   return error
 }
 
 /** The row to insert for one input, given the company it resolved to. */
-function insertValuesOf(input: PositionInput, owner: Company): typeof position.$inferInsert {
+function insertValuesOf(input: PostingInput, owner: Company): typeof posting.$inferInsert {
   const roleNorm = normaliseName(input.roleTitle)
   const given = input.disambiguator ?? ''
   return {
     ...pickDefined(input, EDITABLE_COLUMNS),
-    positionKey: input.positionKey ?? derivedPositionKey(owner.nameNorm, roleNorm, given),
+    postingKey: input.postingKey ?? derivedPostingKey(owner.nameNorm, roleNorm, given),
     companyId: owner.id,
     roleTitle: input.roleTitle,
     roleNorm,
@@ -192,22 +192,22 @@ function insertValuesOf(input: PositionInput, owner: Company): typeof position.$
   }
 }
 
-async function addOnePosition(db: Db, input: PositionInput): Promise<Position> {
+async function addOnePosting(db: Db, input: PostingInput): Promise<Posting> {
   await assertReferencesUsable(db, input)
   const owner = await upsertCompany(db, input.company)
   const values = insertValuesOf(input, owner)
   try {
-    const [created] = await db.insert(position).values(values).returning()
-    if (!created) throw new NotFoundError('position', values.positionKey)
+    const [created] = await db.insert(posting).values(values).returning()
+    if (!created) throw new NotFoundError('posting', values.postingKey)
     return created
   } catch (error) {
     const suffix = values.disambiguator === '' ? '' : ` (${values.disambiguator})`
-    throw asConflict(error, { role: `${values.roleTitle} at ${owner.name}${suffix}`, key: values.positionKey })
+    throw asConflict(error, { role: `${values.roleTitle} at ${owner.name}${suffix}`, key: values.postingKey })
   }
 }
 
 /**
- * Records positions, all or none. Every item runs inside one transaction, in order, so the
+ * Records postings, all or none. Every item runs inside one transaction, in order, so the
  * first one that cannot be stored stops the call and rolls back everything before it,
  * including the companies those items created, and raises `BulkItemError` carrying that
  * item's index and the reason as its `cause`. This is the bulk-failure contract: nothing is
@@ -220,13 +220,13 @@ async function addOnePosition(db: Db, input: PositionInput): Promise<Position> {
  * Called with a transaction as `db`, the transaction here is a savepoint, so the caller's own
  * writes roll back with it.
  */
-export async function addPositions(db: Db, inputs: readonly PositionInput[]): Promise<Position[]> {
+export async function addPostings(db: Db, inputs: readonly PostingInput[]): Promise<Posting[]> {
   if (inputs.length === 0) return []
   return db.transaction(async (tx) => {
-    const added: Position[] = []
+    const added: Posting[] = []
     for (const [index, input] of inputs.entries()) {
       try {
-        added.push(await addOnePosition(tx, input))
+        added.push(await addOnePosting(tx, input))
       } catch (error) {
         throw isItemFault(error) ? new BulkItemError(index, error) : error
       }
@@ -235,13 +235,13 @@ export async function addPositions(db: Db, inputs: readonly PositionInput[]): Pr
   })
 }
 
-async function readPositionRow(db: Db, id: number): Promise<Position> {
-  const [found] = await db.select().from(position).where(eq(position.id, id))
-  if (!found) throw new NotFoundError('position', id)
+async function readPostingRow(db: Db, id: number): Promise<Posting> {
+  const [found] = await db.select().from(posting).where(eq(posting.id, id))
+  if (!found) throw new NotFoundError('posting', id)
   return found
 }
 
-/** The registry row for a nullable reference: absent when the position names none. */
+/** The registry row for a nullable reference: absent when the posting names none. */
 async function referencedRow<N extends RegistryName>(
   db: Db,
   name: N,
@@ -250,7 +250,7 @@ async function referencedRow<N extends RegistryName>(
   return id === null ? null : findRegistryRow(db, name, id)
 }
 
-async function readReferences(db: Db, row: Position): Promise<PositionReferences> {
+async function readReferences(db: Db, row: Posting): Promise<PostingReferences> {
   const [workFormat, seniority, applyRoute] = await Promise.all([
     referencedRow(db, 'work_format', row.workFormatId),
     referencedRow(db, 'seniority', row.seniorityId),
@@ -260,12 +260,12 @@ async function readReferences(db: Db, row: Position): Promise<PositionReferences
 }
 
 /** Latest by time, then by id: events written in one transaction share a timestamp. */
-async function readLatestStage(db: Db, positionId: number): Promise<LatestStage | null> {
+async function readLatestStage(db: Db, postingId: number): Promise<LatestStage | null> {
   const [event] = await db
     .select()
-    .from(positionStageEvent)
-    .where(eq(positionStageEvent.positionId, positionId))
-    .orderBy(desc(positionStageEvent.occurredAt), desc(positionStageEvent.id))
+    .from(postingStageEvent)
+    .where(eq(postingStageEvent.postingId, postingId))
+    .orderBy(desc(postingStageEvent.occurredAt), desc(postingStageEvent.id))
     .limit(1)
   if (!event) return null
   const stage = await referencedRow(db, 'stage', event.stageId)
@@ -273,7 +273,7 @@ async function readLatestStage(db: Db, positionId: number): Promise<LatestStage 
   return { event, stage, phase }
 }
 
-/** The newest score under each criteria set; a position keeps its history, the modal shows the head of each set that is not superseded. */
+/** The newest score under each criteria set; a posting keeps its history, the modal shows the head of each set that is not superseded. */
 function latestPerSet(scores: readonly Score[]): Score[] {
   const seen = new Set<number>()
   return scores.filter((score) => {
@@ -285,10 +285,10 @@ function latestPerSet(scores: readonly Score[]): Score[] {
 
 async function readRatings(db: Db, scoreIds: readonly number[]): Promise<RatingDetail[]> {
   const rows = await db
-    .select({ rating: positionRating, requirementKey: requirement.key, requirementLabel: requirement.label })
-    .from(positionRating)
-    .innerJoin(requirement, eq(requirement.id, positionRating.requirementId))
-    .where(inArray(positionRating.scoreId, [...scoreIds]))
+    .select({ rating: postingRating, requirementKey: requirement.key, requirementLabel: requirement.label })
+    .from(postingRating)
+    .innerJoin(requirement, eq(requirement.id, postingRating.requirementId))
+    .where(inArray(postingRating.scoreId, [...scoreIds]))
     .orderBy(asc(requirement.sort), asc(requirement.id))
   return rows
 }
@@ -296,20 +296,20 @@ async function readRatings(db: Db, scoreIds: readonly number[]): Promise<RatingD
 /** Joined without an archival filter, so a penalty kind archived later keeps its label. */
 async function readPenalties(db: Db, scoreIds: readonly number[]): Promise<PenaltyDetail[]> {
   const rows = await db
-    .select({ penalty: positionPenalty, kindLabel: penaltyKind.label })
-    .from(positionPenalty)
-    .innerJoin(penaltyKind, eq(penaltyKind.id, positionPenalty.penaltyKindId))
-    .where(inArray(positionPenalty.scoreId, [...scoreIds]))
-    .orderBy(asc(positionPenalty.id))
+    .select({ penalty: postingPenalty, kindLabel: penaltyKind.label })
+    .from(postingPenalty)
+    .innerJoin(penaltyKind, eq(penaltyKind.id, postingPenalty.penaltyKindId))
+    .where(inArray(postingPenalty.scoreId, [...scoreIds]))
+    .orderBy(asc(postingPenalty.id))
   return rows
 }
 
-async function readLatestScores(db: Db, positionId: number): Promise<ScoreDetail[]> {
+async function readLatestScores(db: Db, postingId: number): Promise<ScoreDetail[]> {
   const history = await db
     .select()
-    .from(positionScore)
-    .where(and(eq(positionScore.positionId, positionId), sql`${positionScore.criteriaSetId} in ${nonSupersededSetIds()}`))
-    .orderBy(asc(positionScore.criteriaSetId), desc(positionScore.scoredAt), desc(positionScore.id))
+    .from(postingScore)
+    .where(and(eq(postingScore.postingId, postingId), sql`${postingScore.criteriaSetId} in ${nonSupersededSetIds()}`))
+    .orderBy(asc(postingScore.criteriaSetId), desc(postingScore.scoredAt), desc(postingScore.id))
   const latest = latestPerSet(history)
   if (latest.length === 0) return []
   const ids = latest.map((score) => score.id)
@@ -322,18 +322,18 @@ async function readLatestScores(db: Db, positionId: number): Promise<ScoreDetail
 }
 
 /** Oldest first. The reason is whichever of the two registries the `kind` carries. */
-async function readDispositions(db: Db, positionId: number): Promise<DispositionDetail[]> {
+async function readDispositions(db: Db, postingId: number): Promise<DispositionDetail[]> {
   const rows = await db
     .select({
-      disposition: positionDisposition,
+      disposition: postingDisposition,
       setAsideLabel: setAsideReason.label,
       rejectionLabel: rejectionReason.label,
     })
-    .from(positionDisposition)
-    .leftJoin(setAsideReason, eq(setAsideReason.id, positionDisposition.setAsideReasonId))
-    .leftJoin(rejectionReason, eq(rejectionReason.id, positionDisposition.rejectionReasonId))
-    .where(eq(positionDisposition.positionId, positionId))
-    .orderBy(asc(positionDisposition.notedAt), asc(positionDisposition.id))
+    .from(postingDisposition)
+    .leftJoin(setAsideReason, eq(setAsideReason.id, postingDisposition.setAsideReasonId))
+    .leftJoin(rejectionReason, eq(rejectionReason.id, postingDisposition.rejectionReasonId))
+    .where(eq(postingDisposition.postingId, postingId))
+    .orderBy(asc(postingDisposition.notedAt), asc(postingDisposition.id))
   return rows.map((row) => ({
     disposition: row.disposition,
     reasonLabel: row.setAsideLabel ?? row.rejectionLabel,
@@ -341,25 +341,25 @@ async function readDispositions(db: Db, positionId: number): Promise<Disposition
 }
 
 /** In the order first touch is derived in: the day touched, then when recorded, then id. */
-async function readOrigins(db: Db, positionId: number): Promise<OriginDetail[]> {
+async function readOrigins(db: Db, postingId: number): Promise<OriginDetail[]> {
   const rows = await db
     .select({ origin, routeLabel: route.label })
     .from(origin)
     .leftJoin(route, eq(route.id, origin.routeId))
-    .where(eq(origin.positionId, positionId))
+    .where(eq(origin.postingId, postingId))
     .orderBy(asc(origin.touchedOn), asc(origin.recordedAt), asc(origin.id))
   return rows
 }
 
 /**
- * The detail modal's read: the position with its company, its summary, its latest stage
+ * The detail modal's read: the posting with its company, its summary, its latest stage
  * event, the latest score under each criteria set that is not superseded (the same sets
  * `getBestScores` keeps, so the modal and the "+n" chip count the same lenses), its
  * dispositions and its origins. Every
  * registry label is read whatever its archival state, so nothing renders blank.
  */
-export async function getPosition(db: Db, id: number): Promise<PositionDetail> {
-  const row = await readPositionRow(db, id)
+export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
+  const row = await readPostingRow(db, id)
   const [company, references, summary, latestStage, scores, dispositions, origins] = await Promise.all([
     findCompany(db, row.companyId),
     readReferences(db, row),
@@ -369,7 +369,7 @@ export async function getPosition(db: Db, id: number): Promise<PositionDetail> {
     readDispositions(db, id),
     readOrigins(db, id),
   ])
-  return { position: row, company, references, summary, latestStage, scores, dispositions, origins }
+  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins }
 }
 
 /**
@@ -379,46 +379,46 @@ export async function getPosition(db: Db, id: number): Promise<PositionDetail> {
  */
 const EVENT_ALIAS = 'latest_event'
 const SCORE_ALIAS = 'latest_score'
-const latestEvent = alias(positionStageEvent, EVENT_ALIAS)
-const newerScore = alias(positionScore, SCORE_ALIAS)
+const latestEvent = alias(postingStageEvent, EVENT_ALIAS)
+const newerScore = alias(postingScore, SCORE_ALIAS)
 
-/** The id of the position's latest stage event: by time, then by id. */
+/** The id of the posting's latest stage event: by time, then by id. */
 function latestStageEventId(): SQL {
-  return sql`(select ${latestEvent.id} from ${positionStageEvent} as ${sql.identifier(EVENT_ALIAS)} where ${latestEvent.positionId} = ${position.id}
+  return sql`(select ${latestEvent.id} from ${postingStageEvent} as ${sql.identifier(EVENT_ALIAS)} where ${latestEvent.postingId} = ${posting.id}
     order by ${latestEvent.occurredAt} desc, ${latestEvent.id} desc limit 1)`
 }
 
 /** The criteria set a search reads scores from: the one named, else the active default. */
-function criteriaSetFor(query: PositionQuery): SQL {
+function criteriaSetFor(query: PostingQuery): SQL {
   if (query.criteriaSetId !== undefined) return sql`${query.criteriaSetId}`
   return sql`(select ${criteriaSet.id} from ${criteriaSet} where ${criteriaSet.isDefault} and ${criteriaSet.archivedAt} is null)`
 }
 
-/** The id of the position's latest score under that set: by day scored, then by id. */
+/** The id of the posting's latest score under that set: by day scored, then by id. */
 function latestScoreId(setId: SQL): SQL {
-  return sql`(select ${newerScore.id} from ${positionScore} as ${sql.identifier(SCORE_ALIAS)} where ${newerScore.positionId} = ${position.id}
+  return sql`(select ${newerScore.id} from ${postingScore} as ${sql.identifier(SCORE_ALIAS)} where ${newerScore.postingId} = ${posting.id}
     and ${newerScore.criteriaSetId} = ${setId} order by ${newerScore.scoredAt} desc, ${newerScore.id} desc limit 1)`
 }
 
 const CANDIDATE_ALIAS = 'standing_score'
-const standingScore = alias(positionScore, CANDIDATE_ALIAS)
+const standingScore = alias(postingScore, CANDIDATE_ALIAS)
 
 /**
  * The part of a statement that makes `standing_score` a standing score of the row being read: a
- * score of that position, under a non-superseded criteria set (`nonSupersededSetIds`), and the
+ * score of that posting, under a non-superseded criteria set (`nonSupersededSetIds`), and the
  * latest of its set (by day, then id). Each set's latest is picked first and any flag tested
  * after, so a recommendation that a later score withdrew does not count.
  */
 function isStandingScore(): SQL {
-  return sql`${standingScore.positionId} = ${position.id}
+  return sql`${standingScore.postingId} = ${posting.id}
     and ${standingScore.criteriaSetId} in ${nonSupersededSetIds()}
     and ${standingScore.id} = ${latestScoreId(sql`${standingScore.criteriaSetId}`)}`
 }
 
-/** Whether the position has a standing score, and, when `recommending` is set, one that recommends apply. */
+/** Whether the posting has a standing score, and, when `recommending` is set, one that recommends apply. */
 function hasStandingScore(recommending: boolean): SQL<boolean> {
   const flag = recommending ? sql`and ${standingScore.recommendApply}` : sql``
-  return sql<boolean>`exists (select 1 from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)} where ${isStandingScore()} ${flag})`
+  return sql<boolean>`exists (select 1 from ${postingScore} as ${sql.identifier(CANDIDATE_ALIAS)} where ${isStandingScore()} ${flag})`
 }
 
 /**
@@ -429,7 +429,7 @@ function hasStandingScore(recommending: boolean): SQL<boolean> {
  * later day, then the later id, so the same data always shows the same score. Null when none gives it.
  */
 function answeringScoreId(answer: boolean): SQL {
-  return sql`(select ${standingScore.id} from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)}
+  return sql`(select ${standingScore.id} from ${postingScore} as ${sql.identifier(CANDIDATE_ALIAS)}
     where ${isStandingScore()} and ${standingScore.recommendApply} = ${answer}
     order by ${standingScore.overall} desc nulls last, ${standingScore.scoredAt} desc, ${standingScore.id} desc limit 1)`
 }
@@ -438,11 +438,11 @@ function answeringScoreId(answer: boolean): SQL {
  * The `recommendApply` filter. With a set named it is that set's answer, read from the latest
  * score the row already carries, superseded or not. With none named it is the spec's section 8
  * rule across sets: `true` when at least one non-superseded set's latest score recommends apply,
- * and `false` when the position has such scores and none of them does. A position with no
+ * and `false` when the posting has such scores and none of them does. A posting with no
  * standing score matches neither answer, as an unscored one always has.
  */
 function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefined): SQL {
-  if (criteriaSetId !== undefined) return eq(positionScore.recommendApply, answer)
+  if (criteriaSetId !== undefined) return eq(postingScore.recommendApply, answer)
   return answer ? hasStandingScore(true) : sql`(${hasStandingScore(false)} and not ${hasStandingScore(true)})`
 }
 
@@ -451,72 +451,72 @@ function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefi
  * to `recommendApply` with none named, the standing score that gives the answer (`answeringScoreId`),
  * so a row never displays a score that denies why it was listed. Otherwise the default set's latest.
  */
-function displayedScoreId(query: PositionQuery): SQL {
+function displayedScoreId(query: PostingQuery): SQL {
   if (query.criteriaSetId === undefined && query.recommendApply !== undefined) return answeringScoreId(query.recommendApply)
   return latestScoreId(criteriaSetFor(query))
 }
 
 function isSetAside(): SQL<boolean> {
-  return sql<boolean>`exists (select 1 from ${positionDisposition}
-    where ${positionDisposition.positionId} = ${position.id} and ${positionDisposition.kind} = ${SET_ASIDE_KIND})`
+  return sql<boolean>`exists (select 1 from ${postingDisposition}
+    where ${postingDisposition.postingId} = ${posting.id} and ${postingDisposition.kind} = ${SET_ASIDE_KIND})`
 }
 
 /** The WHERE conditions a query asks for; a filter it leaves out adds none. */
-function conditionsOf(query: PositionQuery): SQL[] {
+function conditionsOf(query: PostingQuery): SQL[] {
   const conditions: SQL[] = []
-  if (query.companyId !== undefined) conditions.push(eq(position.companyId, query.companyId))
+  if (query.companyId !== undefined) conditions.push(eq(posting.companyId, query.companyId))
   if (query.phaseId !== undefined) conditions.push(eq(stageTable.phaseId, query.phaseId))
   if (query.recommendApply !== undefined) conditions.push(recommendApplyCondition(query.recommendApply, query.criteriaSetId))
   if (query.setAside === 'exclude') conditions.push(sql`not ${isSetAside()}`)
   if (query.setAside === 'only') conditions.push(isSetAside())
-  if (query.clientHidden === 'exclude') conditions.push(eq(position.clientHidden, false))
-  if (query.clientHidden === 'only') conditions.push(eq(position.clientHidden, true))
+  if (query.clientHidden === 'exclude') conditions.push(eq(posting.clientHidden, false))
+  if (query.clientHidden === 'only') conditions.push(eq(posting.clientHidden, true))
   return conditions
 }
 
 /**
- * The positions a board or grid draws, newest seen first with id as the tie-break so pages
+ * The postings a board or grid draws, newest seen first with id as the tie-break so pages
  * tile without overlap. One query: the latest stage event and the latest score are found per
  * row by a correlated subquery over the indexed key, so a page costs one round trip however
  * many rows it holds.
  *
- * Defaults, which a reader should not have to infer from the schema: set-aside positions and
- * client-hidden positions are both left out unless `query.setAside` / `query.clientHidden`
- * says `include` (everything) or `only` (just those). A position with no score under the
+ * Defaults, which a reader should not have to infer from the schema: set-aside postings and
+ * client-hidden postings are both left out unless `query.setAside` / `query.clientHidden`
+ * says `include` (everything) or `only` (just those). A posting with no score under the
  * criteria set matches neither answer to `recommendApply`. There is no total: a page shorter
  * than `limit` is the end of the list.
  *
  * `recommendApply` with no `criteriaSetId` is the across-sets rule of the spec's section 8,
- * not the default set's answer: a position matches `true` when any non-superseded set's latest
+ * not the default set's answer: a posting matches `true` when any non-superseded set's latest
  * score recommends apply. The row's `score` is then the standing score that gives the answer
  * (the best-scoring one when several do), not the default set's, so a listed row never shows a
  * score that contradicts why it is listed. With no `recommendApply` either, it is the default set's.
  */
-export async function searchPositions(db: Db, query: PositionQuery): Promise<PositionListRow[]> {
+export async function searchPostings(db: Db, query: PostingQuery): Promise<PostingListRow[]> {
   const rows = await db
     .select({
-      position,
+      posting,
       company: companyTable,
       stage: stageTable,
       phase: phaseTable,
-      score: positionScore,
+      score: postingScore,
       setAside: isSetAside(),
     })
-    .from(position)
-    .innerJoin(companyTable, eq(companyTable.id, position.companyId))
-    .leftJoin(positionStageEvent, eq(positionStageEvent.id, latestStageEventId()))
-    .leftJoin(stageTable, eq(stageTable.id, positionStageEvent.stageId))
+    .from(posting)
+    .innerJoin(companyTable, eq(companyTable.id, posting.companyId))
+    .leftJoin(postingStageEvent, eq(postingStageEvent.id, latestStageEventId()))
+    .leftJoin(stageTable, eq(stageTable.id, postingStageEvent.stageId))
     .leftJoin(phaseTable, eq(phaseTable.id, stageTable.phaseId))
-    .leftJoin(positionScore, eq(positionScore.id, displayedScoreId(query)))
+    .leftJoin(postingScore, eq(postingScore.id, displayedScoreId(query)))
     .where(and(...conditionsOf(query)))
-    .orderBy(desc(position.seenAt), desc(position.id))
+    .orderBy(desc(posting.seenAt), desc(posting.id))
     .limit(query.limit)
     .offset(query.offset)
   return rows
 }
 
 /** The columns a patch changes, with the normalised role kept in step with the title. */
-function patchColumns(patch: PositionPatch): Partial<typeof position.$inferInsert> {
+function patchColumns(patch: PostingPatch): Partial<typeof posting.$inferInsert> {
   const defined = pickDefined(patch, [...EDITABLE_COLUMNS, ...PATCH_ONLY_COLUMNS])
   const { roleTitle } = patch
   return roleTitle === undefined ? defined : { ...defined, roleTitle, roleNorm: normaliseName(roleTitle) }
@@ -527,35 +527,35 @@ function patchColumns(patch: PositionPatch): Partial<typeof position.$inferInser
  * new reference and not the continued existence of one already stored, so a client that sends
  * back a whole object with an unchanged, since-archived reference is not refused for it.
  */
-function changedReferences(patch: PositionPatch, stored: Position): ReferencedIds {
+function changedReferences(patch: PostingPatch, stored: Posting): ReferencedIds {
   return Object.fromEntries(
-    POSITION_REFERENCES.flatMap(([column]) =>
+    POSTING_REFERENCES.flatMap(([column]) =>
       patch[column] !== undefined && patch[column] !== stored[column] ? [[column, patch[column]]] : [],
     ),
   )
 }
 
 /**
- * Changes some columns of one position and returns the row as stored, as a new object; the
+ * Changes some columns of one posting and returns the row as stored, as a new object; the
  * patch is not touched. `priorityRank` is accepted here and by no other function, because it
  * is the user's own hand-ranking and no import may write it. Only the columns listed in
  * `EDITABLE_COLUMNS` and `PATCH_ONLY_COLUMNS` are copied from the patch, so a key outside the
  * type (the company, the key, a timestamp) is ignored even when the object carries it. A
  * registry reference that differs from the stored one must be usable, as on creation; one
  * that is unchanged is not re-checked. A title or disambiguator that now collides with
- * another position at the same employer is a `ConflictError`, and nothing is written.
+ * another posting at the same employer is a `ConflictError`, and nothing is written.
  *
  * An empty patch changes nothing and returns the row as it is, or `NotFoundError` when there
  * is none.
  */
-export async function updatePosition(db: Db, id: number, patch: PositionPatch): Promise<Position> {
-  const stored = await readPositionRow(db, id)
+export async function updatePosting(db: Db, id: number, patch: PostingPatch): Promise<Posting> {
+  const stored = await readPostingRow(db, id)
   const columns = patchColumns(patch)
   if (Object.keys(columns).length === 0) return stored
   await assertReferencesUsable(db, changedReferences(patch, stored))
   try {
-    const [updated] = await db.update(position).set(columns).where(eq(position.id, id)).returning()
-    if (!updated) throw new NotFoundError('position', id)
+    const [updated] = await db.update(posting).set(columns).where(eq(posting.id, id)).returning()
+    if (!updated) throw new NotFoundError('posting', id)
     return updated
   } catch (error) {
     throw asConflict(error, { role: patch.roleTitle ?? patch.disambiguator ?? String(id), key: String(id) })

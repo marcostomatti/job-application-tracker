@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '../register.ts'
 import { criteriaTools } from './criteria.ts'
 import { dispositionTools } from './dispositions.ts'
-import { positionTools } from './positions.ts'
+import { postingTools } from './postings.ts'
 import { provenanceTools } from './provenance.ts'
 import { registryTools } from './registries.ts'
 import { scoreTools } from './scores.ts'
@@ -15,7 +15,7 @@ import { textTools } from './texts.ts'
  * point that starts the server is `server.ts`, which no test imports.
  */
 export const ALL_TOOLS: readonly ToolDefinition[] = [
-  ...positionTools,
+  ...postingTools,
   ...summaryTools,
   ...scoreTools,
   ...criteriaTools,

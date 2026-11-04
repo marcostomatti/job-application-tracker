@@ -9,7 +9,7 @@ import { BulkItemError } from '../errors.ts'
  *
  * The first item that fails stops the call and rolls everything before it back, so a half-written
  * batch is never left behind. A fault about the item (`isItemFault`, the same predicate
- * `addPositions` uses) becomes a `BulkItemError` naming the item's index with the real reason as
+ * `addPostings` uses) becomes a `BulkItemError` naming the item's index with the real reason as
  * its cause; any other error, such as a lost connection, is rethrown unchanged.
  *
  * A `BulkItemError` thrown by `perItem` itself, because an item is made of a bulk call of its

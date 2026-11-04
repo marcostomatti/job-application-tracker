@@ -144,13 +144,13 @@ describe('jsonHandler', () => {
   })
 
   test('answers 404 for a NotFoundError, with the same wording describeError gives', async () => {
-    toThrow = new NotFoundError('position', 12)
+    toThrow = new NotFoundError('posting', 12)
 
     const outcome = await server.request('POST', '/throws', {})
 
     expect(outcome).toEqual({
       status: 404,
-      body: { success: false, error: { name: 'NotFoundError', message: 'position 12 does not exist' } },
+      body: { success: false, error: { name: 'NotFoundError', message: 'posting 12 does not exist' } },
     })
     expect(logged).toEqual([])
   })
@@ -159,7 +159,7 @@ describe('jsonHandler', () => {
     const cases: Array<[unknown, number]> = [
       [new ConflictError('route', 'x'), 409],
       [new ArchivedError('stage', 3), 409],
-      [new BulkItemError(2, new NotFoundError('position', 5)), 400],
+      [new BulkItemError(2, new NotFoundError('posting', 5)), 400],
     ]
 
     for (const [error, status] of cases) {

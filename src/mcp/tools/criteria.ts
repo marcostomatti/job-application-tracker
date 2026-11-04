@@ -42,7 +42,7 @@ export const criteriaTools: ToolDefinition[] = [
     name: 'criteria_sets',
     title: 'List criteria sets',
     description:
-      'Lists the criteria sets (the versioned rubrics that positions are scored against), newest first, each with its name, version, apply threshold and whether it is the default. ' +
+      'Lists the criteria sets (the versioned rubrics that postings are scored against), newest first, each with its name, version, apply threshold and whether it is the default. ' +
       'Archived sets are left out unless includeArchived is true. ' +
       'Use this to find a criteriaSetId; use criteria_requirements to see what is inside one set.',
     input: CriteriaSetQuerySchema,
@@ -53,7 +53,7 @@ export const criteriaTools: ToolDefinition[] = [
     title: 'Get the requirements of a criteria set',
     description:
       'Returns the requirements of ONE criteria set in rubric order: each with its key, label, kind (gate or soft), weight, anchors (what a coverage of 0, 0.5 and 1 mean), layer label and detours. ' +
-      'You need these requirement ids and keys to score a position with score_position. ' +
+      'You need these requirement ids and keys to score a posting with score_posting. ' +
       'An unknown set is a not-found error, and a set with no requirements returns an empty list.',
     input: CriteriaRequirementsQuerySchema,
     run: async (args, db) => getRequirements(db, args.criteriaSetId),
@@ -66,7 +66,7 @@ export const criteriaTools: ToolDefinition[] = [
       'The version number is assigned for you: one past the highest version of the target name. By default the copy keeps the source\'s name; give name to file it under another, which starts at version 1. ' +
       'The copy is never the default and never archived; use criteria_set_default to promote it. ' +
       'Prefer this to editing a set that has already been used for scoring, so old scores keep their meaning. ' +
-      'EXPECT positions to drop out of the recommended-for-apply list: a new version of a name supersedes the older ones at once, and only the newest version of each name counts toward a recommendation, so every position that was recommended only by the older version stops being recommended until it is scored against the new one. That is deliberate (the new criteria have not been applied yet, so the answer is unknown, not a stale yes). Fix it with rescore_request for the new set, then score each pending position with score_position. A copy filed under a different name starts at version 1 and supersedes nothing.',
+      'EXPECT postings to drop out of the recommended-for-apply list: a new version of a name supersedes the older ones at once, and only the newest version of each name counts toward a recommendation, so every posting that was recommended only by the older version stops being recommended until it is scored against the new one. That is deliberate (the new criteria have not been applied yet, so the answer is unknown, not a stale yes). Fix it with rescore_request for the new set, then score each pending posting with score_posting. A copy filed under a different name starts at version 1 and supersedes nothing.',
     input: CriteriaVersionInputSchema,
     run: async (args, db) => createCriteriaVersion(db, args),
   }),
@@ -85,7 +85,7 @@ export const criteriaTools: ToolDefinition[] = [
     title: 'Set the default criteria set',
     description:
       'Makes ONE criteria set the default and returns it. There is only one default, so the previous one stops being it. ' +
-      'The default is the set whose latest score position_search shows when no criteriaSetId is given. An archived set cannot be the default, and a refused call leaves the current default in place.',
+      'The default is the set whose latest score posting_search shows when no criteriaSetId is given. An archived set cannot be the default, and a refused call leaves the current default in place.',
     input: CriteriaSetDefaultInputSchema,
     run: async (args, db) => makeDefaultCriteriaSet(db, args.criteriaSetId),
   }),

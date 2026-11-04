@@ -9,7 +9,7 @@ const TODAY = new Date('2026-11-20T00:00:00Z')
 function touch(id: number, day: number, recorded: number, overrides: Partial<Origin> = {}): Origin {
   return {
     id,
-    positionId: 1,
+    postingId: 1,
     routeId: id,
     touchedOn: `2026-11-${String(day).padStart(2, '0')}`,
     recordedAt: new Date(`2026-11-${String(recorded).padStart(2, '0')}T12:00:00Z`),
@@ -97,7 +97,7 @@ describe('firstTouch', () => {
     expect(onlyToday?.id).toBe(3)
   })
 
-  test('returns null for a position with no origins', () => {
+  test('returns null for a posting with no origins', () => {
     // Arrange / Act / Assert
     expect(firstTouch([], TODAY)).toBeNull()
   })

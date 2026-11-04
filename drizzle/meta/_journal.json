@@ -85,6 +85,13 @@
       "when": 1793732342162,
       "tag": "0011_ordinary_spiral",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793784549893,
+      "tag": "0012_rename_position_to_posting",
+      "breakpoints": true
     }
   ]
 }

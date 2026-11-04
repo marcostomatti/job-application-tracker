@@ -12,8 +12,8 @@ import {
 
 describe('statusFor', () => {
   test('statusFor maps each error class to its status', () => {
-    expect(statusFor(new NotFoundError('position', 7))).toBe(404)
-    expect(statusFor(new ConflictError('position_key', 'acme-dev'))).toBe(409)
+    expect(statusFor(new NotFoundError('posting', 7))).toBe(404)
+    expect(statusFor(new ConflictError('posting_key', 'acme-dev'))).toBe(409)
     expect(statusFor(new ArchivedError('route', 3))).toBe(409)
     expect(statusFor(new BulkItemError(2, new Error('boom')))).toBe(400)
     expect(statusFor(new ZodError([]))).toBe(400)
@@ -42,16 +42,16 @@ describe('statusFor', () => {
 
 describe('error messages', () => {
   test('NotFoundError names the entity and the id without a query', () => {
-    const error = new NotFoundError('position', 7)
-    expect(error.message).toBe('position 7 does not exist')
+    const error = new NotFoundError('posting', 7)
+    expect(error.message).toBe('posting 7 does not exist')
     expect(error.message).not.toContain('select')
   })
 
   test('NotFoundError may carry the driver fault on cause and keeps it out of the message', () => {
     const cause = new Error('insert into "origin" violates a foreign key')
-    const error = new NotFoundError('position', 7, { cause })
+    const error = new NotFoundError('posting', 7, { cause })
     expect(error.cause).toBe(cause)
-    expect(error.message).toBe('position 7 does not exist')
+    expect(error.message).toBe('posting 7 does not exist')
   })
 
   test('ConflictError takes its own message, keeps the cause off it, and still names the field and key', () => {
@@ -66,8 +66,8 @@ describe('error messages', () => {
   })
 
   test('ConflictError names the key and not the cause', () => {
-    const error = new ConflictError('position_key', 'acme-dev')
-    expect(error.message).toBe('position_key acme-dev already exists')
+    const error = new ConflictError('posting_key', 'acme-dev')
+    expect(error.message).toBe('posting_key acme-dev already exists')
     expect(error.name).toBe('ConflictError')
   })
 

@@ -4,7 +4,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { requirement } from '../../src/data/schema/criteria.ts'
-import { positionRating } from '../../src/data/schema/scores.ts'
+import { postingRating } from '../../src/data/schema/scores.ts'
 import { RATING_CONFIDENCES, REQUIREMENT_KINDS } from '../../src/schemas/discriminators.ts'
 
 afterAll(closeDb)
@@ -20,7 +20,7 @@ function membersOf(checkText: string): string[] {
 
 const CHECKS = [
   { constraint: 'requirement_kind_check', table: requirement, members: REQUIREMENT_KINDS },
-  { constraint: 'position_rating_confidence_check', table: positionRating, members: RATING_CONFIDENCES },
+  { constraint: 'posting_rating_confidence_check', table: postingRating, members: RATING_CONFIDENCES },
 ] as const
 
 /**

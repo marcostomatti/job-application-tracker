@@ -7,8 +7,8 @@ import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { criteriaSet } from '../../src/data/schema/criteria.ts'
 import { appConfig, pendingRescore, rescoreRequest } from '../../src/data/schema/config.ts'
-import { company, normaliseName, position } from '../../src/data/schema/positions.ts'
-import { positionScore } from '../../src/data/schema/scores.ts'
+import { company, normaliseName, posting } from '../../src/data/schema/postings.ts'
+import { postingScore } from '../../src/data/schema/scores.ts'
 import { rolledBack, type Tx } from './rolled-back.ts'
 
 const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
@@ -25,16 +25,16 @@ async function addCriteriaSet(tx: Tx, token: string, name: string): Promise<numb
   return row!.id
 }
 
-/** A position first seen on `seenAt`; the company is created alongside it. */
-async function addPosition(tx: Tx, token: string, name: string, seenAt: string): Promise<number> {
+/** A posting first seen on `seenAt`; the company is created alongside it. */
+async function addPosting(tx: Tx, token: string, name: string, seenAt: string): Promise<number> {
   const [owner] = await tx
     .insert(company)
     .values({ name: `${name} ${token}`, nameNorm: normaliseName(`${name} ${token}`) })
     .returning()
   const [target] = await tx
-    .insert(position)
+    .insert(posting)
     .values({
-      positionKey: `${name}-${token}`,
+      postingKey: `${name}-${token}`,
       companyId: owner!.id,
       roleTitle: 'Staff Engineer',
       roleNorm: normaliseName('Staff Engineer'),
@@ -50,17 +50,17 @@ async function addRequest(tx: Tx, criteriaSetId: number, sinceDate: string): Pro
 }
 
 /**
- * The position ids the view lists for one request, in a stable order, limited to positions the
- * test created. The view joins a request to every position seen on or after its date, so a
- * position committed to the shared database would otherwise show up as pending too.
+ * The posting ids the view lists for one request, in a stable order, limited to postings the
+ * test created. The view joins a request to every posting seen on or after its date, so a
+ * posting committed to the shared database would otherwise show up as pending too.
  */
 async function pendingFor(tx: Tx, requestId: number, createdIds: number[]): Promise<number[]> {
   const rows = await tx
     .select()
     .from(pendingRescore)
-    .where(and(eq(pendingRescore.rescoreRequestId, requestId), inArray(pendingRescore.positionId, createdIds)))
-    .orderBy(asc(pendingRescore.positionId))
-  return rows.map((row) => row.positionId)
+    .where(and(eq(pendingRescore.rescoreRequestId, requestId), inArray(pendingRescore.postingId, createdIds)))
+    .orderBy(asc(pendingRescore.postingId))
+  return rows.map((row) => row.postingId)
 }
 
 /** Ids in ascending order, the order `pendingFor` returns them in. */
@@ -101,13 +101,13 @@ describe('app config and the pending re-score view', () => {
     expect(structured.map((row) => row?.value)).toEqual([42, { mode: 'perspective', weights: [1, 2] }])
   })
 
-  test('pending_rescore lists positions seen on or after since_date with no score for the set', async () => {
+  test('pending_rescore lists postings seen on or after since_date with no score for the set', async () => {
     // Arrange / Act
     const { pending, onSince, afterSince } = await rolledBack(async (tx, token) => {
       const setId = await addCriteriaSet(tx, token, 'Set A')
       const requestId = await addRequest(tx, setId, SINCE)
-      const onSince = await addPosition(tx, token, 'on-since', SINCE)
-      const afterSince = await addPosition(tx, token, 'after-since', AFTER_SINCE)
+      const onSince = await addPosting(tx, token, 'on-since', SINCE)
+      const afterSince = await addPosting(tx, token, 'after-since', AFTER_SINCE)
       return { pending: await pendingFor(tx, requestId, [onSince, afterSince]), onSince, afterSince }
     })
 
@@ -115,33 +115,33 @@ describe('app config and the pending re-score view', () => {
     expect(pending).toEqual([onSince, afterSince])
   })
 
-  test('pending_rescore excludes a position already scored against that set', async () => {
+  test('pending_rescore excludes a posting already scored against that set', async () => {
     // Arrange / Act
     const { pending, unscored, scoredElsewhere } = await rolledBack(async (tx, token) => {
       const setId = await addCriteriaSet(tx, token, 'Set A')
       const otherSetId = await addCriteriaSet(tx, token, 'Set B')
       const requestId = await addRequest(tx, setId, SINCE)
-      const scored = await addPosition(tx, token, 'scored', AFTER_SINCE)
-      const unscored = await addPosition(tx, token, 'unscored', AFTER_SINCE)
-      const scoredElsewhere = await addPosition(tx, token, 'scored-elsewhere', AFTER_SINCE)
-      await tx.insert(positionScore).values([
-        { positionId: scored, criteriaSetId: setId },
-        { positionId: scoredElsewhere, criteriaSetId: otherSetId },
+      const scored = await addPosting(tx, token, 'scored', AFTER_SINCE)
+      const unscored = await addPosting(tx, token, 'unscored', AFTER_SINCE)
+      const scoredElsewhere = await addPosting(tx, token, 'scored-elsewhere', AFTER_SINCE)
+      await tx.insert(postingScore).values([
+        { postingId: scored, criteriaSetId: setId },
+        { postingId: scoredElsewhere, criteriaSetId: otherSetId },
       ])
       return { pending: await pendingFor(tx, requestId, [scored, unscored, scoredElsewhere]), unscored, scoredElsewhere }
     })
 
-    // Assert: only a score for this request's set removes a position; a score for another set does not
+    // Assert: only a score for this request's set removes a posting; a score for another set does not
     expect(pending).toEqual(ascending([unscored, scoredElsewhere]))
   })
 
-  test('pending_rescore excludes a position seen before since_date', async () => {
+  test('pending_rescore excludes a posting seen before since_date', async () => {
     // Arrange / Act
     const { pending, recent } = await rolledBack(async (tx, token) => {
       const setId = await addCriteriaSet(tx, token, 'Set A')
       const requestId = await addRequest(tx, setId, SINCE)
-      const old = await addPosition(tx, token, 'old', BEFORE_SINCE)
-      const recent = await addPosition(tx, token, 'recent', SINCE)
+      const old = await addPosting(tx, token, 'old', BEFORE_SINCE)
+      const recent = await addPosting(tx, token, 'recent', SINCE)
       return { pending: await pendingFor(tx, requestId, [old, recent]), recent }
     })
 
@@ -149,42 +149,42 @@ describe('app config and the pending re-score view', () => {
     expect(pending).toEqual([recent])
   })
 
-  test('scoring a pending position removes it from the view without an update', async () => {
+  test('scoring a pending posting removes it from the view without an update', async () => {
     // Arrange / Act: nothing but the score insert happens between the two reads
     const { before, after, other, requestRow, requestRowAfter } = await rolledBack(async (tx, token) => {
       const setId = await addCriteriaSet(tx, token, 'Set A')
       const requestId = await addRequest(tx, setId, SINCE)
-      const target = await addPosition(tx, token, 'target', AFTER_SINCE)
-      const other = await addPosition(tx, token, 'other', AFTER_SINCE)
+      const target = await addPosting(tx, token, 'target', AFTER_SINCE)
+      const other = await addPosting(tx, token, 'other', AFTER_SINCE)
       const created = [target, other]
       const before = await pendingFor(tx, requestId, created)
       const [requestRow] = await tx.select().from(rescoreRequest).where(eq(rescoreRequest.id, requestId))
-      await tx.insert(positionScore).values({ positionId: target, criteriaSetId: setId })
+      await tx.insert(postingScore).values({ postingId: target, criteriaSetId: setId })
       const after = await pendingFor(tx, requestId, created)
       const [requestRowAfter] = await tx.select().from(rescoreRequest).where(eq(rescoreRequest.id, requestId))
       return { before: { ids: before, target }, after, other, requestRow, requestRowAfter }
     })
 
-    // Assert: the scored position leaves, the other stays, and the request row itself is untouched
+    // Assert: the scored posting leaves, the other stays, and the request row itself is untouched
     expect(before.ids).toEqual(ascending([before.target, other]))
     expect(after).toEqual([other])
     expect(requestRowAfter).toEqual(requestRow)
   })
 
-  test('each request lists only its own positions and judges them against its own set', async () => {
-    // Arrange / Act: two requests on two sets, both reaching the same positions by date
+  test('each request lists only its own postings and judges them against its own set', async () => {
+    // Arrange / Act: two requests on two sets, both reaching the same postings by date
     const result = await rolledBack(async (tx, token) => {
       const setA = await addCriteriaSet(tx, token, 'Set A')
       const setB = await addCriteriaSet(tx, token, 'Set B')
       const requestA = await addRequest(tx, setA, SINCE)
       const requestB = await addRequest(tx, setB, AFTER_SINCE)
-      const scoredForA = await addPosition(tx, token, 'scored-for-a', AFTER_SINCE)
-      const scoredForB = await addPosition(tx, token, 'scored-for-b', AFTER_SINCE)
-      const neither = await addPosition(tx, token, 'neither', AFTER_SINCE)
-      const onlyReachedByA = await addPosition(tx, token, 'only-reached-by-a', SINCE)
-      await tx.insert(positionScore).values([
-        { positionId: scoredForA, criteriaSetId: setA },
-        { positionId: scoredForB, criteriaSetId: setB },
+      const scoredForA = await addPosting(tx, token, 'scored-for-a', AFTER_SINCE)
+      const scoredForB = await addPosting(tx, token, 'scored-for-b', AFTER_SINCE)
+      const neither = await addPosting(tx, token, 'neither', AFTER_SINCE)
+      const onlyReachedByA = await addPosting(tx, token, 'only-reached-by-a', SINCE)
+      await tx.insert(postingScore).values([
+        { postingId: scoredForA, criteriaSetId: setA },
+        { postingId: scoredForB, criteriaSetId: setB },
       ])
       const created = [scoredForA, scoredForB, neither, onlyReachedByA]
       return {

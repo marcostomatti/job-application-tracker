@@ -52,7 +52,7 @@ bun run seed:pack seeds/vanilla/web-search.json
 
 A shipped pack carries **structure and anchor text only. Every weight and the apply threshold
 are null.** How much a requirement matters, and where the apply line sits, is your judgement,
-so the pack leaves it blank for you to fill in. Until you do, a position scored against the set
+so the pack leaves it blank for you to fill in. Until you do, a posting scored against the set
 has no overall score and is never recommended for apply. That is the template arriving empty,
 not a fault.
 
@@ -64,21 +64,21 @@ threshold set, and `seed:pack` refuses such a file too.
 
 ## New criteria versions and the recommended list
 
-A position is recommended for apply when at least one **current** criteria set puts it over
+A posting is recommended for apply when at least one **current** criteria set puts it over
 that set's own threshold. Current means the highest `version` of a set `name`, so each name
 counts once, however many versions it has.
 
 **Publishing a new version of a criteria set empties the recommended list of everything only
-the older version recommended, until those positions are scored again.** This is expected, not
+the older version recommended, until those postings are scored again.** This is expected, not
 a fault: the new criteria have not been applied to them yet, so the honest answer is "unknown"
 and not a stale yes from the old criteria. The older scores stay in the history. To refill the
 list, ask for a re-score of the new set (the `rescore_request` tool), then score each pending
-position against it.
+posting against it.
 
-Two reads follow from the same rule. The board shows a position that another current set
+Two reads follow from the same rule. The board shows a posting that another current set
 recommends even when the default set does not, and the row then displays the recommending
-set's score (the best-scoring one if several recommend). Scoring moves a position to the
-shortlist only when the score just written recommends it, so such a position can be in the
+set's score (the best-scoring one if several recommend). Scoring moves a posting to the
+shortlist only when the score just written recommends it, so such a posting can be in the
 recommended list without having been shortlisted.
 
 Archiving a set does not change this: an archived set that is the newest version of its name
@@ -189,7 +189,7 @@ equally good place for the password.
 bun run setApiKey --burn-after-reading   # once: writes API_KEY into .env, shows it once, then clears the screen
 bun run serve
 curl -s localhost:3000/health
-curl -s -H "Authorization: Bearer <the key setApiKey showed you>" localhost:3000/api/positions
+curl -s -H "Authorization: Bearer <the key setApiKey showed you>" localhost:3000/api/postings
 ```
 
 Paste the key the script showed you into that last command; that is why it shows the key once
@@ -275,7 +275,7 @@ MCP_TRANSPORT=http bun run mcp
 **No key is checked on this port.** The package has no place to check a header and this
 repository does not add one, so the key from `setApiKey` is not consulted. Anyone who can
 reach the port can call every tool, including the ones that write and the ones that set a
-position aside. The package binds **every network interface**, not only loopback (a socket
+posting aside. The package binds **every network interface**, not only loopback (a socket
 listing shows `*:8080` and `*:3001`), so on a machine joined to a network the port is
 reachable from other machines. Use HTTP only behind a firewall that allows loopback alone, or
 where you put your own authenticating proxy in front of it.

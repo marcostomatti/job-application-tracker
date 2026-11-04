@@ -5,8 +5,8 @@ import { asc, eq, isNull, sql } from 'drizzle-orm'
 
 import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
-import { origin, positionFirstTouch, searchRun } from '../../src/data/schema/provenance.ts'
-import { company, normaliseName, position } from '../../src/data/schema/positions.ts'
+import { origin, postingFirstTouch, searchRun } from '../../src/data/schema/provenance.ts'
+import { company, normaliseName, posting } from '../../src/data/schema/postings.ts'
 import { route } from '../../src/data/schema/registries.ts'
 import type { Origin } from '../../src/entities/provenance.ts'
 import { firstTouch } from '../../src/provenance/first-touch.ts'
@@ -18,15 +18,15 @@ afterAll(async () => {
   await closeDb()
 })
 
-async function addPosition(tx: Tx, token: string, name: string): Promise<number> {
+async function addPosting(tx: Tx, token: string, name: string): Promise<number> {
   const [owner] = await tx
     .insert(company)
     .values({ name: `${name} ${token}`, nameNorm: normaliseName(`${name} ${token}`) })
     .returning()
   const [target] = await tx
-    .insert(position)
+    .insert(posting)
     .values({
-      positionKey: `${name}-${token}`,
+      postingKey: `${name}-${token}`,
       companyId: owner!.id,
       roleTitle: 'Staff Engineer',
       roleNorm: normaliseName('Staff Engineer'),
@@ -55,7 +55,7 @@ function dayFrom(text: string, offset: number): string {
 }
 
 describe('provenance', () => {
-  test('an origin may exist before its position', async () => {
+  test('an origin may exist before its posting', async () => {
     // Arrange / Act
     const { before, viewBefore, after, viewAfter } = await rolledBack(async (tx, token) => {
       const routeId = await addRoute(tx, `corridor-${token}`)
@@ -63,13 +63,13 @@ describe('provenance', () => {
         .insert(origin)
         .values({ routeId, touchedOn: '2026-01-05', note: 'Dana mentioned an opening' })
         .returning()
-      const unattached = await tx.select().from(origin).where(isNull(origin.positionId))
-      const viewBeforeRows = await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.originId, floating!.id))
+      const unattached = await tx.select().from(origin).where(isNull(origin.postingId))
+      const viewBeforeRows = await tx.select().from(postingFirstTouch).where(eq(postingFirstTouch.originId, floating!.id))
 
-      const positionId = await addPosition(tx, token, 'later')
-      await tx.update(origin).set({ positionId }).where(eq(origin.id, floating!.id))
+      const postingId = await addPosting(tx, token, 'later')
+      await tx.update(origin).set({ postingId }).where(eq(origin.id, floating!.id))
       const attached = await tx.select().from(origin).where(eq(origin.id, floating!.id))
-      const viewAfterRows = await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.positionId, positionId))
+      const viewAfterRows = await tx.select().from(postingFirstTouch).where(eq(postingFirstTouch.postingId, postingId))
       return {
         before: unattached.filter((row) => row.id === floating!.id),
         viewBefore: viewBeforeRows,
@@ -80,26 +80,26 @@ describe('provenance', () => {
 
     // Assert
     expect(before).toHaveLength(1)
-    expect(before[0]!.positionId).toBeNull()
+    expect(before[0]!.postingId).toBeNull()
     expect(viewBefore).toEqual([])
-    expect(after!.positionId).not.toBeNull()
+    expect(after!.postingId).not.toBeNull()
     expect(viewAfter).toHaveLength(1)
     expect(viewAfter[0]!.originId).toBe(after!.id)
   })
 
-  test('one position carries several origins through the same route on different dates', async () => {
+  test('one posting carries several origins through the same route on different dates', async () => {
     // Arrange / Act
     const { stored, first } = await rolledBack(async (tx, token) => {
       const routeId = await addRoute(tx, `board-${token}`)
-      const positionId = await addPosition(tx, token, 'repost')
+      const postingId = await addPosting(tx, token, 'repost')
       const [run] = await tx.insert(searchRun).values({ query: 'staff engineer', source: 'a board' }).returning()
       await tx.insert(origin).values([
-        { positionId, routeId, touchedOn: '2026-02-10', searchRunId: run!.id },
-        { positionId, routeId, touchedOn: '2026-03-10', searchRunId: run!.id, note: 'reposted' },
+        { postingId, routeId, touchedOn: '2026-02-10', searchRunId: run!.id },
+        { postingId, routeId, touchedOn: '2026-03-10', searchRunId: run!.id, note: 'reposted' },
       ])
       return {
-        stored: await tx.select().from(origin).where(eq(origin.positionId, positionId)).orderBy(asc(origin.touchedOn)),
-        first: await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.positionId, positionId)),
+        stored: await tx.select().from(origin).where(eq(origin.postingId, postingId)).orderBy(asc(origin.touchedOn)),
+        first: await tx.select().from(postingFirstTouch).where(eq(postingFirstTouch.postingId, postingId)),
       }
     })
 
@@ -110,7 +110,7 @@ describe('provenance', () => {
     expect(first[0]!.originId).toBe(stored[0]!.id)
   })
 
-  test('the position_first_touch view agrees with firstTouch for the fixture', async () => {
+  test('the posting_first_touch view agrees with firstTouch for the fixture', async () => {
     // Arrange / Act
     const outcome = await rolledBack(async (tx, token) => {
       const today = await databaseToday(tx)
@@ -120,34 +120,34 @@ describe('provenance', () => {
         ['query', 'recruiter', 'friend'].map((label) => addRoute(tx, `${label}-${token}`)),
       )
 
-      const backdated = await addPosition(tx, token, 'backdated')
-      const tied = await addPosition(tx, token, 'tied')
-      const onlyTypo = await addPosition(tx, token, 'typo')
-      const onlyToday = await addPosition(tx, token, 'today')
+      const backdated = await addPosting(tx, token, 'backdated')
+      const tied = await addPosting(tx, token, 'tied')
+      const onlyTypo = await addPosting(tx, token, 'typo')
+      const onlyToday = await addPosting(tx, token, 'today')
       const typoYear = dayFrom(today.text, 400)
 
       await tx.insert(origin).values([
         // a query, a recruiter message, a conversation remembered later and backdated, and a typo
-        { positionId: backdated, routeId: query!, touchedOn: day(-10), recordedAt: at(10) },
-        { positionId: backdated, routeId: recruiter!, touchedOn: day(-8), recordedAt: at(11) },
-        { positionId: backdated, routeId: friend!, touchedOn: day(-17), recordedAt: at(12) },
-        { positionId: backdated, routeId: query!, touchedOn: typoYear, recordedAt: at(9) },
+        { postingId: backdated, routeId: query!, touchedOn: day(-10), recordedAt: at(10) },
+        { postingId: backdated, routeId: recruiter!, touchedOn: day(-8), recordedAt: at(11) },
+        { postingId: backdated, routeId: friend!, touchedOn: day(-17), recordedAt: at(12) },
+        { postingId: backdated, routeId: query!, touchedOn: typoYear, recordedAt: at(9) },
         // the same day: recorded_at decides, then id for two rows recorded at the same instant
-        { positionId: tied, routeId: query!, touchedOn: day(-5), recordedAt: at(14) },
-        { positionId: tied, routeId: recruiter!, touchedOn: day(-5), recordedAt: at(8) },
-        { positionId: tied, routeId: friend!, touchedOn: day(-5), recordedAt: at(8) },
+        { postingId: tied, routeId: query!, touchedOn: day(-5), recordedAt: at(14) },
+        { postingId: tied, routeId: recruiter!, touchedOn: day(-5), recordedAt: at(8) },
+        { postingId: tied, routeId: friend!, touchedOn: day(-5), recordedAt: at(8) },
         // dated after today only: no first touch at all
-        { positionId: onlyTypo, routeId: query!, touchedOn: typoYear, recordedAt: at(9) },
+        { postingId: onlyTypo, routeId: query!, touchedOn: typoYear, recordedAt: at(9) },
         // dated exactly today: counts
-        { positionId: onlyToday, routeId: query!, touchedOn: day(0), recordedAt: at(9) },
+        { postingId: onlyToday, routeId: query!, touchedOn: day(0), recordedAt: at(9) },
       ])
 
       const compared = []
-      for (const positionId of [backdated, tied, onlyTypo, onlyToday]) {
-        const rows: Origin[] = await tx.select().from(origin).where(eq(origin.positionId, positionId))
+      for (const postingId of [backdated, tied, onlyTypo, onlyToday]) {
+        const rows: Origin[] = await tx.select().from(origin).where(eq(origin.postingId, postingId))
         const derived = firstTouch(rows, today.date)
-        const [viewRow] = await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.positionId, positionId))
-        compared.push({ positionId, rows, derived, viewRow })
+        const [viewRow] = await tx.select().from(postingFirstTouch).where(eq(postingFirstTouch.postingId, postingId))
+        compared.push({ postingId, rows, derived, viewRow })
       }
       return { compared, ids: { backdated, tied, onlyTypo, onlyToday }, typoYear }
     })
@@ -158,15 +158,15 @@ describe('provenance', () => {
       expect(viewRow?.routeId ?? null).toBe(derived?.routeId ?? null)
       expect(viewRow?.touchedOn ?? null).toBe(derived?.touchedOn ?? null)
     }
-    const byPosition = new Map(outcome.compared.map((entry) => [entry.positionId, entry]))
-    const backdatedEntry = byPosition.get(outcome.ids.backdated)!
+    const byPosting = new Map(outcome.compared.map((entry) => [entry.postingId, entry]))
+    const backdatedEntry = byPosting.get(outcome.ids.backdated)!
     expect(backdatedEntry.derived?.touchedOn).not.toBe(backdatedEntry.rows[0]!.touchedOn)
     expect(backdatedEntry.rows.map((row) => row.touchedOn)).toContain(outcome.typoYear)
-    expect(byPosition.get(outcome.ids.tied)!.derived).not.toBeNull()
-    expect(byPosition.get(outcome.ids.onlyTypo)!.derived).toBeNull()
-    expect(byPosition.get(outcome.ids.onlyTypo)!.viewRow).toBeUndefined()
-    expect(byPosition.get(outcome.ids.onlyToday)!.derived).not.toBeNull()
-    expect(byPosition.get(outcome.ids.onlyToday)!.viewRow).toBeDefined()
+    expect(byPosting.get(outcome.ids.tied)!.derived).not.toBeNull()
+    expect(byPosting.get(outcome.ids.onlyTypo)!.derived).toBeNull()
+    expect(byPosting.get(outcome.ids.onlyTypo)!.viewRow).toBeUndefined()
+    expect(byPosting.get(outcome.ids.onlyToday)!.derived).not.toBeNull()
+    expect(byPosting.get(outcome.ids.onlyToday)!.viewRow).toBeDefined()
   })
 
   test('the view and firstTouch agree whatever time zone the session uses', async () => {
@@ -184,20 +184,20 @@ describe('provenance', () => {
           const utcToday = await databaseToday(tx)
           const localToday = await tx.execute<{ today: string }>(sql`SELECT CURRENT_DATE::text AS today`)
           const routeId = await addRoute(tx, `zone-${token}`)
-          const tomorrowOnly = await addPosition(tx, token, 'tomorrow')
-          const todayOnly = await addPosition(tx, token, 'today')
-          const mixed = await addPosition(tx, token, 'mixed')
+          const tomorrowOnly = await addPosting(tx, token, 'tomorrow')
+          const todayOnly = await addPosting(tx, token, 'today')
+          const mixed = await addPosting(tx, token, 'mixed')
           const tomorrow = dayFrom(utcToday.text, 1)
           await tx.insert(origin).values([
-            { positionId: tomorrowOnly, routeId, touchedOn: tomorrow },
-            { positionId: todayOnly, routeId, touchedOn: utcToday.text },
-            { positionId: mixed, routeId, touchedOn: tomorrow },
-            { positionId: mixed, routeId, touchedOn: utcToday.text },
+            { postingId: tomorrowOnly, routeId, touchedOn: tomorrow },
+            { postingId: todayOnly, routeId, touchedOn: utcToday.text },
+            { postingId: mixed, routeId, touchedOn: tomorrow },
+            { postingId: mixed, routeId, touchedOn: utcToday.text },
           ])
           const compared = []
-          for (const positionId of [tomorrowOnly, todayOnly, mixed]) {
-            const rows: Origin[] = await tx.select().from(origin).where(eq(origin.positionId, positionId))
-            const [viewRow] = await tx.select().from(positionFirstTouch).where(eq(positionFirstTouch.positionId, positionId))
+          for (const postingId of [tomorrowOnly, todayOnly, mixed]) {
+            const rows: Origin[] = await tx.select().from(origin).where(eq(origin.postingId, postingId))
+            const [viewRow] = await tx.select().from(postingFirstTouch).where(eq(postingFirstTouch.postingId, postingId))
             compared.push({ derived: firstTouch(rows, utcToday.date), viewRow })
           }
           return { zone, localDiffers: localToday[0]!.today !== utcToday.text, compared }

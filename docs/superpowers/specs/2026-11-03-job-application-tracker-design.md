@@ -4,6 +4,15 @@ Date: 2026-11-03
 Status: awaiting approval
 Author: design session with Marcos Tomatti
 
+> **Renamed 2026-11-04: `position` is now `posting`.** The thing a user
+> applies to is called `posting` in the schema, the code, the MCP tools
+> (`posting_add`, `posting_search`, …) and the HTTP routes (`/postings`),
+> so the service can later cover things that are not jobs. Every
+> `position*` table, column, constraint, index, sequence and view below
+> reads `posting*`; migration `0012_rename_position_to_posting.sql` does
+> the rename and keeps existing rows. The old private app's
+> `position_score` and other historical names are left as they were.
+
 Supporting material, all in `.docs/research/` (gitignored):
 `2026-10-28-landscape-summary.md` and `2026-10-28-tool-landscape.csv`
 (38 scored tools and data sources), `2026-10-28-fanout-pool.md` (30
@@ -1050,6 +1059,7 @@ Steps 10 to 12 are parallelisable with 9 once step 5 lands.
 | 2026-11-03 | Compose plus documented setup; no published image in this build |
 | 2026-11-03 | Pin the published `@open-tomato` packages from npm, per §5 |
 | 2026-11-03 | Express serving a bundled React UI, not Next.js with SSR, per §11.2 |
+| 2026-11-04 | `position` renamed to `posting` throughout, so the service can reach beyond jobs |
 
 ## 19. Settled by the design session, flagged for checking
 

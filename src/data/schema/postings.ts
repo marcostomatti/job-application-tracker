@@ -54,18 +54,18 @@ export const company = pgTable('company', {
 
 /**
  * One row per role, however often it is reposted: a repost is a new origin row plus a
- * changed `source_hash` on the summary, never a second position. `disambiguator` is
+ * changed `source_hash` on the summary, never a second posting. `disambiguator` is
  * not null with an empty default, because a null would make two blank rows distinct to
  * the unique key and let a duplicate in. Every registry reference is nullable, since the
  * registries ship empty.
  *
  * `priorityRank` is user-owned: the user sets it by hand, and no import may ever write it.
  */
-export const position = pgTable(
-  'position',
+export const posting = pgTable(
+  'posting',
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
-    positionKey: text('position_key').notNull().unique(),
+    postingKey: text('posting_key').notNull().unique(),
     companyId: integer('company_id')
       .notNull()
       .references(() => company.id),
@@ -89,7 +89,7 @@ export const position = pgTable(
     lastImportedAt: timestamp('last_imported_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique('position_company_role_disambiguator_unique').on(
+    unique('posting_company_role_disambiguator_unique').on(
       table.companyId,
       table.roleNorm,
       table.disambiguator,
@@ -104,10 +104,10 @@ export const position = pgTable(
  * with no CHECK on their values. `sourceHash` detects a changed posting, which is how a
  * repost shows up.
  */
-export const positionSummary = pgTable('position_summary', {
-  positionId: integer('position_id')
+export const postingSummary = pgTable('posting_summary', {
+  postingId: integer('posting_id')
     .primaryKey()
-    .references(() => position.id, { onDelete: 'cascade' }),
+    .references(() => posting.id, { onDelete: 'cascade' }),
   stack: jsonb().notNull().default(sql`'[]'::jsonb`),
   description: text(),
   industry: text(),

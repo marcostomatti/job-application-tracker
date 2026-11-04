@@ -169,7 +169,7 @@ export async function listRegistry<N extends RegistryName>(
 
 /**
  * One registry row by id, whatever its archival state. This is the read that renders a
- * stored reference — the stage a position is in, the route a lead came through, a label
+ * stored reference — the stage a posting is in, the route a lead came through, a label
  * beside an id — and a row archived after it was referenced still has to render, so the
  * archival state is reported on the row rather than deciding whether there is one. The
  * correct read is therefore the default, with no flag for a caller to remember; it is

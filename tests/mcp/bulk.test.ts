@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { addPositions, searchPositions } from '../../src/data/repositories/positions.ts'
-import { PositionQuerySchema } from '../../src/schemas/positions.ts'
+import { addPostings, searchPostings } from '../../src/data/repositories/postings.ts'
+import { PostingQuerySchema } from '../../src/schemas/postings.ts'
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
 import { inOneTransaction } from '../../src/mcp/bulk.ts'
 import { describeError } from '../../src/mcp/result.ts'
@@ -11,13 +11,13 @@ import { useSharedScratchDatabase } from './tools/harness.ts'
 const database = useSharedScratchDatabase()
 
 async function titlesStored(prefix: string): Promise<string[]> {
-  const rows = await searchPositions(database(), PositionQuerySchema.parse({ limit: 200 }))
-  return rows.map((row) => row.position.roleTitle).filter((title) => title.startsWith(prefix))
+  const rows = await searchPostings(database(), PostingQuerySchema.parse({ limit: 200 }))
+  return rows.map((row) => row.posting.roleTitle).filter((title) => title.startsWith(prefix))
 }
 
-/** Writes one position named after the item, so a test can see which items survived. */
-async function writeOne(tx: Parameters<typeof addPositions>[0], title: string): Promise<string> {
-  await addPositions(tx, [{ company: { name: 'Helper Co' }, roleTitle: title }])
+/** Writes one posting named after the item, so a test can see which items survived. */
+async function writeOne(tx: Parameters<typeof addPostings>[0], title: string): Promise<string> {
+  await addPostings(tx, [{ company: { name: 'Helper Co' }, roleTitle: title }])
   return title
 }
 

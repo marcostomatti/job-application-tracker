@@ -1,7 +1,7 @@
 /**
  * The two structural discriminators, each defined once. Every zod schema that accepts one
  * imports its constant from here, and `tests/data/discriminators.test.ts` asserts that the
- * database's CHECK constraints (`requirement_kind_check` and `position_rating_confidence_check`)
+ * database's CHECK constraints (`requirement_kind_check` and `posting_rating_confidence_check`)
  * list exactly these members. Adding a member is therefore one edit here plus the migration
  * for the CHECK, and the test fails until both agree.
  */
