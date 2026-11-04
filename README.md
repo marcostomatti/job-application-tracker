@@ -102,12 +102,28 @@ The settings live in `app_config` under `backup`, and the defaults apply until y
 `{ "enabled": false }` turns the schedule off. `bun run backup` is a request, so it dumps even
 when the schedule is off, and it still prunes to `keep`.
 
+No tool changes these settings, so you change them in SQL. The row does not exist until you
+store one, which is why this inserts it and replaces it if it is there. Name all three
+settings, because the stored value is replaced as a whole and anything left out reads as its
+default. This example keeps three dumps, a week apart:
+
+```sh
+docker compose exec db psql -U tracker -d tracker -c "
+  INSERT INTO app_config (key, value)
+  VALUES ('backup', '{\"enabled\": true, \"keep\": 3, \"intervalDays\": 7}')
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"
+```
+
+A value outside the limits (`keep` and `intervalDays` are whole numbers from 1 to 1000,
+`enabled` is `true` or `false`) is not refused here, because the database does not check it:
+the field that does not fit reads as its default and a line in the log names it.
+
 `bun run serve` runs the schedule too: once the server is listening it starts a check, and then
 checks hourly, whether the newest dump is `intervalDays` old, and dumps if so. The first check
 runs on its own, so a dump that is due at start never delays a request. Nothing is scheduled
 under `NODE_ENV=test`. Changing `keep`, `intervalDays` or `enabled` applies at the next hourly
-check, with no restart. A dump that fails is logged (the reason from `pg_dump`, with the URL and
-password removed) and the service carries on. A dump half-written when a process dies is a
+check, with no restart. A dump that fails is logged (the reason from `pg_dump`, with the URL,
+password and host name removed) and the service carries on. A dump half-written when a process dies is a
 `*.dump.partial` file (also ignored by git); the next start removes those that have sat untouched for an hour.
 
 ### If `pg_dump` says "aborting because of server version mismatch"
@@ -131,7 +147,7 @@ clone's root, where that relative path resolves. The script needs the container 
 running, and takes the user, password and database from `DATABASE_URL` as usual.
 
 The connection is given to `pg_dump` through its `PG*` environment variables, so the password
-is in no command line, and an error from `pg_dump` is shown with the URL and password removed.
+is in no command line, and an error from `pg_dump` is shown with the URL, the password and the host name removed.
 
 ### Restoring
 
