@@ -4,7 +4,7 @@ import { z, ZodError, type ZodType } from 'zod'
 import type { Db } from '../data/repositories/db.ts'
 import { statusFor } from '../errors.ts'
 import { isRecord } from '../guards.ts'
-import { lazyLogger } from '../logging.ts'
+import { lazyLogger, type Log } from '../logging.ts'
 import { describeError } from '../mcp/result.ts'
 
 const STATUS_BAD_REQUEST = 400
@@ -19,13 +19,19 @@ export type PathOnlySchemas = Readonly<Record<string, ZodType>>
 /** What `run` receives for those parameters: each one parsed with its own schema. */
 export type PathOnlyValues<P extends PathOnlySchemas> = { readonly [K in keyof P]: z.infer<P[K]> }
 
-/** Options a route passes when its path carries more than its tool's schema names. */
+/** Where a server failure is reported. A test can pass a spy; the `service-logger` `Logger` satisfies it. */
+export type HttpLog = Pick<Log, 'error'>
+
+/** What a route may pass beside its schema and its work. */
 export interface JsonHandlerOptions<P extends PathOnlySchemas> {
-  readonly pathOnly: P
+  /** For a path that carries more than its tool's schema names. */
+  readonly pathOnly?: P
+  /** Where a 500 is logged; the module's own logger when unset. */
+  readonly log?: HttpLog
 }
 
 /** The module's own logger, made on first use so importing this file starts no logger. */
-const logger = lazyLogger('http')
+const defaultLogger = lazyLogger('http')
 
 /** A refusal of the caller's input that names one field, or the whole request when `field` is absent. */
 export function inputError(message: string, field?: string): ZodError {
@@ -61,9 +67,9 @@ export function sendInputError(res: Response, error: ZodError): void {
  * with the flat text. `statusFor` maps it to 400 for the benefit of a caller's own bad input,
  * and answering 400 with "internal error" beside it would blame the caller for the server.
  */
-export function sendFailure(res: Response, error: unknown): void {
+export function sendFailure(res: Response, error: unknown, log: HttpLog = defaultLogger()): void {
   const status = error instanceof ZodError ? STATUS_INTERNAL : statusFor(error)
-  if (status >= STATUS_INTERNAL) logger().error({ err: error }, 'request failed')
+  if (status >= STATUS_INTERNAL) log.error({ err: error }, 'request failed')
   res.status(status).json({ success: false, error: describeError(error) })
 }
 
@@ -109,6 +115,7 @@ function parsePathOnly<P extends PathOnlySchemas>(req: Request, schemas: P | und
  * one. `options.pathOnly` is for a path that names more than the tool's schema does (the set in
  * `/criteria-sets/:criteriaSetId/requirements/:requirementId`): those parameters are withheld
  * from the strict parse, parsed on their own schemas, and handed to `run` as a third argument.
+ * `options.log` is where a 500 is logged, with the error's detail, which the caller never sees.
  */
 export function jsonHandler<S extends ZodType, P extends PathOnlySchemas = Record<never, ZodType>>(
   schema: S,
@@ -117,6 +124,7 @@ export function jsonHandler<S extends ZodType, P extends PathOnlySchemas = Recor
   options?: JsonHandlerOptions<P>,
 ): RequestHandler {
   const withheld = new Set(Object.keys(options?.pathOnly ?? {}))
+  const log = options?.log
   return async (req, res): Promise<void> => {
     let args: z.infer<S>
     let pathOnly: PathOnlyValues<P>
@@ -127,13 +135,13 @@ export function jsonHandler<S extends ZodType, P extends PathOnlySchemas = Recor
       pathOnly = parsePathOnly(req, options?.pathOnly)
     } catch (error: unknown) {
       if (error instanceof ZodError) return sendInputError(res, error)
-      return sendFailure(res, error)
+      return sendFailure(res, error, log)
     }
     try {
       const data = await run(args, db, pathOnly)
       res.json({ success: true, data: data === undefined ? null : data })
     } catch (error: unknown) {
-      sendFailure(res, error)
+      sendFailure(res, error, log)
     }
   }
 }

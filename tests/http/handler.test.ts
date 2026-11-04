@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { z, ZodError } from 'zod'
 
 import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../../src/errors.ts'
@@ -20,6 +20,10 @@ const ScopeSchema = z.strictObject({ itemId: IdSchema })
 let toThrow: unknown = new Error('unset')
 let calls = 0
 
+/** Every error `/throws` logged since the last test began; a 500 is logged, a refusal is not. */
+let logged: Array<{ readonly context: object; readonly message: string }> = []
+const log = { error: (context: object, message: string) => void logged.push({ context, message }) }
+
 let server: TestServer
 
 beforeAll(async () => {
@@ -30,7 +34,7 @@ beforeAll(async () => {
     app.post('/named/:name', jsonHandler(SharedNameSchema, async (args) => args, db))
     app.get('/named', jsonHandler(SharedNameSchema, async (args) => args, db))
     app.post('/nothing', jsonHandler(z.strictObject({}), async () => undefined, db))
-    app.post('/throws', jsonHandler(z.strictObject({}), async () => Promise.reject(toThrow), db))
+    app.post('/throws', jsonHandler(z.strictObject({}), async () => Promise.reject(toThrow), db, { log }))
     app.post(
       '/scoped/:setId/items/:itemId',
       jsonHandler(
@@ -41,6 +45,10 @@ beforeAll(async () => {
       ),
     )
   })
+})
+
+beforeEach(() => {
+  logged = []
 })
 
 afterAll(async () => {
@@ -144,6 +152,7 @@ describe('jsonHandler', () => {
       status: 404,
       body: { success: false, error: { name: 'NotFoundError', message: 'position 12 does not exist' } },
     })
+    expect(logged).toEqual([])
   })
 
   test('every known class is worded by describeError and mapped by statusFor', async () => {
@@ -159,17 +168,20 @@ describe('jsonHandler', () => {
       expect(outcome.status).toBe(status)
       expect(outcome.body).toEqual({ success: false, error: describeError(error) })
     }
+    expect(logged).toEqual([])
   })
 
-  test('answers 500 and leaks no connection detail for an unknown error', async () => {
+  test('answers 500 and leaks no connection detail for an unknown error, which is logged on the server instead', async () => {
     const secret = 'LEAK-SENTINEL-4f1c'
-    toThrow = new Error(`connect failed: ${secret}`, { cause: new Error(`select * from key where k = '${secret}'`) })
+    const thrown = new Error(`connect failed: ${secret}`, { cause: new Error(`select * from key where k = '${secret}'`) })
+    toThrow = thrown
 
     const outcome = await server.request('POST', '/throws', {})
 
     expect(outcome.status).toBe(500)
     expect(outcome.body).toEqual({ success: false, error: { name: 'InternalError', message: 'internal error' } })
     expect(JSON.stringify(outcome.body)).not.toContain('LEAK-SENTINEL')
+    expect(logged).toEqual([{ context: { err: thrown }, message: 'request failed' }])
   })
 
   test('a ZodError thrown by run is the server failing, so it is a flat 500 and not a 400', async () => {
@@ -180,5 +192,6 @@ describe('jsonHandler', () => {
 
     expect(outcome.status).toBe(500)
     expect(outcome.body).toEqual({ success: false, error: { name: 'InternalError', message: 'internal error' } })
+    expect(logged).toEqual([{ context: { err: toThrow }, message: 'request failed' }])
   })
 })

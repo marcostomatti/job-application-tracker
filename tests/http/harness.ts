@@ -1,8 +1,7 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { createService } from '@open-tomato/service-express'
-import type { Application } from 'express'
+import express, { type Application } from 'express'
 
 /** What a caller sees of one response: its status and its body, as JSON when it is JSON. */
 export interface HttpOutcome {
@@ -17,26 +16,20 @@ export interface TestServer {
 }
 
 /**
- * A request budget no test reaches. The chassis rate-limits at 100 requests a minute by
- * default, and a file that probes every route and round-trips most of them would meet the
- * limit and read a 429 as a failure of the route.
- */
-const UNLIMITED = { max: 1_000_000, windowMs: 60_000 }
-
-/**
- * Starts the real chassis (body parser, error handler and all) with the routes `register` adds,
- * and listens on a port the operating system picks.
+ * Starts a bare Express app holding only a JSON body parser and the routes `register` adds, and
+ * listens on a port the operating system picks.
  *
- * `createService` already listens on an ephemeral port under `NODE_ENV=test`, but its handle
- * exposes only the Express `app` and `stop()`, never the address, so there is no way to learn
- * where it listens. The same `app` is therefore listened on a second time here, on port 0, which
- * is what makes it reachable by `fetch`. `NODE_ENV` is checked first because outside test mode
- * `createService` calls `process.exit`.
+ * The chassis is left out on purpose. These files test the route table and `jsonHandler`, and
+ * neither needs helmet, the rate limit, the error handler or the request logger; the assembled
+ * service has its own suite, `service.integration.test.ts`, which runs it in a child process.
+ * The parser is the one setting the routes depend on, so it matches the chassis's: `express.json`
+ * with a 1mb limit.
  */
 export async function startTestServer(register: (app: Application) => void): Promise<TestServer> {
-  if (process.env.NODE_ENV !== 'test') throw new Error('startTestServer needs NODE_ENV=test')
-  const handle = await createService({ serviceId: 'http-test', rateLimit: UNLIMITED, register })
-  const server = await listen(handle.app)
+  const app = express()
+  app.use(express.json({ limit: '1mb' }))
+  register(app)
+  const server = await listen(app)
   const origin = `http://localhost:${(server.address() as AddressInfo).port}`
 
   return {
@@ -55,7 +48,6 @@ export async function startTestServer(register: (app: Application) => void): Pro
     async close(): Promise<void> {
       server.closeAllConnections()
       await new Promise<void>((done) => server.close(() => done()))
-      await handle.stop()
     },
   }
 }
