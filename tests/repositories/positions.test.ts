@@ -793,6 +793,170 @@ describe('searchPositions', () => {
     expect(none.find((r) => r.position.roleTitle === 'Unscored')?.score).toBeNull()
   })
 
+  describe('the recommend-apply filter without a set named (the across-sets rule)', () => {
+    /** An id a destructured array handed back, or a loud failure: an absent one would read as a pass. */
+    function need(id: number | undefined): number {
+      if (id === undefined) throw new Error('the arrangement produced fewer sets than the test names')
+      return id
+    }
+
+    async function sets(db: DrizzleClient, values: { name: string; version: number; isDefault?: boolean; archived?: boolean }[]): Promise<number[]> {
+      const rows = await db
+        .insert(criteriaSet)
+        .values(values.map((v) => ({ name: v.name, version: v.version, isDefault: v.isDefault ?? false, archivedAt: v.archived ? new Date() : null })))
+        .returning()
+      return rows.map((_, index) => idOf(rows, index))
+    }
+
+    function score(positionId: number, setId: number, recommendApply: boolean, scoredAt = '2026-02-01'): typeof positionScore.$inferInsert {
+      return { positionId, criteriaSetId: setId, scoredAt, overall: recommendApply ? 0.9 : 0.1, recommendApply }
+    }
+
+    const titles = (rows: { position: { roleTitle: string } }[]): string[] => rows.map((row) => row.position.roleTitle).sort()
+
+    test('lists a position that only a set other than the default recommends', async () => {
+      // Arrange / Act: the default set declines it, a second set recommends it
+      const { yes, no } = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Only B'))
+        const [defaultId, otherId] = await sets(db, [
+          { name: 'standard', version: 1, isDefault: true },
+          { name: 'other', version: 1 },
+        ])
+        await db.insert(positionScore).values([
+          score(id, need(defaultId), false),
+          score(id, need(otherId), true),
+        ])
+        return {
+          yes: await searchPositions(db, queryOf({ recommendApply: true })),
+          no: await searchPositions(db, queryOf({ recommendApply: false })),
+        }
+      })
+
+      // Assert: recommended by one live set is recommended, so it is not in the declined answer
+      expect(titles(yes)).toEqual(['Only B'])
+      expect(no).toEqual([])
+    })
+
+    test('does not list a position that only a superseded version recommends', async () => {
+      // Arrange / Act: v1 recommends it; v2 of the same name scored it and declined, and a second position was never scored under v2
+      const { yes, no } = await withMigratedScratchDatabase(async (db) => {
+        const [declined, unscored] = await addPositions(db, [role('Acme', 'Declined by v2'), role('Acme', 'Not yet under v2')])
+        const [v1, v2] = await sets(db, [
+          { name: 'web-search', version: 1 },
+          { name: 'web-search', version: 2, isDefault: true },
+        ])
+        const v1Id = need(v1)
+        const v2Id = need(v2)
+        const declinedId = idOf([declined as { id: number }])
+        const unscoredId = idOf([unscored as { id: number }])
+        await db.insert(positionScore).values([
+          score(declinedId, v1Id, true, '2026-01-01'),
+          score(declinedId, v2Id, false, '2026-02-01'),
+          score(unscoredId, v1Id, true, '2026-01-01'),
+        ])
+        return {
+          yes: await searchPositions(db, queryOf({ recommendApply: true })),
+          no: await searchPositions(db, queryOf({ recommendApply: false })),
+        }
+      })
+
+      // Assert: v1's old yes does not count, and a position v2 has not scored matches neither answer
+      expect(yes).toEqual([])
+      expect(titles(no)).toEqual(['Declined by v2'])
+    })
+
+    test('lists a position recommended by a higher version whatever an older version says', async () => {
+      // Arrange / Act
+      const yes = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Lifted by v2'))
+        const [v1, v2] = await sets(db, [
+          { name: 'web-search', version: 1 },
+          { name: 'web-search', version: 2 },
+        ])
+        await db.insert(positionScore).values([
+          score(id, need(v1), false, '2026-01-01'),
+          score(id, need(v2), true, '2026-02-01'),
+        ])
+        return searchPositions(db, queryOf({ recommendApply: true }))
+      })
+
+      // Assert
+      expect(titles(yes)).toEqual(['Lifted by v2'])
+    })
+
+    test('reads only the latest score of each set, so a withdrawn recommendation does not count', async () => {
+      // Arrange / Act
+      const { yes, no } = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Withdrawn'))
+        const [setId] = await sets(db, [{ name: 'only', version: 1 }])
+        const only = need(setId)
+        await db.insert(positionScore).values([score(id, only, true, '2026-01-01'), score(id, only, false, '2026-02-01')])
+        return {
+          yes: await searchPositions(db, queryOf({ recommendApply: true })),
+          no: await searchPositions(db, queryOf({ recommendApply: false })),
+        }
+      })
+
+      // Assert
+      expect(yes).toEqual([])
+      expect(titles(no)).toEqual(['Withdrawn'])
+    })
+
+    test('still answers for the set a caller names, superseded or not', async () => {
+      // Arrange / Act
+      const { forV1, forV2, unfiltered } = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Named'))
+        const [v1, v2] = await sets(db, [
+          { name: 'web-search', version: 1 },
+          { name: 'web-search', version: 2 },
+        ])
+        const v1Id = need(v1)
+        const v2Id = need(v2)
+        await db.insert(positionScore).values([score(id, v1Id, true, '2026-01-01'), score(id, v2Id, false, '2026-02-01')])
+        return {
+          forV1: await searchPositions(db, queryOf({ criteriaSetId: v1Id, recommendApply: true })),
+          forV2: await searchPositions(db, queryOf({ criteriaSetId: v2Id, recommendApply: true })),
+          unfiltered: await searchPositions(db, queryOf({ recommendApply: true })),
+        }
+      })
+
+      // Assert: naming v1 narrows to v1's own answer; the unnamed rule does not use it
+      expect(titles(forV1)).toEqual(['Named'])
+      expect(forV2).toEqual([])
+      expect(unfiltered).toEqual([])
+    })
+
+    test('lets an archived set that is the newest version of its name still recommend', async () => {
+      // Arrange / Act: archival retires a set from new use, and a stored recommendation is not a new use
+      const yes = await withMigratedScratchDatabase(async (db) => {
+        const { id } = await addOne(db, role('Acme', 'Archived lens'))
+        const [setId] = await sets(db, [{ name: 'retired', version: 1, archived: true }])
+        await db.insert(positionScore).values(score(id, need(setId), true))
+        return searchPositions(db, queryOf({ recommendApply: true }))
+      })
+
+      // Assert
+      expect(titles(yes)).toEqual(['Archived lens'])
+    })
+
+    test('gives a position with no score under any set neither answer', async () => {
+      // Arrange / Act
+      const { yes, no, all } = await withMigratedScratchDatabase(async (db) => {
+        await addOne(db, role('Acme', 'Unscored'))
+        await sets(db, [{ name: 'standard', version: 1, isDefault: true }])
+        return {
+          yes: await searchPositions(db, queryOf({ recommendApply: true })),
+          no: await searchPositions(db, queryOf({ recommendApply: false })),
+          all: await searchPositions(db, queryOf()),
+        }
+      })
+
+      // Assert
+      expect([yes, no]).toEqual([[], []])
+      expect(all).toHaveLength(1)
+    })
+  })
+
   test('reads scores from the default set when no set is named', async () => {
     // Arrange / Act
     const rows = await withMigratedScratchDatabase(async (db) => {

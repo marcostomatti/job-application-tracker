@@ -42,8 +42,8 @@ export const scoreTools: ToolDefinition[] = [
     name: 'score_history',
     title: 'Get the score history of a position',
     description:
-      'Returns EVERY score ever stored for ONE position, across all criteria sets, newest first; each row carries its criteriaSetId, its limiting requirement key and recommendApply. ' +
-      'Use this to see how a position\'s score changed over time. To see only the current standing under each set, use score_best, which keeps one row per set. ' +
+      'Returns EVERY score ever stored for ONE position, across all criteria sets, newest first; each row carries its criteriaSetId, criteriaSetName, criteriaSetVersion, its limiting requirement key and recommendApply. ' +
+      'Use this to see how a position\'s score changed over time. To see only the standing that counts today, use score_best, which keeps one row per current set. ' +
       'An unscored position returns an empty list; an unknown position is a not-found error.',
     input: PositionScoresQuerySchema,
     run: async (args, db) => getScoreHistory(db, args.positionId),
@@ -52,7 +52,9 @@ export const scoreTools: ToolDefinition[] = [
     name: 'score_best',
     title: 'Get the latest score per criteria set',
     description:
-      'Returns the LATEST score of ONE position under each criteria set it was scored against, newest first: one row per set, which is what the "+n more scores" chip counts. ' +
+      'Returns the scores that stand today for ONE position, newest first: the LATEST score under each current criteria set, where current means the highest version of a set name. ' +
+      'One row per set name, which is what the "+n more scores" chip counts; each row carries criteriaSetName and criteriaSetVersion, and a score under an older version of a name is left out. ' +
+      'A position is recommended for apply when at least one of these rows has recommendApply true. ' +
       'Use this for the current standing in each rubric; use score_history for every score including superseded ones. ' +
       'An unscored position returns an empty list; an unknown position is a not-found error.',
     input: PositionScoresQuerySchema,

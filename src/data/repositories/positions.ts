@@ -11,6 +11,7 @@ import { origin } from '../schema/provenance.ts'
 import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReason, stage as stageTable } from '../schema/registries.ts'
 import { positionPenalty, positionRating, positionScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
+import { nonSupersededSetIds } from './criteria.ts'
 import type { Db } from './db.ts'
 import { isItemFault } from './item-fault.ts'
 import { pickDefined } from './pick-defined.ts'
@@ -396,6 +397,35 @@ function latestScoreId(setId: SQL): SQL {
     and ${newerScore.criteriaSetId} = ${setId} order by ${newerScore.scoredAt} desc, ${newerScore.id} desc limit 1)`
 }
 
+const CANDIDATE_ALIAS = 'standing_score'
+const standingScore = alias(positionScore, CANDIDATE_ALIAS)
+
+/**
+ * Whether the position has a standing score, and, when `recommending` is set, one that
+ * recommends apply. A standing score is the latest score (by day, then id) of a non-superseded
+ * criteria set (`nonSupersededSetIds`). Each set's latest is picked first and its flag tested
+ * after, so a recommendation that a later score withdrew does not count.
+ */
+function hasStandingScore(recommending: boolean): SQL<boolean> {
+  const flag = recommending ? sql`and ${standingScore.recommendApply}` : sql``
+  return sql<boolean>`exists (select 1 from ${positionScore} as ${sql.identifier(CANDIDATE_ALIAS)}
+    where ${standingScore.positionId} = ${position.id}
+    and ${standingScore.criteriaSetId} in ${nonSupersededSetIds()}
+    and ${standingScore.id} = ${latestScoreId(sql`${standingScore.criteriaSetId}`)} ${flag})`
+}
+
+/**
+ * The `recommendApply` filter. With a set named it is that set's answer, read from the latest
+ * score the row already carries, superseded or not. With none named it is the spec's section 8
+ * rule across sets: `true` when at least one non-superseded set's latest score recommends apply,
+ * and `false` when the position has such scores and none of them does. A position with no
+ * standing score matches neither answer, as an unscored one always has.
+ */
+function recommendApplyCondition(answer: boolean, criteriaSetId: number | undefined): SQL {
+  if (criteriaSetId !== undefined) return eq(positionScore.recommendApply, answer)
+  return answer ? hasStandingScore(true) : sql`(${hasStandingScore(false)} and not ${hasStandingScore(true)})`
+}
+
 function isSetAside(): SQL<boolean> {
   return sql<boolean>`exists (select 1 from ${positionDisposition}
     where ${positionDisposition.positionId} = ${position.id} and ${positionDisposition.kind} = ${SET_ASIDE_KIND})`
@@ -406,7 +436,7 @@ function conditionsOf(query: PositionQuery): SQL[] {
   const conditions: SQL[] = []
   if (query.companyId !== undefined) conditions.push(eq(position.companyId, query.companyId))
   if (query.phaseId !== undefined) conditions.push(eq(stageTable.phaseId, query.phaseId))
-  if (query.recommendApply !== undefined) conditions.push(eq(positionScore.recommendApply, query.recommendApply))
+  if (query.recommendApply !== undefined) conditions.push(recommendApplyCondition(query.recommendApply, query.criteriaSetId))
   if (query.setAside === 'exclude') conditions.push(sql`not ${isSetAside()}`)
   if (query.setAside === 'only') conditions.push(isSetAside())
   if (query.clientHidden === 'exclude') conditions.push(eq(position.clientHidden, false))
@@ -425,6 +455,11 @@ function conditionsOf(query: PositionQuery): SQL[] {
  * says `include` (everything) or `only` (just those). A position with no score under the
  * criteria set matches neither answer to `recommendApply`. There is no total: a page shorter
  * than `limit` is the end of the list.
+ *
+ * `recommendApply` with no `criteriaSetId` is the across-sets rule of the spec's section 8,
+ * not the default set's answer: a position matches `true` when any non-superseded set's latest
+ * score recommends apply. The row's own `score` is still the default set's latest, so a row
+ * listed because another set recommends it can carry a default-set score that does not.
  */
 export async function searchPositions(db: Db, query: PositionQuery): Promise<PositionListRow[]> {
   const rows = await db

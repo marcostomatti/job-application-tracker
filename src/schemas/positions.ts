@@ -101,9 +101,11 @@ export const VISIBILITY_FILTERS = ['exclude', 'include', 'only'] as const
  * `PaginationSchema.extend` so it stays strict, and a filter name that does not exist is
  * refused instead of dropped.
  *
- * `criteriaSetId` names which set's latest score a row carries and `recommendApply` is
- * tested against; left out, it is the default set. A position with no score under that set
- * matches neither answer to `recommendApply`.
+ * `criteriaSetId` names which set's latest score a row carries, and narrows `recommendApply`
+ * to that set's answer; left out, a row carries the default set's score and `recommendApply`
+ * is the across-sets rule of the spec's section 8: `true` when at least one non-superseded set
+ * (the highest version of its name) recommends the position by its own threshold. A position
+ * with no score to test matches neither answer to `recommendApply`.
  */
 export const PositionQuerySchema = PaginationSchema.extend({
   companyId: IdSchema.optional(),

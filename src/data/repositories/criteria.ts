@@ -1,4 +1,5 @@
-import { asc, desc, eq, inArray, isNull, max, type InferSelectModel, type SQL } from 'drizzle-orm'
+import { asc, desc, eq, inArray, isNull, max, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 
 import { ArchivedError, NotFoundError } from '../../errors.ts'
 import type { RequirementPatch } from '../../schemas/criteria.ts'
@@ -57,6 +58,33 @@ export async function findUsableCriteriaSet(db: Db, id: number): Promise<Criteri
   const found = await findCriteriaSet(db, id)
   if (found.archivedAt !== null) throw new ArchivedError('criteria set', id)
   return found
+}
+
+const CURRENT_SET_ALIAS = 'current_set'
+const NEWER_SET_ALIAS = 'newer_set'
+const currentSet = alias(criteriaSet, CURRENT_SET_ALIAS)
+const newerSet = alias(criteriaSet, NEWER_SET_ALIAS)
+
+/**
+ * A subquery of the ids of the criteria sets that are not superseded (spec section 8): for each
+ * set `name`, the one with the highest `version`. A set is superseded when another set of the
+ * same name has a higher version, whether or not that version has scored anything yet, so a
+ * position scored only under v1 has no standing under that name once v2 exists. The version is
+ * a sequence per name and no column links one to the next, so the name is the only key.
+ *
+ * Archival takes no part. A set is non-superseded by name and version alone, and an archived
+ * set stays one: archival stops a set being offered for new use (`findUsableCriteriaSet`), not
+ * the reading of a judgement already stored under it. Because nothing can score against an
+ * archived set, its recommendation is withdrawn only by a newer version of the same name, which
+ * is the mechanism section 8 describes.
+ *
+ * It renders as a parenthesised `select`, for use inside `in (...)` in a larger statement, and
+ * names its own tables by alias so it does not clash with a `criteria_set` the caller reads.
+ */
+export function nonSupersededSetIds(): SQL {
+  return sql`(select ${currentSet.id} from ${criteriaSet} as ${sql.identifier(CURRENT_SET_ALIAS)}
+    where not exists (select 1 from ${criteriaSet} as ${sql.identifier(NEWER_SET_ALIAS)}
+      where ${newerSet.name} = ${currentSet.name} and ${newerSet.version} > ${currentSet.version}))`
 }
 
 /** The requirements a condition selects, in rubric order, each with its layer label and detours. */

@@ -607,6 +607,79 @@ describe('a criteria set that has been archived', () => {
   })
 })
 
+describe('getBestScores across versions of one set name', () => {
+  /** Inserts a bare score row, which is all the version rule reads. */
+  async function insertScore(db: DrizzleClient, positionId: number, criteriaSetId: number, overall: number, scoredAt: string): Promise<void> {
+    await db.insert(positionScore).values({ positionId, criteriaSetId, overall, scoredAt, recommendApply: overall >= 0.5 })
+  }
+
+  async function arrangeVersions(db: DrizzleClient): Promise<{ positionId: number; v1: number; v2: number; other: number }> {
+    const [created] = await addPositions(db, [{ company: { name: 'Acme' }, roleTitle: 'Engineer' }])
+    if (!created) throw new Error('the arrangement stored no position')
+    const v1 = await insertCriteriaSet(db, { name: 'web-search', version: 1, applyThreshold: 0.5 })
+    const v2 = await insertCriteriaSet(db, { name: 'web-search', version: 2, applyThreshold: 0.5 })
+    const other = await insertCriteriaSet(db, { name: 'perspective-b', version: 1, applyThreshold: 0.5 })
+    return { positionId: created.id, v1: v1.id, v2: v2.id, other: other.id }
+  }
+
+  test('a position scored under v1 and v2 of one name has one best score, and it is v2\'s', async () => {
+    // Arrange / Act
+    const { arranged, best, history } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrangeVersions(db)
+      await insertScore(db, arranged.positionId, arranged.v1, 0.9, LONGER_AGO)
+      await insertScore(db, arranged.positionId, arranged.v2, 0.2, LONG_AGO)
+      return { arranged, best: await getBestScores(db, arranged.positionId), history: await getScoreHistory(db, arranged.positionId) }
+    })
+
+    // Assert: history keeps both, best keeps the non-superseded one
+    expect(history).toHaveLength(2)
+    expect(best).toHaveLength(1)
+    expect(best[0]).toMatchObject({ criteriaSetId: arranged.v2, criteriaSetName: 'web-search', criteriaSetVersion: 2, overall: 0.2 })
+  })
+
+  test('a name whose newest version has not scored the position yields no row for the older version', async () => {
+    // Arrange / Act
+    const best = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrangeVersions(db)
+      await insertScore(db, arranged.positionId, arranged.v1, 0.9, LONG_AGO)
+      return getBestScores(db, arranged.positionId)
+    })
+
+    // Assert: the old version is superseded as soon as the new one exists, scored or not
+    expect(best).toEqual([])
+  })
+
+  test('different set names are separate lenses, each keeping its own latest score', async () => {
+    // Arrange / Act
+    const { arranged, best } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrangeVersions(db)
+      await insertScore(db, arranged.positionId, arranged.v2, 0.7, LONG_AGO)
+      await insertScore(db, arranged.positionId, arranged.v2, 0.8, '2026-02-01')
+      await insertScore(db, arranged.positionId, arranged.other, 0.3, LONG_AGO)
+      return { arranged, best: await getBestScores(db, arranged.positionId) }
+    })
+
+    // Assert: newest first, one row per name, the latest day within a name
+    expect(best.map((row) => [row.criteriaSetName, row.criteriaSetVersion, row.criteriaSetId, row.overall])).toEqual([
+      ['web-search', 2, arranged.v2, 0.8],
+      ['perspective-b', 1, arranged.other, 0.3],
+    ])
+  })
+
+  test('scorePosition and the history carry the set name and version too', async () => {
+    // Arrange / Act
+    const { arranged, scored, history } = await withMigratedScratchDatabase(async (db) => {
+      const arranged = await arrange(db)
+      const scored = await scorePosition(db, { positionId: arranged.positionId, criteriaSetId: arranged.setId, ratings: [supported(arranged.a, 1)], penalties: [] })
+      return { arranged, scored, history: await getScoreHistory(db, arranged.positionId) }
+    })
+
+    // Assert
+    expect(scored).toMatchObject({ criteriaSetId: arranged.setId, criteriaSetName: 'Mine', criteriaSetVersion: 1 })
+    expect(history[0]).toMatchObject({ criteriaSetName: 'Mine', criteriaSetVersion: 1 })
+  })
+})
+
 describe('isForeignKeyViolation', () => {
   const fault = { code: '23503', constraint_name: 'some_fk' }
 

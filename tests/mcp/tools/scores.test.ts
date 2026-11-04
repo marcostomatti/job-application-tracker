@@ -6,6 +6,7 @@ import type { Db } from '../../../src/data/repositories/db.ts'
 import { appendStageEvent } from '../../../src/data/repositories/dispositions.ts'
 import { addPositions } from '../../../src/data/repositories/positions.ts'
 import { addRegistryRows } from '../../../src/data/repositories/registries.ts'
+import { insertCriteriaSet, requirement } from '../../../src/data/schema/criteria.ts'
 import { positionStageEvent } from '../../../src/data/schema/dispositions.ts'
 import { scoreTools } from '../../../src/mcp/tools/scores.ts'
 import { BULK_MAX } from '../../../src/schemas/common.ts'
@@ -250,6 +251,28 @@ describe('the scores group', () => {
     expect(sets(best).sort()).toEqual([arranged.setId, otherSet.setId].sort())
     expect(sets(history)).toHaveLength(2)
     expect((best.body as { criteriaSetId: number; recommendApply: boolean }[]).find((row) => row.criteriaSetId === arranged.setId)?.recommendApply).toBe(true)
+  })
+
+  test('score_best names the set of each row and returns only the newest version of a set name', async () => {
+    const client = await connectTools(scoreTools, database())
+    const arranged = await arrange(database(), 'Versioned')
+    const next = await insertCriteriaSet(database(), { name: 'Versioned', version: 2, applyThreshold: 0.5 })
+    const nextRequirements = await database()
+      .insert(requirement)
+      .values({ criteriaSetId: next.id, key: 'skill', label: 'Skill', kind: 'soft', weight: 1, anchors: { '0': 'a', '0.5': 'b', '1': 'c' } })
+      .returning()
+    await client.call('score_position', covered(arranged))
+    await client.call('score_position', {
+      ...covered(arranged),
+      criteriaSetId: next.id,
+      ratings: [{ requirementId: idOf(nextRequirements), coverage: 0 }],
+    })
+
+    const best = await client.call('score_best', { positionId: arranged.positionId })
+    const history = await client.call('score_history', { positionId: arranged.positionId })
+
+    expect(best.body).toEqual([expect.objectContaining({ criteriaSetId: next.id, criteriaSetName: 'Versioned', criteriaSetVersion: 2, recommendApply: false })])
+    expect(history.body).toHaveLength(2)
   })
 
   test('score_history and score_best return an empty list for an unscored position and not-found for no position', async () => {

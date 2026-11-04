@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, sql, type InferSelectModel } from 'drizzle-orm'
+import { and, desc, eq, lt, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
 import { ConflictError, NotFoundError } from '../../errors.ts'
@@ -7,10 +7,10 @@ import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/criteria.
 import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePositionInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
-import { requirement } from '../schema/criteria.ts'
+import { criteriaSet, requirement } from '../schema/criteria.ts'
 import { position } from '../schema/positions.ts'
 import { positionPenalty, positionRating, positionRatingDetour, positionScore } from '../schema/scores.ts'
-import { findUsableCriteriaSet, getRequirements, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
+import { findUsableCriteriaSet, getRequirements, nonSupersededSetIds, type CriteriaSetRow, type RequirementRow } from './criteria.ts'
 import type { Db } from './db.ts'
 import { pickDefined } from './pick-defined.ts'
 import { assertNotArchived } from './registries.ts'
@@ -22,10 +22,16 @@ type NewScore = typeof positionScore.$inferInsert
  * A stored score as a caller reads it: the row, plus the keys of the requirements the table
  * stores by id (`limiterRequirementId`, `runnerUpRequirementId`), so a reader can name the
  * limiter without a second lookup. Both keys are null exactly when the matching id is.
+ *
+ * `criteriaSetName` and `criteriaSetVersion` are the scored set's own, so a reader can tell
+ * which lens a row belongs to and which of a name's versions it came from, which is what the
+ * across-sets rule (spec section 8) is stated in, without a second call to read the sets.
  */
 export type ScoreRow = StoredScore & {
   readonly limiterKey: string | null
   readonly runnerUpKey: string | null
+  readonly criteriaSetName: string
+  readonly criteriaSetVersion: number
 }
 
 /**
@@ -278,35 +284,55 @@ export async function scorePosition(db: Db, input: ScorePositionInput): Promise<
       const result = scoreAgainstSet(buildScoreInput(set, requirements, input.ratings, input.penalties))
       const score = await upsertScoreRow(tx, input, toScoreValues(result, requirements, input.note))
       await replaceRatingsAndPenalties(tx, score, input)
-      return { ...score, limiterKey: result.limiterKey, runnerUpKey: result.runnerUpKey }
+      return { ...score, limiterKey: result.limiterKey, runnerUpKey: result.runnerUpKey, criteriaSetName: set.name, criteriaSetVersion: set.version }
     })
   } catch (error) {
     throw typeMembershipFault(error, input)
   }
 }
 
+/** Every score of a position that meets the condition, newest first (the day scored, then the row id), with its limiter keys and its set's name and version. */
+async function readScoreRows(db: Db, positionId: number, condition: SQL | undefined): Promise<ScoreRow[]> {
+  const rows = await db
+    .select({
+      score: positionScore,
+      limiterKey: limiterRequirement.key,
+      runnerUpKey: runnerUpRequirement.key,
+      criteriaSetName: criteriaSet.name,
+      criteriaSetVersion: criteriaSet.version,
+    })
+    .from(positionScore)
+    .innerJoin(criteriaSet, eq(criteriaSet.id, positionScore.criteriaSetId))
+    .leftJoin(limiterRequirement, eq(limiterRequirement.id, positionScore.limiterRequirementId))
+    .leftJoin(runnerUpRequirement, eq(runnerUpRequirement.id, positionScore.runnerUpRequirementId))
+    .where(and(eq(positionScore.positionId, positionId), condition))
+    .orderBy(desc(positionScore.scoredAt), desc(positionScore.id))
+  return rows.map(({ score, ...rest }) => ({ ...score, ...rest }))
+}
+
 /**
  * Every score of a position, newest first (the day scored, then the row id). Each row carries
- * its `criteriaSetId`, so a caller in `perspective` mode groups the list by set and the order
- * inside each group is still newest first. A position that does not exist is `NotFoundError`,
- * so "never scored" and "no such position" stay different answers.
+ * its `criteriaSetId`, name and version, so a caller in `perspective` mode groups the list by
+ * set and the order inside each group is still newest first. A position that does not exist is
+ * `NotFoundError`, so "never scored" and "no such position" stay different answers.
  */
 export async function getScoreHistory(db: Db, positionId: number): Promise<ScoreRow[]> {
   await assertPositionExists(db, positionId)
-  const rows = await db
-    .select({ score: positionScore, limiterKey: limiterRequirement.key, runnerUpKey: runnerUpRequirement.key })
-    .from(positionScore)
-    .leftJoin(limiterRequirement, eq(limiterRequirement.id, positionScore.limiterRequirementId))
-    .leftJoin(runnerUpRequirement, eq(runnerUpRequirement.id, positionScore.runnerUpRequirementId))
-    .where(eq(positionScore.positionId, positionId))
-    .orderBy(desc(positionScore.scoredAt), desc(positionScore.id))
-  return rows.map((row) => ({ ...row.score, limiterKey: row.limiterKey, runnerUpKey: row.runnerUpKey }))
+  return readScoreRows(db, positionId, undefined)
 }
 
-/** The latest score under each criteria set, newest first: what the "+n" chip counts. */
+/**
+ * The scores that stand today, newest first: the latest score of each non-superseded criteria
+ * set (see `nonSupersededSetIds`, which is the spec's section 8 rule). For a set name that is
+ * its highest version, and within it the latest day. A position scored under v1 and v2 of one
+ * name gives one row, v2's; one scored only under v1, once v2 exists, gives none for that name.
+ * This is what the "+n" chip counts. A set archived since it scored still stands, because an
+ * archived set is hidden from new use and not from what it already judged.
+ */
 export async function getBestScores(db: Db, positionId: number): Promise<ScoreRow[]> {
+  await assertPositionExists(db, positionId)
   const latestBySet = new Map<number, ScoreRow>()
-  for (const row of await getScoreHistory(db, positionId)) {
+  for (const row of await readScoreRows(db, positionId, sql`${positionScore.criteriaSetId} in ${nonSupersededSetIds()}`)) {
     if (!latestBySet.has(row.criteriaSetId)) latestBySet.set(row.criteriaSetId, row)
   }
   return [...latestBySet.values()]
