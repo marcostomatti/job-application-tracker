@@ -1,16 +1,17 @@
 import { z } from 'zod'
 
-import { booleanOrText, bulkOf, IdSchema } from './common.ts'
+import { booleanOrText, bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
 
-/** Trimmed and non-empty: a blank label names nothing in a pick-list. */
-const label = z.string().trim().min(1)
+/** Trimmed, non-empty and storable: a blank label names nothing in a pick-list, and NUL is refused. */
+const label = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /**
  * The stable handle the user chooses, for a seed pack or an import to name a row by.
  * Nothing in the code branches on its value; it is the user's vocabulary, not the
- * program's, which is what the `is*` flags exist to keep out of code.
+ * program's, which is what the `is*` flags exist to keep out of code. NUL is refused because
+ * Postgres cannot store it in text.
  */
-const key = z.string().trim().min(1)
+const key = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 
 /** The user's own order within the registry. Absent leaves the column's own default. */
 const sort = z.number().int().optional()

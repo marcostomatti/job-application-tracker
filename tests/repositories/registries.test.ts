@@ -315,6 +315,8 @@ describe('addRegistryRows', () => {
     // and the message may not say otherwise
     expect(error).toBeInstanceOf(ConflictError)
     expect((error as ConflictError).key).toBe('one of: p1, p2, p3')
+    // the rendered text is all a user reads on the 409
+    expect((error as Error).message).toBe('phase key one of: p1, p2, p3 already exists')
   })
 
   test('counts the rows rather than listing them when a long bulk call conflicts', async () => {
@@ -331,6 +333,7 @@ describe('addRegistryRows', () => {
     // Assert: a list of six keys no reader would scan becomes the count
     expect(error).toBeInstanceOf(ConflictError)
     expect((error as ConflictError).key).toBe('in one of the 6 rows this call carried')
+    expect((error as Error).message).toBe('phase key in one of the 6 rows this call carried already exists')
   })
 
   test('rethrows a failure that is not the key conflict, unchanged', async () => {

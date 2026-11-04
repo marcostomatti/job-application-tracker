@@ -565,6 +565,8 @@ describe('the unique constraint behind createCriteriaVersion', () => {
     expect(error).toBeInstanceOf(ConflictError)
     expect(statusFor(error)).toBe(409)
     expect((error as Error).message).not.toMatch(/insert|select|duplicate key/i)
+    // the whole of what a 409 tells the user: which set and which version
+    expect((error as Error).message).toMatch(/^criteria set ".+" at version 2 already exists$/)
     expect((error as Error).cause).toBeDefined()
     expect(requirementCount[0]).toBe(requirementCount[1])
   })

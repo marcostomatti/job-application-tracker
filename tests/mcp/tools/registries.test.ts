@@ -64,6 +64,17 @@ describe('the registries group', () => {
     expect(outcome.failed).toBe(true)
   })
 
+  test('registry_add and registry_add_bulk refuse a NUL in a label or a key before touching the database', async () => {
+    const client = await connectTools(registryTools, untouchableDb())
+
+    const label = await client.call('registry_add', { registry: 'route', row: { label: 'Cold\u0000call' } })
+    const key = await client.call('registry_add', { registry: 'phase', row: { key: 'p\u00001', label: 'Board' } })
+    const bulk = await client.call('registry_add_bulk', { registry: 'route', items: [{ label: 'Fine' }, { label: 'a\u0000b' }] })
+
+    expect([label.failed, key.failed, bulk.failed]).toEqual([true, true, true])
+    expect([failureText(label), failureText(key), failureText(bulk)].map((text) => text.includes('NUL'))).toEqual([true, true, true])
+  })
+
   test('registry_add_bulk stores several rows of one registry and keeps their order', async () => {
     const client = await connectTools(registryTools, database())
 

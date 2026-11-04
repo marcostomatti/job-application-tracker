@@ -23,12 +23,16 @@ describe('statusFor', () => {
     expect(statusFor(new CriteriaSetConflictError('acme', 1))).toBe(409)
   })
 
+  test('CriteriaSetConflictError renders the set and the version it collided on', () => {
+    expect(new CriteriaSetConflictError('acme', 1).message).toBe('criteria set "acme" at version 1 already exists')
+  })
+
   test('CriteriaSetConflictError is a ConflictError', () => {
     expect(new CriteriaSetConflictError('acme', 1)).toBeInstanceOf(ConflictError)
   })
 
   test('statusFor sends an unknown error to 500', () => {
-    expect(statusFor(new Error('connect ECONNREFUSED 127.0.0.1:5439'))).toBe(500)
+    expect(statusFor(new Error('connection refused'))).toBe(500)
   })
 
   test('statusFor sends a thrown non-Error value to 500', () => {
@@ -74,12 +78,12 @@ describe('error messages', () => {
   })
 
   test('BulkItemError reports the index and keeps the cause out of the message', () => {
-    const cause = new Error('connect ECONNREFUSED 127.0.0.1:5439')
+    const cause = new Error('connection refused')
     const error = new BulkItemError(2, cause)
     expect(error.index).toBe(2)
     expect(error.cause).toBe(cause)
     expect(error.message).toBe('bulk item 2 failed')
-    expect(error.message).not.toContain('ECONNREFUSED')
+    expect(error.message).not.toContain(cause.message)
     expect(error.name).toBe('BulkItemError')
   })
 })
