@@ -10,7 +10,7 @@ import { join } from 'node:path'
 
 import type { ServiceHandle } from '@open-tomato/service-express'
 
-import { generateApiKey } from '../../src/auth/api-key.ts'
+import { GENERATED_KEY_LENGTH, generateApiKey } from '../../src/auth/api-key.ts'
 import type { SpawnRequest, Spawner } from '../../src/backup/dump.ts'
 import type { BackupTimers } from '../../src/backup/schedule.ts'
 import { setBackupSettings } from '../../src/data/repositories/config.ts'
@@ -20,8 +20,11 @@ import { closeDb, getDb } from '../../src/data/client.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
 import { backupOptionsFor, startService } from '../../src/http/server.ts'
 
-/** A key made up for these tests; it matches nothing real. */
-const TEST_KEY = 'test-key-for-the-server-entry'
+/**
+ * A key made up for these tests; it matches nothing real. It is as long as a generated one, so
+ * starting the service with it does not draw the short-key warning and add noise to every run.
+ */
+const TEST_KEY = 'test-key-for-the-server-entry-'.padEnd(GENERATED_KEY_LENGTH, 'k')
 
 /** Requests sent in one burst, well past the chassis default of 100 a minute. */
 const BURST = 150
@@ -121,7 +124,40 @@ describe('startService', () => {
     const response = await fetch(`${origin}/api/positions`)
 
     expect(response.status).toBe(401)
-    expect(await response.json()).toEqual({ error: 'unauthorized' })
+    expect(await response.json()).toEqual({
+      success: false,
+      error: { name: 'Unauthorized', message: 'a valid API key is required' },
+    })
+  })
+
+  test('the 401 and a route failure share one envelope, so body.error.message reads on both', async () => {
+    const { origin } = await start()
+
+    const refused = await fetch(`${origin}/api/positions`)
+    const missing = await fetch(`${origin}/api/positions/2147483647`, { headers: bearer(TEST_KEY) })
+
+    expect(refused.status).toBe(401)
+    expect(missing.status).toBe(404)
+    for (const response of [refused, missing]) {
+      const body = (await response.json()) as { success: unknown; error: { name: unknown; message: unknown } }
+      expect(body.success).toBe(false)
+      expect(typeof body.error.name).toBe('string')
+      expect(typeof body.error.message).toBe('string')
+    }
+  })
+
+  test('a body that is not JSON is answered by the chassis with a string error, the case the README documents as outside the envelope', async () => {
+    const { origin } = await start()
+
+    const response = await fetch(`${origin}/api/positions`, {
+      method: 'POST',
+      headers: { ...bearer(TEST_KEY), 'content-type': 'application/json' },
+      body: '{not json',
+    })
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error: unknown }
+    expect(typeof body.error).toBe('string')
   })
 
   test('with API_KEY set, /api with a wrong token answers 401', async () => {
@@ -278,7 +314,14 @@ describe('startService', () => {
       const { raw, entries } = await probe(LOG_KEY)
 
       expect(entries.length).toBeGreaterThan(0)
-      expect(entries.some((entry) => entry.msg === 'request completed')).toBe(true)
+      // The probe sends one authorized and two unauthorized requests, and every one logs a
+      // "request completed" line, so the 401s alone could satisfy a looser check. The 200 is
+      // what shows the authorized request was served.
+      const statuses = entries
+        .filter((entry) => entry.msg === 'request completed')
+        .map((entry) => (entry.res as { statusCode: number }).statusCode)
+        .sort()
+      expect(statuses).toEqual([200, 401, 401])
       expect(raw).not.toContain(LOG_KEY)
       expect(raw).not.toContain(WRONG_TOKEN)
     }, 30_000)

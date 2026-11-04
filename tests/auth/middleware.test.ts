@@ -120,7 +120,10 @@ describe('requireApiKey with no key configured', () => {
 
     // Assert
     expect(status).toBe(503)
-    expect(body).toEqual({ error: 'unavailable' })
+    expect(body).toEqual({
+      success: false,
+      error: { name: 'Unavailable', message: 'the service is not configured to accept requests' },
+    })
     expect(nextCalls).toBe(0)
   })
 
@@ -190,7 +193,10 @@ describe('requireApiKey with a key configured', () => {
     const outcome = await run(EXPECTED, authorization)
 
     expect(outcome.status).toBe(401)
-    expect(outcome.body).toEqual({ error: 'unauthorized' })
+    expect(outcome.body).toEqual({
+      success: false,
+      error: { name: 'Unauthorized', message: 'a valid API key is required' },
+    })
     expect(outcome.nextCalls).toBe(0)
   })
 

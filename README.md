@@ -189,6 +189,34 @@ The rate limit is 1,000 requests a minute, ten times the package default, so a b
 several routes at once does not trip it. When a built web app exists in `src/web/dist`, the same
 process serves it, so the app and the API share one origin and no CORS setting is needed.
 
+### What a response looks like
+
+Every response this repository's code sends under `/api` is JSON in one envelope, whichever
+route answered and whatever the status. A success is `{ "success": true, "data": ... }`
+(`data` is `null` when there is nothing to return). A failure is `{ "success": false, "error": { "name": "...", "message": "..." } }`,
+so a client reads `body.error.message` on every failure and never has to test whether `error`
+is a string.
+
+| Status | `error.name` | When |
+|---|---|---|
+| 400 | `ValidationError` | the input did not fit the route's schema; `message` names each field |
+| 400 | `BulkItemError` | one item of a bulk write failed; `message` says which, and why when it can |
+| 401 | `Unauthorized` | the bearer token is missing, malformed or wrong |
+| 404 | `NotFoundError` | the thing the path or body names does not exist |
+| 409 | `ConflictError` or `ArchivedError` | it already exists, or it is archived and may not be used |
+| 500 | `InternalError` | anything else; `message` is always `internal error` |
+| 503 | `Unavailable` | the service has no `API_KEY` set and refuses every `/api` request |
+
+The 401 is one body for all three causes, so it never tells a caller which check failed. The
+MCP server words the same failures the same way, with `{ "error": { "name", "message" } }`
+inside the tool result (see "Two shapes of error" below). `/health` is outside this envelope.
+
+Two responses come from the package that runs the service and not from this code, so they are
+not in the envelope: a request body that is not valid JSON, or is over 1 MB, is answered with
+a 400 or 413 carrying `{ "error": "<text>" }` (a string), and a request over the rate limit
+gets a 429 with a plain-text body. A client should treat an `error` that is a string, or a
+body that is not JSON, as one of these.
+
 ## The MCP server
 
 `bun run mcp` starts the MCP server, which offers 46 tools for recording, scoring and reading

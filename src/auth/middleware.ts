@@ -18,6 +18,21 @@ function defaultLogger(): AuthLog {
 }
 
 /**
+ * The two bodies this middleware sends, in the envelope every `/api` route uses
+ * (`{ success: false, error: { name, message } }`), so a client reads `body.error.message`
+ * on every status. `message` is one fixed string per body: the 401's says nothing about which
+ * check failed.
+ */
+const UNAUTHORIZED_BODY = {
+  success: false,
+  error: { name: 'Unauthorized', message: 'a valid API key is required' },
+} as const
+const UNAVAILABLE_BODY = {
+  success: false,
+  error: { name: 'Unavailable', message: 'the service is not configured to accept requests' },
+} as const
+
+/**
  * Exactly `Bearer`, one space, then a token with no whitespace in it. The scheme's letter
  * case is free (RFC 7235). Anything else, an extra space or a tab, a trailing character, a
  * second token or a bare key, fails the match and is treated as no credential: a parser
@@ -54,7 +69,7 @@ export function requireApiKey(expected: string | undefined, logger?: AuthLog): R
     const log = logger ?? defaultLogger()
     log.error({}, 'API_KEY is not set; refusing every request')
     return (_req, res) => {
-      res.status(503).json({ error: 'unavailable' })
+      res.status(503).json(UNAVAILABLE_BODY)
     }
   }
 
@@ -63,7 +78,7 @@ export function requireApiKey(expected: string | undefined, logger?: AuthLog): R
     if (presented === undefined || !verifyApiKey(presented, expected)) {
       // RFC 7235 requires a challenge on a 401. It names the scheme only, so it says nothing
       // about why this request failed.
-      res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: 'unauthorized' })
+      res.set('WWW-Authenticate', 'Bearer').status(401).json(UNAUTHORIZED_BODY)
       return
     }
     next()
