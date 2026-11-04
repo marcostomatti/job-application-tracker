@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { booleanOrText, hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
+import { REQUIREMENT_KINDS } from './discriminators.ts'
 import { AnchorsSchema } from './scoring.ts'
 
 /** Trimmed, non-empty and storable: a blank label says nothing, and NUL is refused. */
@@ -14,11 +15,6 @@ const requiredText = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
 export const RequirementAnchorsSchema = AnchorsSchema.refine(jsonHasNoNul, NO_NUL_MESSAGE)
 
 export type Anchors = z.infer<typeof RequirementAnchorsSchema>
-
-/** The requirement kinds, an internal discriminator the database also enumerates. */
-export const REQUIREMENT_KINDS = ['gate', 'soft'] as const
-
-export type RequirementKind = (typeof REQUIREMENT_KINDS)[number]
 
 /**
  * A change to one requirement: the four columns a user edits, and no others. A weight is

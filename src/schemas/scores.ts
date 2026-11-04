@@ -1,12 +1,10 @@
 import { z } from 'zod'
 
 import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
+import { RATING_CONFIDENCES } from './discriminators.ts'
 
 /** Trimmed, non-empty and storable: a blank note says nothing, and NUL is refused. */
 const text = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
-
-/** The confidence values a rating may carry; an internal discriminator the database also lists. */
-export const RATING_CONFIDENCES = ['supported', 'partial', 'unknown'] as const
 
 const unitInterval = z.number().min(0).max(1)
 

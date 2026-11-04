@@ -108,6 +108,7 @@ export const positionRating = pgTable(
       foreignColumns: [requirement.criteriaSetId, requirement.id],
     }),
     check('position_rating_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
+    // The members are RATING_CONFIDENCES (src/schemas/discriminators.ts); tests/data/discriminators.test.ts compares them.
     check(
       'position_rating_confidence_check',
       sql`${table.confidence} IN ('supported', 'partial', 'unknown')`,

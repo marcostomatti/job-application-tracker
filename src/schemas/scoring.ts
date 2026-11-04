@@ -1,11 +1,13 @@
 import { z } from 'zod'
 
+import { RATING_CONFIDENCES, REQUIREMENT_KINDS } from './discriminators.ts'
+
 const unitInterval = z.number().min(0).max(1)
 
 export const RequirementSchema = z.object({
   key: z.string(),
   layerKey: z.string(),
-  kind: z.enum(['gate', 'soft']),
+  kind: z.enum(REQUIREMENT_KINDS),
   // Never negative: 0 records a criterion without scoring it, null means none is set yet.
   weight: z.number().min(0).nullable(),
   label: z.string(),
@@ -15,7 +17,7 @@ export const RatingSchema = z.object({
   requirementKey: z.string(),
   // null means not rated, which is different from 0 (rated, and not covered).
   coverage: unitInterval.nullable(),
-  confidence: z.enum(['supported', 'partial', 'unknown']),
+  confidence: z.enum(RATING_CONFIDENCES),
 })
 
 export const DetourSchema = z.object({
@@ -65,7 +67,7 @@ export const AnchorsSchema = z.strictObject({
 export const PackRequirementSchema = z.strictObject({
   key: nonEmptyText,
   layer_key: nonEmptyText,
-  kind: z.enum(['gate', 'soft']),
+  kind: z.enum(REQUIREMENT_KINDS),
   weight: z.null(),
   label: nonEmptyText,
   anchors: AnchorsSchema,

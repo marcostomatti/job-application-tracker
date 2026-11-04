@@ -3,7 +3,7 @@ import { alias } from 'drizzle-orm/pg-core'
 
 import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
-import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/criteria.ts'
+import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/discriminators.ts'
 import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePositionInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
