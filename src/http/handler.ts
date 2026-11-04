@@ -67,9 +67,9 @@ export function sendInputError(res: Response, error: ZodError): void {
  * with the flat text. `statusFor` maps it to 400 for the benefit of a caller's own bad input,
  * and answering 400 with "internal error" beside it would blame the caller for the server.
  */
-export function sendFailure(res: Response, error: unknown, log: HttpLog = defaultLogger()): void {
+export function sendFailure(res: Response, error: unknown, log?: HttpLog): void {
   const status = error instanceof ZodError ? STATUS_INTERNAL : statusFor(error)
-  if (status >= STATUS_INTERNAL) log.error({ err: error }, 'request failed')
+  if (status >= STATUS_INTERNAL) (log ?? defaultLogger()).error({ err: error }, 'request failed')
   res.status(status).json({ success: false, error: describeError(error) })
 }
 

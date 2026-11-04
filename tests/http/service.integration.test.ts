@@ -50,21 +50,24 @@ async function unusedPort(): Promise<number> {
 // After the file, not after each test: the first group shares one service across its tests.
 afterAll(async () => {
   await stopStrayServices()
-})
+}, PROCESS_TIMEOUT)
 
 describe('the service with a key and no web bundle', () => {
-  let service: ServiceProcess
+  let service: ServiceProcess | undefined
   let origin: string
 
   beforeAll(async () => {
-    service = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: NO_BUNDLE })
-    origin = service.origin
+    const started = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: NO_BUNDLE })
+    service = started
+    origin = started.origin
   }, PROCESS_TIMEOUT)
 
   afterAll(async () => {
+    // Unset when the start failed; that failure is the one to report, and the stray is killed below.
+    if (service === undefined) return
     const output = await service.stop()
     expect(output.code).toBe(0)
-  })
+  }, PROCESS_TIMEOUT)
 
   test('answers GET /health from the chassis', async () => {
     const response = await fetch(`${origin}/health`)
@@ -190,9 +193,9 @@ describe('what the service logs', () => {
   test('no log line carries the key or a presented token while an authorized and an unauthorized request are served', async () => {
     const service = await spawnService({ API_KEY: LOG_KEY, FIXTURE_WEB_DIST: NO_BUNDLE })
 
-    await fetch(`${service.origin}/api/positions`, { headers: bearer(LOG_KEY) })
-    await fetch(`${service.origin}/api/positions`)
-    await fetch(`${service.origin}/api/positions`, { headers: bearer(WRONG_TOKEN) })
+    await fetch(`${service.origin}/api/positions`, { headers: bearer(LOG_KEY) }).then((response) => response.text())
+    await fetch(`${service.origin}/api/positions`).then((response) => response.text())
+    await fetch(`${service.origin}/api/positions`, { headers: bearer(WRONG_TOKEN) }).then((response) => response.text())
     const { code, raw, entries } = await service.stop()
 
     expect(code).toBe(0)

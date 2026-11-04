@@ -48,7 +48,8 @@ function jsonLines(text: string): LogEntry[] {
 
 function launch(env: Readonly<Record<string, string | undefined>>): Launched {
   const child = Bun.spawn(['bun', FIXTURE], {
-    env: { ...process.env, NODE_ENV: 'test', ...env },
+    // LOG_LEVEL is pinned so a level exported in the shell cannot hide the lines the tests read.
+    env: { ...process.env, NODE_ENV: 'test', LOG_LEVEL: 'info', ...env },
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
