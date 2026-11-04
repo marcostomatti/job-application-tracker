@@ -1,6 +1,13 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
-import { ArchivedError, BulkItemError, ConflictError, NotFoundError } from '../errors.ts'
+import {
+  ArchivedError,
+  BulkItemError,
+  ConflictError,
+  NotebookRequestError,
+  NotebookUnavailableError,
+  NotFoundError,
+} from '../errors.ts'
 
 /** What a caller is told about any error that is not one of the known classes: nothing. */
 const INTERNAL_ERROR = { name: 'InternalError', message: 'internal error' } as const
@@ -21,7 +28,9 @@ export function okResult(value: unknown): CallToolResult {
 
 /**
  * The classes whose name and message are safe to show a caller. `CriteriaSetConflictError`
- * extends `ConflictError`, so it is caught by that entry. `ZodError` is not here: the SDK
+ * extends `ConflictError`, so it is caught by that entry. The two notebook errors are here because
+ * their messages are built from fixed phrases and a status, never from a URL, a key or the
+ * notebook's own error text. `ZodError` is not here: the SDK
  * parses a tool's input before `run` is reached, so a `ZodError` that arrives here came from
  * inside the server, and its issues could carry stored data.
  */
@@ -30,7 +39,9 @@ function isKnownError(error: unknown): error is Error {
     error instanceof NotFoundError ||
     error instanceof ConflictError ||
     error instanceof ArchivedError ||
-    error instanceof BulkItemError
+    error instanceof BulkItemError ||
+    error instanceof NotebookUnavailableError ||
+    error instanceof NotebookRequestError
   )
 }
 

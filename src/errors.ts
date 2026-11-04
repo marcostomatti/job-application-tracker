@@ -5,6 +5,8 @@ const HTTP_STATUS = {
   notFound: 404,
   conflict: 409,
   internal: 500,
+  badGateway: 502,
+  unavailable: 503,
 } as const
 
 /**
@@ -67,10 +69,42 @@ export class BulkItemError extends Error {
   }
 }
 
+/**
+ * The Open Notebook companion could not be used: it did not answer, the connection failed, or
+ * it answered in a shape this tracker does not know. `reason` is one of a few fixed phrases
+ * written here, never the notebook's URL or a driver message, so it is safe to show a caller.
+ */
+export class NotebookUnavailableError extends Error {
+  constructor(
+    readonly reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(`the notebook is unavailable: ${reason}`, options)
+    this.name = 'NotebookUnavailableError'
+  }
+}
+
+/**
+ * The Open Notebook companion answered and refused the request. `status` is its HTTP status.
+ * The message is a fixed phrase per kind of status and never carries the notebook's own
+ * `detail`, because Open Notebook often builds that text from an internal exception.
+ */
+export class NotebookRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'NotebookRequestError'
+  }
+}
+
 /** Maps an error to the HTTP status both surfaces send. Anything unrecognised is a 500. */
 export function statusFor(error: unknown): number {
   if (error instanceof NotFoundError) return HTTP_STATUS.notFound
   if (error instanceof ConflictError || error instanceof ArchivedError) return HTTP_STATUS.conflict
   if (error instanceof BulkItemError || error instanceof ZodError) return HTTP_STATUS.badRequest
+  if (error instanceof NotebookUnavailableError) return HTTP_STATUS.unavailable
+  if (error instanceof NotebookRequestError) return HTTP_STATUS.badGateway
   return HTTP_STATUS.internal
 }

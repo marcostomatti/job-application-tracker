@@ -186,6 +186,34 @@ next to the tracker for the long text the tracker does not keep: full postings, 
 research, interview notes. The tracker does not depend on it. What it is, what you gain, what it
 costs and how to set it up are in [docs/open-notebook.md](docs/open-notebook.md).
 
+When `OPEN_NOTEBOOK_URL` (and `OPEN_NOTEBOOK_API_KEY`, if the notebook has a password) is set in
+`.env` and the notebook answers at startup, the MCP server adds ten `notebook_*` tools: store a
+posting's text under its `posting_key`, store and read documents such as a CV, search, and add
+notes. Otherwise no notebook tool is registered, and the server says why in one stderr line.
+
+## Plugin skills
+
+The Claude Code plugin ships four skills in [.claude-plugin/skills/](.claude-plugin/skills/):
+
+- `notebook-store-postings`: how to store postings and documents in Open Notebook.
+- `criteria-weighting`: gates, weights and anchors, and how to elicit them.
+- `scoring-questions`: question types that fine-tune the criteria, and where answers go.
+- `past-work-gates-and-flags`: what a user can tell about past work, turned into gates and flags.
+
+They are generic on purpose. Your own criteria, thresholds and preferences belong in a personal
+variant that git never tracks. To make one, copy a skill into a directory whose name starts
+with `personal-`, give it a new `name:` in its frontmatter, and write your specifics into it:
+
+```sh
+mkdir -p .claude-plugin/skills/personal-criteria
+cp .claude-plugin/skills/criteria-weighting/SKILL.md .claude-plugin/skills/personal-criteria/SKILL.md
+```
+
+`.claude-plugin/skills/personal-*/` and `.claude/skills/personal-*/` are both in `.gitignore`,
+and a test checks that git ignores them. A variant in `.claude-plugin/skills/` loads with the
+plugin when Claude Code runs it from this clone; one in `~/.claude/skills/` loads in every
+project and is outside any repository.
+
 ## The HTTP service
 
 `bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
@@ -286,6 +314,10 @@ posting aside. The package binds **every network interface**, not only loopback 
 listing shows `*:8080` and `*:3001`), so on a machine joined to a network the port is
 reachable from other machines. Use HTTP only behind a firewall that allows loopback alone, or
 where you put your own authenticating proxy in front of it.
+
+The ten Open Notebook tools are added to that count only when a notebook is configured and
+answers at startup; a second stderr line then says `notebook tools on: 10 Open Notebook tools`,
+or `notebook tools off: <why>`. See "Open Notebook, an optional companion" above.
 
 ### Two shapes of error
 

@@ -1,8 +1,9 @@
 # Open Notebook alongside the tracker
 
 [Open Notebook](https://github.com/lfnovo/open-notebook) is an optional companion to this
-tracker. Nothing in the tracker needs it, calls it or knows about it: the two run side by side,
-and an agent (or you) moves text between them. This page says what it is, what each of the two
+tracker. Nothing in the tracker needs it: the two run side by side, and an agent (or you) moves
+text between them. When you configure one, the tracker's MCP server adds ten `notebook_*` tools,
+so an agent can drive both through one server. This page says what it is, what each of the two
 keeps, what you gain by running both, what it costs you, and how to set it up.
 
 ## What Open Notebook is
@@ -63,15 +64,16 @@ For a job search, the same pattern works per employer or per posting:
   how you check an AI answer instead of trusting it.
 - **Both stay on your machine,** if you choose local models. Nothing about your search needs a
   hosted service.
-- **One agent can drive both,** because both have an API: it records a posting in the tracker
-  over MCP and files the posting text and company research in a notebook over REST.
+- **One agent can drive both** through the tracker's MCP server: it records a posting with the
+  tracker tools and files the posting text and company research with the `notebook_*` tools.
 
 ## What it does not do
 
 - **It does not track applications.** It knows nothing about stages, scores or deadlines; the
   tracker is the record of those.
-- **The two are not linked.** No tracker table points at a notebook or a source. The link is a
-  naming convention (the `posting_key` in a source title), kept by you or your agent.
+- **The two are not linked in the database.** No tracker table points at a notebook or a source.
+  The link is a naming convention (the `posting_key` in a source title), which
+  `notebook_posting_store` applies for you.
 - **Sources are copies.** Editing a file after uploading it does not change the notebook. Upload
   it again, or the notebook answers from the old version.
 - **It does not fetch postings for you.** The tracker's recommended way to add a posting is
@@ -114,7 +116,39 @@ For a job search, the same pattern works per employer or per posting:
    The API takes the password as a bearer token. Without it, every `/api/...` route answers
    401.
 
-## How an agent talks to it
+## The tracker's notebook tools
+
+With `OPEN_NOTEBOOK_URL` set, the MCP server asks the notebook for one authenticated read when it
+starts. If the notebook answers, ten tools are added; if it is not set, unreachable, or refuses the
+key, none is added and the server writes one line to stderr saying why, such as
+`notebook tools off: OPEN_NOTEBOOK_URL is not set`. The line never holds the URL or the key.
+
+| Tool | What it does |
+|---|---|
+| `notebook_list`, `notebook_create` | List notebooks, or create one |
+| `notebook_source_list` | List stored documents, without their text, 100 a page |
+| `notebook_source_get` | Read one document's text, in windows of up to 200,000 characters |
+| `notebook_source_add_text` | Store pasted text, embedded for meaning search by default |
+| `notebook_source_delete` | Delete one document; the only tool marked destructive |
+| `notebook_posting_store` | Store a tracked posting's text, titled with its `posting_key` |
+| `notebook_posting_sources` | Find the stored copies of one posting by its `posting_key` |
+| `notebook_search` | Search documents and notes, by words or by meaning |
+| `notebook_note_add` | Add a note in the user's words |
+
+These tools are enough to run Open Notebook as a container with no UI: the MCP server is then
+its only door. None of them writes to the tracker; the one tracker read is a posting's key.
+`notebook_posting_store` deletes nothing: it lists the older copies with the same title, and the
+agent deletes them with `notebook_source_delete` once the new copy reads back.
+
+If the notebook stops answering after startup, its tools stay listed and each call fails with
+`NotebookUnavailableError`; the next call tries again, so a notebook that comes back is used
+again without a restart. A call waits at most 15 seconds. A refused key is a
+`NotebookRequestError` naming `OPEN_NOTEBOOK_API_KEY`, and an unknown id is a `NotFoundError`.
+
+The plugin's skills say how to use these tools well: `notebook-store-postings` for storing
+postings and documents, and three for tuning criteria (see the README).
+
+## Talking to it directly over REST
 
 These calls were checked against Open Notebook's API version 0.1.0. They load the variables
 from step 3 first.
