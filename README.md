@@ -383,6 +383,24 @@ listing shows `*:8080` and `*:3001`), so on a machine joined to a network the po
 reachable from other machines. Use HTTP only behind a firewall that allows loopback alone, or
 where you put your own authenticating proxy in front of it.
 
+**Connecting a client over HTTP.** A client such as Insomnia or the MCP Inspector connects to
+`http://localhost:8080/mcp` with the Streamable HTTP transport and no auth. The server answers
+on any path, so `/mcp` is only a convention. Four things trip a first connection:
+
+- **`bun run mcp` alone is stdio.** It opens no port, so an HTTP client gets "connection
+  refused". Start it with `MCP_TRANSPORT=http` as above.
+- **One session per server start.** The server holds a single MCP session. After a client
+  disconnects or reconnects, the next `initialize` is refused, so restart the server first.
+- **A plain HTTP request needs the MCP headers.** A client's MCP mode sends them for you. A
+  hand-built request must send `Content-Type: application/json` and
+  `Accept: application/json, text/event-stream`, then repeat the `Mcp-Session-Id` header from
+  the `initialize` response on every later request.
+- **Tool calls need the database.** Listing tools works without Postgres, but a tool that reads
+  or writes returns `{"error":{"name":"InternalError","message":"internal error"}}` when the
+  database refuses the connection. The server hides the cause on purpose, and logs nothing about
+  it. Check that `DATABASE_URL` in `.env` names the port `bun run db:up` publishes
+  (`docker compose ps` shows it) and the password the container was created with.
+
 The ten Open Notebook tools are added to that count only when a notebook is configured and
 answers at startup; a second stderr line then says `notebook tools on: 10 Open Notebook tools`,
 or `notebook tools off: <why>`. See "Open Notebook, an optional companion" above.
