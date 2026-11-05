@@ -8,6 +8,10 @@ node_modules/
 .env.*
 !.env.example
 
+# Personal variants of the plugin skills: your own criteria, thresholds and preferences stay local.
+.claude/skills/personal-*/
+.claude-plugin/skills/personal-*/
+
 # Database dumps are the personal data this project exists to keep out of the repository.
 backups/
 *.dump
