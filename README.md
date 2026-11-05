@@ -188,7 +188,7 @@ costs and how to set it up are in [docs/open-notebook.md](docs/open-notebook.md)
 
 ## The HTTP service
 
-`bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
+`bun run serve` starts the internal HTTP service: 24 routes under `/api` for the web app, and
 `GET /health`. It reads `DATABASE_URL` from `.env`, so run `bun run db:up` and
 `bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
 
@@ -309,10 +309,10 @@ the OIDC settings alone. There is no other recovery path.
 
 ## The MCP server
 
-`bun run mcp` starts the MCP server, which offers 55 tools for recording, scoring and reading
+`bun run mcp` starts the MCP server, which offers 57 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
 repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
-`registered 55 MCP tools` to stderr, which is how you see that every tool module loaded.
+`registered 57 MCP tools` to stderr, which is how you see that every tool module loaded.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).

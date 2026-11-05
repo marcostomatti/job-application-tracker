@@ -149,7 +149,7 @@ function startBackups(db: ReturnType<typeof getDb>, wiring: BackupWiring | undef
 
 /**
  * Starts the internal HTTP service: the chassis (health, body parser, rate limit, error
- * handler), the `/auth` routes, the credential check on `/api`, the 23 routes, and the web
+ * handler), the `/auth` routes, the credential check on `/api`, the 24 routes, and the web
  * bundle when one exists.
  *
  * Auth is only `requireApiAccess` (the API key, a minted token, or a session cookie). The

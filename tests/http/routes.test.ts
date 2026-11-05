@@ -32,6 +32,7 @@ afterAll(async () => {
 
 /** The route table of the brief (§11.2), copied here so a route added or dropped fails a test. */
 const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+  ['GET', '/api/stats', ['market_stats']],
   ['GET', '/api/postings', ['posting_search']],
   ['GET', '/api/postings/:id', ['posting_get']],
   ['PATCH', '/api/postings/:id', ['posting_update']],
@@ -72,11 +73,11 @@ const dataOf = (outcome: HttpOutcome): unknown => (outcome.body as { data: unkno
 const errorOf = (outcome: HttpOutcome): { name: string; message: string } => (outcome.body as { error: { name: string; message: string } }).error
 
 describe('the route table', () => {
-  test('mounts exactly the 23 routes of the table, at the same methods and paths', () => {
+  test('mounts exactly the 24 routes of the table, at the same methods and paths', () => {
     const mounted = ROUTES.map((spec) => `${spec.method.toUpperCase()} /api${shapeOf(spec.path)}`).sort()
     const table = BRIEF_TABLE.map(([method, path]) => `${method} ${shapeOf(path)}`).sort()
 
-    expect(ROUTES).toHaveLength(23)
+    expect(ROUTES).toHaveLength(24)
     expect(mounted).toEqual(table)
   })
 
@@ -109,8 +110,8 @@ describe('the route table', () => {
       }
     }
 
-    // 23 routes, and the disposition route mirrors two tools.
-    expect(checked).toBe(24)
+    // 24 routes, and the disposition route mirrors two tools.
+    expect(checked).toBe(25)
   })
 
   test('two routes may share one schema because two tools do: the summary and origin reads, and the score reads', () => {

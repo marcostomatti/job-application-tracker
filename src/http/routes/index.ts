@@ -7,6 +7,7 @@ import { postingRoutes } from './postings.ts'
 import { registryRoutes } from './registries.ts'
 import { scoreRoutes } from './scores.ts'
 import type { RouteSpec } from './spec.ts'
+import { statsRoutes } from './stats.ts'
 import { textRoutes } from './texts.ts'
 
 /** Every internal HTTP route, in the order of the brief's table (§11.2). */
@@ -17,6 +18,7 @@ export const ROUTES: readonly RouteSpec[] = [
   ...criteriaRoutes,
   ...registryRoutes,
   ...textRoutes,
+  ...statsRoutes,
 ]
 
 /**

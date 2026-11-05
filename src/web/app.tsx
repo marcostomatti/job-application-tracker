@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { auth, type SessionState } from './api.ts'
 import { LoginPage } from './pages/login.tsx'
+import { StatsPage } from './pages/stats.tsx'
 import { TokensPage } from './pages/tokens.tsx'
 
 /** One page the signed-in app shows, and its place in the nav. */
@@ -12,7 +13,10 @@ export interface AppPage {
 }
 
 /** The pages behind the sign-in, in nav order. The first is where `/` lands. */
-export const PAGES: readonly AppPage[] = [{ path: '/tokens', label: 'Tokens', render: () => <TokensPage /> }]
+export const PAGES: readonly AppPage[] = [
+  { path: '/stats', label: 'Stats', render: () => <StatsPage /> },
+  { path: '/tokens', label: 'Tokens', render: () => <TokensPage /> },
+]
 
 /** The page for a path, or the first page for `/` and for any path the app does not draw. */
 export function pageFor(path: string): AppPage {
