@@ -19,8 +19,8 @@ describe('ALL_TOOLS', () => {
     expect(names.length).toBe(new Set(names).size)
   })
 
-  test('ALL_TOOLS covers groups 1 to 9 of the spec', () => {
-    expect(ALL_TOOLS.length).toBe(55)
+  test('ALL_TOOLS covers groups 1 to 9 of the spec, and the market stats', () => {
+    expect(ALL_TOOLS.length).toBe(57)
   })
 
   test('every tool has a non-empty title and description', () => {

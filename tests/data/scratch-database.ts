@@ -24,7 +24,7 @@ function urlFor(databaseName: string): string {
  * this call created is ever dropped.
  */
 export async function withMigratedScratchDatabase<T>(
-  body: (db: DrizzleClient, sql: postgres.Sql) => Promise<T>,
+  body: (db: DrizzleClient, sql: postgres.Sql, url: string) => Promise<T>,
 ): Promise<T> {
   const name = `scratch_${crypto.randomUUID().replaceAll('-', '')}`
   const admin = postgres(process.env.DATABASE_URL ?? urlFor(''), { max: 1 })
@@ -33,7 +33,7 @@ export async function withMigratedScratchDatabase<T>(
   try {
     const db = drizzle(scratch)
     await migrate(db, { migrationsFolder: MIGRATIONS_DIR })
-    return await body(db, scratch)
+    return await body(db, scratch, urlFor(name))
   } finally {
     await scratch.end()
     await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`)

@@ -7,6 +7,7 @@ import { provenanceTools } from './provenance.ts'
 import { questionTools } from './questions.ts'
 import { registryTools } from './registries.ts'
 import { scoreTools } from './scores.ts'
+import { statsTools } from './stats.ts'
 import { summaryTools } from './summaries.ts'
 import { textTools } from './texts.ts'
 
@@ -29,4 +30,5 @@ export const ALL_TOOLS: readonly ToolDefinition[] = [
   ...textTools,
   ...dispositionTools,
   ...provenanceTools,
+  ...statsTools,
 ]

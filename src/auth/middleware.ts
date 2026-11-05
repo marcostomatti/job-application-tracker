@@ -36,7 +36,7 @@ const UNAVAILABLE_BODY = {
 const BEARER_HEADER = /^Bearer ([^\s]+)$/i
 
 /** The bearer token in an `Authorization` header, or `undefined` when there is no well-formed one. */
-function bearerToken(header: unknown): string | undefined {
+export function bearerToken(header: unknown): string | undefined {
   if (typeof header !== 'string') return undefined
   return BEARER_HEADER.exec(header)?.[1]
 }

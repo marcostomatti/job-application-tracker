@@ -7,6 +7,7 @@ import { postingRoutes } from './postings.ts'
 import { registryRoutes } from './registries.ts'
 import { scoreRoutes } from './scores.ts'
 import type { RouteSpec } from './spec.ts'
+import { statsRoutes } from './stats.ts'
 import { textRoutes } from './texts.ts'
 
 /** Every internal HTTP route, in the order of the brief's table (§11.2). */
@@ -17,14 +18,14 @@ export const ROUTES: readonly RouteSpec[] = [
   ...criteriaRoutes,
   ...registryRoutes,
   ...textRoutes,
+  ...statsRoutes,
 ]
 
 /**
  * Mounts every route under `/api`.
  *
- * No API-key check is mounted here. The server entry mounts `requireApiKey` on `/api` before
- * calling this, and only when a key is configured; a second check in this function would test
- * the key twice and could not be switched off with the first.
+ * No credential check is mounted here. The server entry mounts `requireApiAccess` on `/api`
+ * before calling this; a second check in this function would test every request twice.
  */
 export function mountRoutes(app: Application, db: Db): void {
   const api = Router()

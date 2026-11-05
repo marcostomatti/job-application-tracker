@@ -216,7 +216,7 @@ project and is outside any repository.
 
 ## The HTTP service
 
-`bun run serve` starts the internal HTTP service: 23 routes under `/api` for the web app, and
+`bun run serve` starts the internal HTTP service: 24 routes under `/api` for the web app, and
 `GET /health`. It reads `DATABASE_URL` from `.env`, so run `bun run db:up` and
 `bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
 
@@ -231,10 +231,11 @@ Paste the key the script showed you into that last command; that is why it shows
 and then clears the screen. The script writes the key into `.env`, which the service reads. A
 shell does not read `.env`, so a shell variable named `API_KEY` is empty unless you set it yourself.
 
-**It will not start without an `API_KEY`.** The package that runs the service listens on
-**every network interface** and has no setting for a host, so a service with no key would hand
-every route, writes included, to any machine on the network. With a key set, `/api` answers 401
-to a missing or wrong bearer token. `/health` is not behind the key and says only `ok` or `error`.
+**It will not start with neither an `API_KEY` nor an `AUTH_MODE`.** The package that runs the
+service listens on **every network interface** and has no setting for a host, so a service with
+nothing checked would hand every route, writes included, to any machine on the network. `/api`
+answers 401 to a request with no good credential: the `API_KEY`, an API token, or a signed-in
+browser (see "Signing in" below). `/health` is not behind any of them and says only `ok` or `error`.
 
 The rate limit is 1,000 requests a minute, ten times the package default, so a board that loads
 several routes at once does not trip it. When a built web app exists in `src/web/dist`, the same
@@ -252,11 +253,11 @@ is a string.
 |---|---|---|
 | 400 | `ValidationError` | the input did not fit the route's schema; `message` names each field |
 | 400 | `BulkItemError` | one item of a bulk write failed; `message` says which, and why when it can |
-| 401 | `Unauthorized` | the bearer token is missing, malformed or wrong |
+| 401 | `Unauthorized` | no credential, or a bearer token that is malformed, wrong or revoked |
+| 403 | `Forbidden` | a signed-in browser sent a write without the `x-jat-csrf: 1` header |
 | 404 | `NotFoundError` | the thing the path or body names does not exist |
 | 409 | `ConflictError` or `ArchivedError` | it already exists, or it is archived and may not be used |
 | 500 | `InternalError` | anything else; `message` is always `internal error` |
-| 503 | `Unavailable` | the service has no `API_KEY` set and refuses every `/api` request |
 
 The 401 is one body for all three causes, so it never tells a caller which check failed. The
 MCP server words the same failures the same way, with `{ "error": { "name", "message" } }`
@@ -268,12 +269,78 @@ a 400 or 413 carrying `{ "error": "<text>" }` (a string), and a request over the
 gets a 429 with a plain-text body. A client should treat an `error` that is a string, or a
 body that is not JSON, as one of these.
 
+## Signing in
+
+The web app is behind a sign-in, and it is deliberately small: one user, no sign-up, no
+"forgot password" mail. Think of it as the combination lock on a box that already sits in a
+drawer of your own desk. `AUTH_MODE` in `.env` picks one of two modes; with it unset there is no
+sign-in, and only the `API_KEY` opens `/api`.
+
+```sh
+bun run build:web        # once, and after pulling changes to src/web: builds the app into src/web/dist
+```
+
+**Password.** Run the script, type the password twice (it is not echoed), and restart the service.
+
+```sh
+bun run set-password     # writes AUTH_PASSWORD_HASH (an scrypt hash, never the password) and AUTH_MODE=password
+bun run serve
+```
+
+Then open `http://localhost:3000/login`. Five wrong passwords in a row pause the login for a minute.
+
+**OpenID Connect.** One account at a standard provider, with the authorization code flow and
+PKCE. Register a client at the provider with the redirect URI below, then set these in `.env`:
+
+```sh
+AUTH_MODE=oidc
+OIDC_ISSUER=https://issuer.example.com            # the provider's issuer; discovery is read from it
+OIDC_CLIENT_ID=...
+OIDC_CLIENT_SECRET=...                            # leave out for a public client
+OIDC_REDIRECT_URI=http://localhost:3000/auth/oidc/callback
+OIDC_ALLOWED_EMAIL=you@example.com                # and/or OIDC_ALLOWED_SUBJECT=<the provider's sub>
+```
+
+The ID token is checked against the issuer's published keys, its audience, its expiry and the
+sign-in's nonce. Only the one allowed subject or email gets in, and an email counts only when the
+provider marks it verified. Anyone else is sent back to the login page.
+
+**A signed-in browser** holds one httpOnly, SameSite=Lax cookie, signed, that lasts 30 days. Set
+`AUTH_COOKIE_SECURE=true` when you reach the app over HTTPS through a proxy, so the cookie is
+marked Secure; on plain-HTTP localhost it cannot be. Browser writes carry an `x-jat-csrf: 1`
+header, which a page on another site cannot add.
+
+### API tokens
+
+Signed in, open **Tokens** to mint a named token for an agent or an HTTP client. It is shown
+once; only its SHA-256 is stored. The list shows each token's first characters, when it was
+made and last used, and a Revoke button. A token is sent like the key:
+
+```sh
+curl -s -H "Authorization: Bearer <the token>" localhost:3000/api/postings
+```
+
+A token opens `/api` and nothing else: it cannot list or mint tokens, which needs a signed-in
+browser. The `API_KEY` from `setApiKey` keeps working beside the tokens.
+
+### Locked out
+
+If you lost the password and have the code, run:
+
+```sh
+bun run reset-credentials
+```
+
+It signs out every browser, deletes every API token, and removes `AUTH_PASSWORD_HASH` from
+`.env`, then prints what to do next (usually `bun run set-password`). It leaves `API_KEY` and
+the OIDC settings alone. There is no other recovery path.
+
 ## The MCP server
 
-`bun run mcp` starts the MCP server, which offers 55 tools for recording, scoring and reading
+`bun run mcp` starts the MCP server, which offers 57 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
 repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
-`registered 55 MCP tools` to stderr, which is how you see that every tool module loaded.
+`registered 57 MCP tools` to stderr, which is how you see that every tool module loaded.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).
@@ -293,10 +360,11 @@ In Claude Desktop's MCP configuration, set the command to `bun`, the arguments t
 `run mcp` (as `["run", "mcp"]`), and the working directory to your clone. There is no health
 endpoint in this mode.
 
-The API key from `bun run setApiKey` does nothing on stdio. There is no request to carry a
-header, so the key is inert, and the control is process-level access: whoever can start the
-process, or reach the client that starts it, can call every tool. Treat stdio as
-unauthenticated and rely on who can run commands as you.
+**The MCP server over stdio is unauthenticated, on purpose.** The API key from
+`bun run setApiKey`, the API tokens and the sign-in all do nothing on stdio: there is no request
+to carry a header, and the server is a local process with your shell's trust. The control is
+process-level access: whoever can start the process, or reach the client that starts it, can call
+every tool. Rely on who can run commands as you.
 
 **HTTP, opt-in.** Set `MCP_TRANSPORT=http` and the server listens on port 8080 (`PORT`
 changes it), with a health endpoint on port 3001 at `/health`. Those are the defaults of the

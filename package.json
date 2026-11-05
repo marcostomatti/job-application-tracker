@@ -2,7 +2,10 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/express": "^5.0.6",
-    "drizzle-kit": "^0.31.11"
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "5"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -11,8 +14,12 @@
     "@open-tomato/service-logger": "^1.0.0",
     "@open-tomato/service-mcp": "^1.0.1",
     "drizzle-orm": "^0.45.4",
+    "echarts": "^6.1.0",
     "express": "^5.3.0",
+    "jose": "6",
     "postgres": "^4.0.0",
+    "react": "19",
+    "react-dom": "19",
     "zod": "^4.6.7"
   },
   "scripts": {
@@ -24,6 +31,10 @@
     "setApiKey": "bun src/auth/set-api-key.ts",
     "mcp": "bun src/mcp/server.ts",
     "serve": "bun src/http/server.ts",
-    "backup": "bun src/backup/schedule.ts --once"
+    "backup": "bun src/backup/schedule.ts --once",
+    "set-password": "bun src/auth/set-password.ts",
+    "reset-credentials": "bun src/auth/reset-credentials.ts",
+    "build:web": "bun build src/web/index.html --outdir src/web/dist --minify",
+    "typecheck": "tsc --noEmit -p ."
   }
 }
