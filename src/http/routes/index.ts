@@ -22,9 +22,8 @@ export const ROUTES: readonly RouteSpec[] = [
 /**
  * Mounts every route under `/api`.
  *
- * No API-key check is mounted here. The server entry mounts `requireApiKey` on `/api` before
- * calling this, and only when a key is configured; a second check in this function would test
- * the key twice and could not be switched off with the first.
+ * No credential check is mounted here. The server entry mounts `requireApiAccess` on `/api`
+ * before calling this; a second check in this function would test every request twice.
  */
 export function mountRoutes(app: Application, db: Db): void {
   const api = Router()

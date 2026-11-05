@@ -7,15 +7,23 @@
  * the backup wiring) is in `server.test.ts`.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { GENERATED_KEY_LENGTH, generateApiKey } from '../../src/auth/api-key.ts'
+import { hashPassword } from '../../src/auth/password-hash.ts'
 import { ROUTES } from '../../src/http/routes/index.ts'
-import { spawnRefusedService, spawnService, stopStrayServices, type LogEntry, type ServiceProcess } from './service-process.ts'
+import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
+import {
+  spawnRefusedService,
+  spawnService as spawnOnDatabase,
+  stopStrayServices,
+  type LogEntry,
+  type ServiceProcess,
+} from './service-process.ts'
 
 /**
  * A key made up for these tests; it matches nothing real. It is as long as a generated one, so
@@ -47,9 +55,35 @@ async function unusedPort(): Promise<number> {
   return port
 }
 
+/**
+ * Every service in this file runs on one migrated scratch database, never on the shared dev
+ * database: that one holds the user's own data and may be behind on migrations.
+ */
+let scratchUrl = ''
+let releaseScratch: () => void = () => {}
+let scratchDone: Promise<unknown> = Promise.resolve()
+
+beforeAll(async () => {
+  await new Promise<void>((ready, failed) => {
+    scratchDone = withMigratedScratchDatabase(async (_db, _sql, url) => {
+      scratchUrl = url
+      ready()
+      await new Promise<void>((done) => {
+        releaseScratch = done
+      })
+    }).catch(failed)
+  })
+}, PROCESS_TIMEOUT)
+
+/** Starts the service on the scratch database, with `env` laid over that. */
+const spawnService = (env: Readonly<Record<string, string | undefined>>): Promise<ServiceProcess> =>
+  spawnOnDatabase({ DATABASE_URL: scratchUrl, ...env })
+
 // After the file, not after each test: the first group shares one service across its tests.
 afterAll(async () => {
   await stopStrayServices()
+  releaseScratch()
+  await scratchDone
 }, PROCESS_TIMEOUT)
 
 describe('the service with a key and no web bundle', () => {
@@ -82,7 +116,7 @@ describe('the service with a key and no web bundle', () => {
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({
       success: false,
-      error: { name: 'Unauthorized', message: 'a valid API key is required' },
+      error: { name: 'Unauthorized', message: 'a valid API key, API token or sign-in is required' },
     })
   })
 
@@ -249,5 +283,65 @@ describe('what the service logs', () => {
     expect(refused.entries.some((entry) => entry.msg === 'database unreachable')).toBe(true)
     expect(refused.raw).not.toContain(password)
     expect(refused.raw).not.toContain(`localhost:${port}`)
+  }, PROCESS_TIMEOUT)
+})
+
+describe('the service with a login and no API_KEY', () => {
+  test('starts in password mode, refuses /api without a credential, and signs in to open it', async () => {
+    const passwordHash = await hashPassword('integration-password')
+    const service = await spawnService({ API_KEY: '', AUTH_MODE: 'password', AUTH_PASSWORD_HASH: passwordHash, FIXTURE_WEB_DIST: NO_BUNDLE })
+
+    const session = await fetch(`${service.origin}/auth/session`)
+    const refused = await fetch(`${service.origin}/api/postings`)
+    const login = await fetch(`${service.origin}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-jat-csrf': '1' },
+      body: JSON.stringify({ password: 'integration-password' }),
+    })
+    const cookie = (login.headers.getSetCookie()[0] ?? '').split(';')[0] ?? ''
+    const minted = await fetch(`${service.origin}/auth/tokens`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', 'x-jat-csrf': '1' },
+      body: JSON.stringify({ name: 'integration' }),
+    })
+    const { token } = ((await minted.json()) as { data: { token: string } }).data
+    const withToken = await fetch(`${service.origin}/api/registries/seniority`, { headers: bearer(token) })
+    const output = await service.stop()
+
+    expect(await session.json()).toEqual({ success: true, data: { mode: 'password', signedIn: false } })
+    expect(refused.status).toBe(401)
+    expect(login.status).toBe(200)
+    expect(minted.status).toBe(201)
+    expect(withToken.status).not.toBe(401)
+    expect(output.raw).not.toContain(token)
+    expect(output.raw).not.toContain('integration-password')
+    expect(output.code).toBe(0)
+  }, PROCESS_TIMEOUT)
+
+  test('an unknown AUTH_MODE stops the start with a message naming it', async () => {
+    const refused = await spawnRefusedService({ API_KEY: TEST_KEY, AUTH_MODE: 'pasword', FIXTURE_WEB_DIST: NO_BUNDLE })
+
+    expect(refused.code).toBe(1)
+    expect(refused.message).toContain('"pasword"')
+  }, PROCESS_TIMEOUT)
+
+  test('a reload on an app path gets the page, not a 404', async () => {
+    // Under a dot-folder, as a clone in `.claude/worktrees` is, which `send` refuses by default.
+    const parent = await mkdtemp(join(tmpdir(), 'web-dist-'))
+    const bundle = join(parent, '.hidden', 'dist')
+    try {
+      await mkdir(bundle, { recursive: true })
+      await writeFile(join(bundle, 'index.html'), '<title>tracker app</title>')
+      const service = await spawnService({ API_KEY: TEST_KEY, FIXTURE_WEB_DIST: bundle })
+
+      const page = await fetch(`${service.origin}/tokens`)
+      const body = await page.text()
+      await service.stop()
+
+      expect(page.status).toBe(200)
+      expect(body).toContain('tracker app')
+    } finally {
+      await rm(parent, { recursive: true, force: true })
+    }
   }, PROCESS_TIMEOUT)
 })
