@@ -1,1 +1,190 @@
 /* criteria page styles: use the tokens on :root in ../styles.css only. */
+
+.criteria-controls {
+  align-items: flex-end;
+  gap: 16px 28px;
+}
+
+.criteria-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+}
+
+.criteria-summary dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg3);
+}
+
+.criteria-summary dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+}
+
+.criteria-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.criteria-grid .criteria-wide {
+  grid-column: 1 / -1;
+}
+
+.criteria-grid h2,
+.criteria-glossary h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.criteria-glossary h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+}
+
+.criteria-grid .card > p,
+.criteria-grid section > p {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.criteria-label {
+  font-weight: 600;
+}
+
+.criteria-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.weight-share {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 140px;
+}
+
+.weight-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.weight-fill {
+  display: block;
+  height: 100%;
+  background: var(--chart-neutral);
+}
+
+.criteria-anchors {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--fg2);
+}
+
+.criteria-anchors summary {
+  cursor: pointer;
+  color: var(--fg3);
+}
+
+.criteria-anchors dl {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.criteria-anchors dl div {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 8px;
+}
+
+.criteria-anchors dt {
+  font: 600 12px/1.6 var(--mono);
+  color: var(--fg3);
+}
+
+.criteria-anchors dd {
+  margin: 0;
+}
+
+.criteria-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.criteria-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font: 600 12px/1.6 var(--mono);
+}
+
+.criteria-chip.gate {
+  background: color-mix(in oklab, var(--band-skip) 16%, transparent);
+  color: var(--band-skip);
+}
+
+.criteria-chip.detour {
+  background: color-mix(in oklab, var(--band-ask) 18%, transparent);
+  color: var(--fg1);
+}
+
+.criteria-glossary .facts dd {
+  font-weight: 400;
+}
+
+.criteria-bands {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.criteria-bands li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.criteria-bands .dot {
+  flex: none;
+  align-self: center;
+}
+
+.criteria-footnote {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .criteria-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .criteria-glossary .facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .criteria-glossary .facts dd {
+    margin-bottom: 8px;
+  }
+  .weight-share {
+    min-width: 96px;
+  }
+}

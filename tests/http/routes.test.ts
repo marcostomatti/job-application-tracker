@@ -30,7 +30,11 @@ afterAll(async () => {
   await Promise.all([probe.close(), live.close()])
 })
 
-/** The route table of the brief (§11.2), copied here so a route added or dropped fails a test. */
+/**
+ * The route table of the brief (§11.2), and the three routes the web pages added after it (the
+ * stage history and the two question writes), copied here so a route added or dropped fails a test.
+ * The stage history mirrors no tool: no MCP tool reads the whole history, only the latest event.
+ */
 const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> = [
   ['GET', '/api/stats', ['market_stats']],
   ['GET', '/api/postings', ['posting_search']],
@@ -56,6 +60,9 @@ const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> =
   ['POST', '/api/registries/:name', ['registry_add']],
   ['PATCH', '/api/registries/:name/:id', ['registry_archive']],
   ['GET', '/api/texts', ['text_list']],
+  ['GET', '/api/postings/:id/stages', []],
+  ['POST', '/api/postings/:id/questions', ['posting_question_add']],
+  ['PUT', '/api/questions/:id/answer', ['posting_question_answer']],
 ]
 
 /** A parameter's name is invisible to a client, so two paths are the same route when their shapes are. */
@@ -73,11 +80,11 @@ const dataOf = (outcome: HttpOutcome): unknown => (outcome.body as { data: unkno
 const errorOf = (outcome: HttpOutcome): { name: string; message: string } => (outcome.body as { error: { name: string; message: string } }).error
 
 describe('the route table', () => {
-  test('mounts exactly the 24 routes of the table, at the same methods and paths', () => {
+  test('mounts exactly the 27 routes of the table, at the same methods and paths', () => {
     const mounted = ROUTES.map((spec) => `${spec.method.toUpperCase()} /api${shapeOf(spec.path)}`).sort()
     const table = BRIEF_TABLE.map(([method, path]) => `${method} ${shapeOf(path)}`).sort()
 
-    expect(ROUTES).toHaveLength(24)
+    expect(ROUTES).toHaveLength(27)
     expect(mounted).toEqual(table)
   })
 
@@ -110,8 +117,8 @@ describe('the route table', () => {
       }
     }
 
-    // 24 routes, and the disposition route mirrors two tools.
-    expect(checked).toBe(25)
+    // 27 routes: the disposition route mirrors two tools and the stage history none.
+    expect(checked).toBe(27)
   })
 
   test('two routes may share one schema because two tools do: the summary and origin reads, and the score reads', () => {
@@ -371,6 +378,95 @@ describe('the stage and disposition routes', () => {
 
     expect(outcome.status).toBe(409)
     expect(errorOf(outcome).message).toBe(`set_aside_reason ${reasonId} is archived`)
+  })
+})
+
+describe('the stage history route', () => {
+  test('GET /api/postings/:id/stages returns every event oldest first, each with its stage or null', async () => {
+    const id = await newPostingId('Stage history')
+    const stageId = idOf(await addRegistryRows(database(), 'stage', [{ key: 'history-route', label: 'History route' }]))
+    await live.request('POST', `/api/postings/${id}/stage`, { stageId: null, occurredAt: '2026-03-02T00:00:00Z' })
+    await live.request('POST', `/api/postings/${id}/stage`, { stageId, occurredAt: '2026-03-01T00:00:00Z' })
+
+    const outcome = await live.request('GET', `/api/postings/${id}/stages`)
+
+    expect(outcome.status).toBe(200)
+    const rows = dataOf(outcome) as Array<{ event: { postingId: number; stageId: number | null }; stage: { id: number; label: string } | null }>
+    expect(rows.map((row) => row.event.stageId)).toEqual([stageId, null])
+    expect(rows[0]?.stage).toMatchObject({ id: stageId, label: 'History route' })
+    expect(rows[1]?.stage).toBeNull()
+    expect(rows.every((row) => row.event.postingId === id)).toBe(true)
+  })
+
+  test('an empty history is an empty list, an unknown posting a 404 and a stray query field a 400', async () => {
+    const id = await newPostingId('No history')
+
+    const empty = await live.request('GET', `/api/postings/${id}/stages`)
+    const missing = await live.request('GET', '/api/postings/999999/stages')
+    const stray = await live.request('GET', `/api/postings/${id}/stages?limit=1`)
+
+    expect(empty.status).toBe(200)
+    expect(dataOf(empty)).toEqual([])
+    expect(missing.status).toBe(404)
+    expect(errorOf(missing)).toEqual({ name: 'NotFoundError', message: 'posting 999999 does not exist' })
+    expect(stray.status).toBe(400)
+    expect(errorOf(stray).message).toContain('limit')
+  })
+})
+
+describe('the question routes', () => {
+  test('POST /api/postings/:id/questions stores a question, and the same wording again returns the stored row', async () => {
+    const id = await newPostingId('Questioned')
+
+    const first = await live.request('POST', `/api/postings/${id}/questions`, { question: 'Is the role remote?' })
+    const again = await live.request('POST', `/api/postings/${id}/questions`, { question: 'Is the role remote?' })
+
+    expect(first.status).toBe(200)
+    expect(dataOf(first)).toMatchObject({ postingId: id, question: 'Is the role remote?', answer: null, answeredAt: null })
+    expect((dataOf(again) as { id: number }).id).toBe((dataOf(first) as { id: number }).id)
+  })
+
+  test('a question must be non-blank, for a posting that exists, named by the path alone', async () => {
+    const id = await newPostingId('Question rules')
+    const other = await newPostingId('Question other')
+
+    const blank = await live.request('POST', `/api/postings/${id}/questions`, { question: '   ' })
+    const missing = await live.request('POST', '/api/postings/999999/questions', { question: 'Anyone there?' })
+    const retarget = await live.request('POST', `/api/postings/${id}/questions`, { postingId: other, question: 'Whose?' })
+
+    expect(blank.status).toBe(400)
+    expect(errorOf(blank).message).toContain('question')
+    expect(missing.status).toBe(404)
+    expect(retarget.status).toBe(400)
+    expect(errorOf(retarget).message).toContain('postingId')
+  })
+
+  test('PUT /api/questions/:id/answer writes the answer with its time and replaces an earlier one', async () => {
+    const id = await newPostingId('Answered')
+    const asked = await live.request('POST', `/api/postings/${id}/questions`, { question: 'What is the salary band?' })
+    const questionId = (dataOf(asked) as { id: number }).id
+
+    const first = await live.request('PUT', `/api/questions/${questionId}/answer`, { answer: 'Not stated' })
+    const second = await live.request('PUT', `/api/questions/${questionId}/answer`, { answer: 'Stated on the call' })
+
+    expect(first.status).toBe(200)
+    expect(dataOf(first)).toMatchObject({ id: questionId, postingId: id, answer: 'Not stated' })
+    expect((dataOf(first) as { answeredAt: string | null }).answeredAt).not.toBeNull()
+    expect(dataOf(second)).toMatchObject({ id: questionId, answer: 'Stated on the call' })
+  })
+
+  test('an answer must be non-blank, for a question that exists', async () => {
+    const id = await newPostingId('Answer rules')
+    const asked = await live.request('POST', `/api/postings/${id}/questions`, { question: 'Who is the manager?' })
+    const questionId = (dataOf(asked) as { id: number }).id
+
+    const blank = await live.request('PUT', `/api/questions/${questionId}/answer`, { answer: '' })
+    const absent = await live.request('PUT', `/api/questions/${questionId}/answer`, {})
+    const missing = await live.request('PUT', '/api/questions/999999/answer', { answer: 'Nobody' })
+
+    expect([blank.status, absent.status]).toEqual([400, 400])
+    expect(errorOf(absent).message).toContain('answer')
+    expect(missing.status).toBe(404)
   })
 })
 

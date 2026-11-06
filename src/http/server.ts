@@ -31,7 +31,7 @@ const RATE_LIMIT = { max: 1_000, windowMs: 60_000 } as const
 const DEFAULT_WEB_DIST = resolve(import.meta.dir, '../web/dist')
 
 /** The paths the web app draws itself, each answered with its `index.html`. */
-const APP_PATHS = ['/login', '/tokens', '/stats']
+const APP_PATHS = ['/', '/login', '/postings', '/texts', '/criteria', '/stats', '/tokens']
 
 export interface StartOptions {
   /** The port to listen on. Defaults to `PORT`, then 3000. Ignored under `NODE_ENV=test`, which binds an ephemeral one. */

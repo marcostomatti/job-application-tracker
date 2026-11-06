@@ -17,6 +17,7 @@ export type { CriteriaSetRow, PostingDetail, PostingListRow, PostingQuestion, Re
 
 export type StageRegistryRow = RegistryRowOf<'stage'>
 export type PhaseRegistryRow = RegistryRowOf<'phase'>
+export type TextTypeRow = RegistryRowOf<'text_type'>
 
 /** One event of a posting's stage history, oldest first, with the stage it names (null for a cleared stage). */
 export interface StageHistoryRow {
@@ -66,6 +67,7 @@ export const data = {
 
   stages: (): Promise<StageRegistryRow[]> => request('GET', '/api/registries/stage'),
   phases: (): Promise<PhaseRegistryRow[]> => request('GET', '/api/registries/phase'),
+  textTypes: (): Promise<TextTypeRow[]> => request('GET', '/api/registries/text_type?includeArchived=true'),
 
   texts: (q: { postingId?: number; includeHistory?: boolean } = {}): Promise<TextAsset[]> => request('GET', `/api/texts${query({ ...q })}`),
 

@@ -216,7 +216,7 @@ project and is outside any repository.
 
 ## The HTTP service
 
-`bun run serve` starts the internal HTTP service: 24 routes under `/api` for the web app, and
+`bun run serve` starts the internal HTTP service: 27 routes under `/api` for the web app, and
 `GET /health`. It reads `DATABASE_URL` from `.env`, so run `bun run db:up` and
 `bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
 
