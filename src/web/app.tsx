@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { auth, type SessionState } from './api.ts'
+import { CriteriaPage } from './pages/criteria.tsx'
 import { LoginPage } from './pages/login.tsx'
+import { PostingsPage } from './pages/postings/index.tsx'
 import { StatsPage } from './pages/stats.tsx'
+import { TextsPage } from './pages/texts.tsx'
 import { TokensPage } from './pages/tokens.tsx'
 
 /** One page the signed-in app shows, and its place in the nav. */
@@ -14,6 +17,9 @@ export interface AppPage {
 
 /** The pages behind the sign-in, in nav order. The first is where `/` lands. */
 export const PAGES: readonly AppPage[] = [
+  { path: '/postings', label: 'Postings', render: () => <PostingsPage /> },
+  { path: '/texts', label: 'Texts', render: () => <TextsPage /> },
+  { path: '/criteria', label: 'Criteria', render: () => <CriteriaPage /> },
   { path: '/stats', label: 'Stats', render: () => <StatsPage /> },
   { path: '/tokens', label: 'Tokens', render: () => <TokensPage /> },
 ]

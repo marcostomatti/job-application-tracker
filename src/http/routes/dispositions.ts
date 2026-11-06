@@ -2,11 +2,12 @@ import type { RequestHandler } from 'express'
 import type { z, ZodType } from 'zod'
 
 import type { Db } from '../../data/repositories/db.ts'
-import { appendStageEvent, listSetAside, recordRejection, setAside } from '../../data/repositories/dispositions.ts'
+import { appendStageEvent, listSetAside, recordRejection, setAside, stageHistory } from '../../data/repositories/dispositions.ts'
 import { EmptyInputSchema } from '../../schemas/common.ts'
 import { RecordRejectionInputSchema, SetAsideInputSchema, StageEventInputSchema } from '../../schemas/dispositions.ts'
+import { PostingRefSchema } from '../../schemas/postings.ts'
 import { inputError, jsonHandler, sendInputError } from '../handler.ts'
-import { route, type RouteSpec } from './spec.ts'
+import { route, webRoute, type RouteSpec } from './spec.ts'
 
 /** Whether the JSON body names a field at all; a body that is not an object names none. */
 function bodyNames(body: unknown, field: string): boolean {
@@ -81,4 +82,6 @@ export const dispositionRoutes: readonly RouteSpec[] = [
     handler: dispositionHandler,
   },
   route('get', '/set-aside', 'set_aside_list', EmptyInputSchema, async (_args, db) => listSetAside(db)),
+  // The posting page's timeline. No MCP tool reads the whole history (stage_current reads the latest event), so it mirrors none.
+  webRoute('get', '/postings/:postingId/stages', PostingRefSchema, async (args, db) => stageHistory(db, args.postingId)),
 ]

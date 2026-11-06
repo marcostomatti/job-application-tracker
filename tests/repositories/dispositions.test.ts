@@ -14,6 +14,7 @@ import {
   moveIfRecommended,
   recordRejection,
   setAside,
+  stageHistory,
 } from '../../src/data/repositories/dispositions.ts'
 import { addPostings, searchPostings, type Posting } from '../../src/data/repositories/postings.ts'
 import { addRegistryRows, archiveRegistryRow } from '../../src/data/repositories/registries.ts'
@@ -247,6 +248,94 @@ describe('currentStage', () => {
     expect(found?.stage.archivedAt).not.toBeNull()
     expect(found?.stage.isApplied).toBe(true)
     expect(found?.stage.isTraction).toBe(true)
+  })
+})
+
+describe('stageHistory', () => {
+  test('raises NotFoundError for a posting that does not exist, and an empty list for one with no events', async () => {
+    // Arrange / Act
+    const { missing, noEvents } = await withMigratedScratchDatabase(async (db) => ({
+      missing: await thrownBy(() => stageHistory(db, 999_999)),
+      noEvents: await stageHistory(db, (await addPosting(db)).id),
+    }))
+
+    // Assert
+    expect(missing).toBeInstanceOf(NotFoundError)
+    expect(statusFor(missing)).toBe(404)
+    expect(noEvents).toEqual([])
+  })
+
+  test('returns every event oldest first by time, not in the order written', async () => {
+    // Arrange / Act: the later-dated event is written first, so id order and time order differ
+    const { history, later, earlier } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosting(db)
+      const laterId = await addStage(db, 'history-later')
+      const earlierId = await addStage(db, 'history-earlier')
+      await appendStageEvent(db, { postingId: target.id, stageId: laterId, occurredAt: new Date('2026-03-02T00:00:00Z') })
+      await appendStageEvent(db, { postingId: target.id, stageId: earlierId, occurredAt: new Date('2026-03-01T00:00:00Z') })
+      return { history: await stageHistory(db, target.id), later: laterId, earlier: earlierId }
+    })
+
+    // Assert
+    expect(history.map((row) => row.stage?.id)).toEqual([earlier, later])
+    expect(history.map((row) => row.event.stageId)).toEqual([earlier, later])
+  })
+
+  test('breaks a tie between events at one instant by id, under a sequential scan', async () => {
+    // Arrange / Act: a sequential scan returns storage order, so only the ORDER BY decides
+    const { history, expected } = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosting(db)
+      const stageIds = await Promise.all(
+        Array.from({ length: TIED_EVENTS }, (_, index) => addStage(db, `history-tie-${index}`)),
+      )
+      await db.execute(sql`set enable_indexscan = off`)
+      await db.execute(sql`set enable_bitmapscan = off`)
+      const at = new Date('2026-02-01T09:00:00Z')
+      const written = await db
+        .insert(postingStageEvent)
+        .values(stageIds.map((stageId) => ({ postingId: target.id, stageId, occurredAt: at })))
+        .returning({ id: postingStageEvent.id })
+      return { history: await stageHistory(db, target.id), expected: written.map((row) => row.id).sort((a, b) => a - b) }
+    })
+
+    // Assert
+    expect(history.map((row) => row.event.id)).toEqual(expected)
+  })
+
+  test('keeps an event with no stage, with a null stage beside it', async () => {
+    // Arrange / Act
+    const history = await withMigratedScratchDatabase(async (db) => {
+      const target = await addPosting(db)
+      const stageId = await addStage(db, 'history-before-null')
+      await appendStageEvent(db, { postingId: target.id, stageId, occurredAt: new Date('2026-03-01T00:00:00Z') })
+      await appendStageEvent(db, { postingId: target.id, stageId: null, occurredAt: new Date('2026-03-02T00:00:00Z') })
+      return stageHistory(db, target.id)
+    })
+
+    // Assert
+    expect(history).toHaveLength(2)
+    expect(history[0]?.stage?.label).toBe('Stage history-before-null')
+    expect(history[1]?.event.stageId).toBeNull()
+    expect(history[1]?.stage).toBeNull()
+  })
+
+  test('returns a stage archived after the event, and only the events of the posting asked about', async () => {
+    // Arrange / Act
+    const { history, target } = await withMigratedScratchDatabase(async (db) => {
+      const asked = await addPosting(db, 'History asked')
+      const other = await addPosting(db, 'History other')
+      const stageId = await addStage(db, 'history-archived', { isApplied: true })
+      await appendStageEvent(db, { postingId: asked.id, stageId })
+      await appendStageEvent(db, { postingId: other.id, stageId })
+      await archiveRegistryRow(db, 'stage', stageId)
+      return { history: await stageHistory(db, asked.id), target: asked.id }
+    })
+
+    // Assert
+    expect(history).toHaveLength(1)
+    expect(history[0]?.event.postingId).toBe(target)
+    expect(history[0]?.stage?.archivedAt).not.toBeNull()
+    expect(history[0]?.stage?.isApplied).toBe(true)
   })
 })
 

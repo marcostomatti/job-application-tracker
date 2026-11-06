@@ -4,13 +4,14 @@ import type { Db } from '../../data/repositories/db.ts'
 import { criteriaRoutes } from './criteria.ts'
 import { dispositionRoutes } from './dispositions.ts'
 import { postingRoutes } from './postings.ts'
+import { questionRoutes } from './questions.ts'
 import { registryRoutes } from './registries.ts'
 import { scoreRoutes } from './scores.ts'
 import type { RouteSpec } from './spec.ts'
 import { statsRoutes } from './stats.ts'
 import { textRoutes } from './texts.ts'
 
-/** Every internal HTTP route, in the order of the brief's table (§11.2). */
+/** Every internal HTTP route, in the order of the brief's table (§11.2), then the question writes the web pages added. */
 export const ROUTES: readonly RouteSpec[] = [
   ...postingRoutes,
   ...scoreRoutes,
@@ -19,6 +20,7 @@ export const ROUTES: readonly RouteSpec[] = [
   ...registryRoutes,
   ...textRoutes,
   ...statsRoutes,
+  ...questionRoutes,
 ]
 
 /**

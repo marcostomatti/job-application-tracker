@@ -25,6 +25,20 @@ export interface RouteSpec {
   readonly handler: (db: Db) => RequestHandler
 }
 
+/**
+ * A route only the web app needs, which mirrors no MCP tool, so it lists none. It still parses
+ * with a strict schema from `src/schemas`, exactly as `route()` does; the schema is not listed in
+ * `schemas`, because that list names tool inputs and runs in step with `tools`.
+ */
+export function webRoute<S extends ZodType>(
+  method: HttpMethod,
+  path: string,
+  schema: S,
+  run: (args: z.infer<S>, db: Db) => Promise<unknown>,
+): RouteSpec {
+  return { method, path, tools: [], schemas: [], handler: (db) => jsonHandler(schema, run, db) }
+}
+
 /** A route that mirrors exactly one tool: the tool's schema, and the work its `run` does. */
 export function route<S extends ZodType, P extends PathOnlySchemas = Record<never, ZodType>>(
   method: HttpMethod,

@@ -21,6 +21,12 @@ export type StageRow = {
   readonly stage: RegistryRowOf<'stage'>
 }
 
+/** One event of a posting's stage history, with the stage it names, or null for an event that names none. */
+export type StageHistoryRow = {
+  readonly event: StageEvent
+  readonly stage: RegistryRowOf<'stage'> | null
+}
+
 /** The postings set aside for one reason, which is §11.1 group 7's "grouped by why". */
 export type SetAsideGroup = {
   readonly reasonId: number
@@ -109,10 +115,7 @@ export async function appendStageEvent(db: Db, input: StageEventInput): Promise<
 }
 
 /** The latest event by time, then by id, with its stage when it names one. The stage is joined without an archival filter. */
-async function readLatestEvent(
-  db: Db,
-  postingId: number,
-): Promise<{ readonly event: StageEvent; readonly stage: RegistryRowOf<'stage'> | null } | null> {
+async function readLatestEvent(db: Db, postingId: number): Promise<StageHistoryRow | null> {
   const [latest] = await db
     .select({ event: postingStageEvent, stage: stageTable })
     .from(postingStageEvent)
@@ -134,6 +137,23 @@ export async function currentStage(db: Db, postingId: number): Promise<StageRow 
   await assertPostingExists(db, postingId)
   const latest = await readLatestEvent(db, postingId)
   return latest?.stage ? { event: latest.event, stage: latest.stage } : null
+}
+
+/**
+ * Every stage event of a posting, oldest first by `(occurredAt, id)`: the reverse of the order
+ * `currentStage` reads its latest from, so the last row here is the one that counts as current.
+ * An event that names no stage is kept, with a null stage, because it is a move the user made.
+ * Stages are joined without an archival filter, so an archived stage still renders its label.
+ * A posting that does not exist is `NotFoundError`; one with no events is an empty list.
+ */
+export async function stageHistory(db: Db, postingId: number): Promise<StageHistoryRow[]> {
+  await assertPostingExists(db, postingId)
+  return db
+    .select({ event: postingStageEvent, stage: stageTable })
+    .from(postingStageEvent)
+    .leftJoin(stageTable, eq(stageTable.id, postingStageEvent.stageId))
+    .where(eq(postingStageEvent.postingId, postingId))
+    .orderBy(asc(postingStageEvent.occurredAt), asc(postingStageEvent.id))
 }
 
 /**
