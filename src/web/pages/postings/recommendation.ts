@@ -12,7 +12,6 @@ export const DEFAULT_DISPLAY: RecommendationDisplay = 'both'
 
 export type RecommendationSource = 'rules' | 'agent'
 
-export const SOURCE_LABELS: Readonly<Record<RecommendationSource, string>> = { rules: 'rules', agent: 'agent' }
 
 /** One band chip: the band, and which recommendation it comes from. */
 export interface RecommendationChip {
@@ -29,8 +28,6 @@ export interface RecommendationView {
   readonly fellBack: boolean
   /** True under `both` when the two recommendations differ. */
   readonly disagree: boolean
-  /** Whether a chip names its source: always, except under `rules`, where there is only one kind. */
-  readonly showSource: boolean
   /** The whole reading in words, the agent's reason included: a chip's tooltip and accessible name. */
   readonly label: string
 }
@@ -48,25 +45,25 @@ export function recommendationView(recommendation: Recommendation, display: Reco
   const reason = agent?.reason ?? null
 
   if (display === 'rules') {
-    return { primary: rulesChip, secondary: null, fellBack: false, disagree: false, showSource: false, label: sentence('rules', rules) }
+    return { primary: rulesChip, secondary: null, fellBack: false, disagree: false, label: sentence('rules', rules) }
   }
 
   if (display === 'agent') {
     if (agent === null) {
-      return { primary: rulesChip, secondary: null, fellBack: true, disagree: false, showSource: true, label: `${sentence('rules', rules)}. The agent gave no verdict.` }
+      return { primary: rulesChip, secondary: null, fellBack: true, disagree: false, label: `${sentence('rules', rules)}. The agent gave no verdict.` }
     }
     return {
       primary: { band: agent.band, source: 'agent' },
       secondary: null,
       fellBack: false,
       disagree: false,
-      showSource: true,
+     
       label: withReason(sentence('agent', agent.band), reason),
     }
   }
 
   if (agent === null) {
-    return { primary: rulesChip, secondary: null, fellBack: false, disagree: false, showSource: true, label: `${sentence('rules', rules)}. Agent: no verdict.` }
+    return { primary: rulesChip, secondary: null, fellBack: false, disagree: false, label: `${sentence('rules', rules)}. Agent: no verdict.` }
   }
   const disagree = recommendation.disagree
   const both = `${sentence('rules', rules)}. ${withReason(sentence('agent', agent.band), reason)}.`
@@ -75,7 +72,7 @@ export function recommendationView(recommendation: Recommendation, display: Reco
     secondary: { band: agent.band, source: 'agent' },
     fellBack: false,
     disagree,
-    showSource: true,
+   
     label: disagree ? `${both} They disagree.` : both,
   }
 }

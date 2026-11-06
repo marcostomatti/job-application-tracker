@@ -31,13 +31,21 @@ describe('PostingsGrid', () => {
     expect(html).not.toContain('>Apply</button>')
   })
 
-  test('under both, a disagreeing row shows both chips by source, the flag, and the reason for a screen reader', () => {
+  test('under both, a disagreeing row shows both chips, the flag, and the reason for a screen reader', () => {
     const html = renderToStaticMarkup(<PostingsGrid rows={ROWS} sort={{ key: 'seen', desc: true }} selectedId={null} display="both" onSort={noop} onSelect={noop} />)
 
     expect(html.match(/rec-disagree/g)?.length).toBe(1)
-    expect(html).toContain('>rules</span>')
-    expect(html).toContain('>agent</span>')
     expect(html).toContain('Rules: Skip. Agent: Ask (Worth a question on scope.). They disagree.')
+  })
+
+  test('no display draws a source tag on a chip; the source is in the tooltip only', () => {
+    for (const display of ['rules', 'agent', 'both'] as const) {
+      const html = renderToStaticMarkup(<PostingsGrid rows={ROWS} sort={{ key: 'seen', desc: true }} selectedId={null} display={display} onSort={noop} onSelect={noop} />)
+
+      expect(html).not.toContain('rec-source')
+      expect(html).not.toContain('>rules</span>')
+      expect(html).not.toContain('>agent</span>')
+    }
   })
 
   test('under rules, one chip per row with no source tag and no flag', () => {

@@ -13,7 +13,6 @@ describe('recommendationView under rules', () => {
 
     expect(view.primary).toEqual({ band: 'ask', source: 'rules' })
     expect(view.secondary).toBeNull()
-    expect(view.showSource).toBe(false)
     expect(view.disagree).toBe(false)
     expect(view.fellBack).toBe(false)
     expect(view.label).toBe('Rules: Ask')
@@ -36,7 +35,6 @@ describe('recommendationView under agent', () => {
 
     expect(view.primary).toEqual({ band: 'skip', source: 'rules' })
     expect(view.fellBack).toBe(true)
-    expect(view.showSource).toBe(true)
     expect(view.label).toContain('The agent gave no verdict.')
   })
 })

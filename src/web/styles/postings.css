@@ -391,14 +391,6 @@
   white-space: nowrap;
 }
 
-.rec-source {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg3);
-}
-
 .rec-disagree {
   display: inline-block;
   padding: 1px 7px;
