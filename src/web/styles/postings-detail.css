@@ -306,3 +306,49 @@
     padding: 18px 16px 40px;
   }
 }
+
+/* --- the recommendation section --- */
+
+.pd-rec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.pd-rec-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.pd-rec-row dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg3);
+}
+
+.pd-rec-row dd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0;
+}
+
+.pd-rec-reason {
+  font-size: 13px;
+  color: var(--fg2);
+}
+
+.pd-rec-disagree {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--danger);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}

@@ -7,11 +7,12 @@ import { postingRoutes } from './postings.ts'
 import { questionRoutes } from './questions.ts'
 import { registryRoutes } from './registries.ts'
 import { scoreRoutes } from './scores.ts'
+import { settingsRoutes } from './settings.ts'
 import type { RouteSpec } from './spec.ts'
 import { statsRoutes } from './stats.ts'
 import { textRoutes } from './texts.ts'
 
-/** Every internal HTTP route, in the order of the brief's table (§11.2), then the question writes the web pages added. */
+/** Every internal HTTP route, in the order of the brief's table (§11.2), then the question writes and the settings the web pages added. */
 export const ROUTES: readonly RouteSpec[] = [
   ...postingRoutes,
   ...scoreRoutes,
@@ -21,6 +22,7 @@ export const ROUTES: readonly RouteSpec[] = [
   ...textRoutes,
   ...statsRoutes,
   ...questionRoutes,
+  ...settingsRoutes,
 ]
 
 /**

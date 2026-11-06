@@ -51,12 +51,18 @@ describe('the URL state', () => {
 })
 
 describe('bands', () => {
-  test('apply is the stored verdict, unscored is no score or no overall, and below the floor is skip', () => {
-    expect(bandOf(row({ id: 1, recommendApply: true, overall: 0.2 }))).toBe('apply')
+  test("a row's band is the server's rules band, never recomputed from the score", () => {
+    // A gate-blocked score the client cannot see: the overall alone would read as ask.
+    expect(bandOf(row({ id: 1, overall: 0.8, rules: 'skip' }))).toBe('skip')
     expect(bandOf(row({ id: 2, scored: false }))).toBe('unscored')
-    expect(bandOf(row({ id: 3, overall: null }))).toBe('unscored')
-    expect(bandOf(row({ id: 4, overall: 0.49 }))).toBe('skip')
-    expect(bandOf(row({ id: 5, overall: 0.5 }))).toBe('ask')
+  })
+
+  test("under agent the band is the agent's verdict, and the rules band where there is none", () => {
+    const judged = row({ id: 1, rules: 'ask', agent: { band: 'apply', reason: null } })
+
+    expect(bandOf(judged, 'agent')).toBe('apply')
+    expect(bandOf(judged, 'both')).toBe('ask')
+    expect(bandOf(row({ id: 2, rules: 'skip' }), 'agent')).toBe('skip')
   })
 
   test('scores show on the five-star scale, a missing one as a dash', () => {
@@ -91,6 +97,13 @@ describe('applyFilters', () => {
     expect(ids(applyFilters(rows, { ...EMPTY_FILTERS, band: 'skip' }))).toEqual([2])
   })
 
+  test('the band filter reads the displayed band', () => {
+    const judged = [row({ id: 1, rules: 'ask', agent: { band: 'skip', reason: null } }), row({ id: 2, rules: 'skip' })]
+
+    expect(ids(applyFilters(judged, { ...EMPTY_FILTERS, band: 'skip' }, 'both'))).toEqual([2])
+    expect(ids(applyFilters(judged, { ...EMPTY_FILTERS, band: 'skip' }, 'agent'))).toEqual([1, 2])
+  })
+
   test('the input is not changed', () => {
     const copy = [...rows]
     applyFilters(rows, { ...EMPTY_FILTERS, search: 'x' })
@@ -108,6 +121,23 @@ describe('sortRows', () => {
   test('a missing score sorts last in either direction', () => {
     expect(ids(sortRows(rows, { key: 'score', desc: true }))).toEqual([3, 1, 2])
     expect(ids(sortRows(rows, { key: 'score', desc: false }))).toEqual([1, 3, 2])
+  })
+
+  test('the recommendation sorts apply, ask, skip, the score breaking ties, and unscored last either way', () => {
+    const banded = [
+      row({ id: 1, overall: 0.55, rules: 'ask' }),
+      row({ id: 2, scored: false }),
+      row({ id: 3, overall: 0.9, rules: 'apply' }),
+      row({ id: 4, overall: 0.7, rules: 'ask' }),
+      row({ id: 5, overall: 0.2, rules: 'skip' }),
+    ]
+
+    expect(ids(sortRows(banded, { key: 'recommendation', desc: true }))).toEqual([3, 4, 1, 5, 2])
+    expect(ids(sortRows(banded, { key: 'recommendation', desc: false }))).toEqual([5, 1, 4, 3, 2])
+  })
+
+  test("an old link's apply sort opens as the recommendation sort", () => {
+    expect(decodeUrlState('?sort=apply:desc').sort).toEqual({ key: 'recommendation', desc: true })
   })
 
   test('a header click flips the same column and starts a new one ascending', () => {

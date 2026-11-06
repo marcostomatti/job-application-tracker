@@ -15,6 +15,10 @@ export const ALLOWED_STRUCTURAL_LITERALS: readonly string[] = [
   // disposition outcome
   'set_aside',
   'rejected',
+  // agent verdict on a score
+  'apply',
+  'ask',
+  'skip',
   // rating confidence
   'supported',
   'partial',

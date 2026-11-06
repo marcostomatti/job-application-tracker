@@ -111,10 +111,6 @@
   white-space: nowrap;
 }
 
-.apply-yes {
-  color: var(--band-apply);
-}
-
 /* --- the grid --- */
 
 .postings-grid-card {
@@ -374,4 +370,44 @@
     letter-spacing: 0.06em;
     color: var(--fg3);
   }
+}
+
+/* --- recommendation chips --- */
+
+.rec-chips,
+.rec-chips-visible {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rec-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rec-disagree {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px dashed var(--danger);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+/* Read by a screen reader, not drawn: the chips above are hidden from it instead. */
+.rec-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

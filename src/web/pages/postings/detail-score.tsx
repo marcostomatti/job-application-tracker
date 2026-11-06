@@ -1,5 +1,5 @@
 import { BAND_LABELS } from '../../charts/options.ts'
-import type { PostingDetail, RequirementRow } from '../../data.ts'
+import type { PostingDetail, Recommendation, RecommendationDisplay, RequirementRow, RulesBand } from '../../data.ts'
 import {
   breakdownRows,
   formatDay,
@@ -12,6 +12,57 @@ import {
 } from './detail-labels.ts'
 
 type ScoreDetail = PostingDetail['scores'][number]
+
+function BandMark({ band }: { band: RulesBand }) {
+  return (
+    <span className={`pd-band pd-band-${band}`}>
+      <span className="dot" style={{ background: `var(--band-${band})` }} />
+      {BAND_LABELS[band]}
+    </span>
+  )
+}
+
+/**
+ * Both recommendations of the latest score, whatever the display choice: the rules band, the
+ * agent's verdict with its reason, and a line when they disagree. Under `agent`, a posting the
+ * agent has not judged says the grid and board show the rules band in its place.
+ */
+export function RecommendationSummary({ recommendation, display }: { recommendation: Recommendation | null; display: RecommendationDisplay }) {
+  if (recommendation === null) return <p className="muted">No recommendation: the posting has no score yet.</p>
+  const { rules, agent, disagree } = recommendation
+  return (
+    <div className="stack">
+      <dl className="pd-rec">
+        <div className="pd-rec-row">
+          <dt>Rules</dt>
+          <dd>
+            <BandMark band={rules} />
+            <span className="muted pd-small">from the score, the gates and the ask floor</span>
+          </dd>
+        </div>
+        <div className="pd-rec-row">
+          <dt>Agent</dt>
+          <dd>
+            {agent === null ? (
+              <span className="muted">No verdict on this score.</span>
+            ) : (
+              <>
+                <BandMark band={agent.band} />
+                {agent.reason === null ? <span className="muted pd-small">no reason given</span> : <span className="pd-rec-reason">{agent.reason}</span>}
+              </>
+            )}
+          </dd>
+        </div>
+      </dl>
+      {disagree && agent !== null && (
+        <p className="pd-rec-disagree">
+          They disagree: the rules say {BAND_LABELS[rules]}, the agent says {BAND_LABELS[agent.band]}.
+        </p>
+      )}
+      {display === 'agent' && agent === null && <p className="muted pd-small">The grid and the board show the rules band here, marked “rules”, until the agent gives a verdict.</p>}
+    </div>
+  )
+}
 
 /**
  * The latest score: its overall and band, then one row per requirement (coverage, kind, weight,
@@ -44,10 +95,7 @@ export function ScoreBreakdown({
   return (
     <div className="stack">
       <p className="pd-current">
-        <span className={`pd-band pd-band-${band}`}>
-          <span className="dot" style={{ background: `var(--band-${band})` }} />
-          {BAND_LABELS[band]}
-        </span>
+        <BandMark band={band} />
         <strong>{formatOverall(overall)}</strong>
         <span className="muted">
           scored {formatDay(scoredAt)}

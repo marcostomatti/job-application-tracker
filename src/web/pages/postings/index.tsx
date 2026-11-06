@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { data, type CriteriaSetRow, type PhaseRegistryRow, type PostingListRow } from '../../data.ts'
+import { data, type AppSettings, type CriteriaSetRow, type PhaseRegistryRow, type PostingListRow } from '../../data.ts'
 import { PostingsBoard } from './board.tsx'
 import { PostingDetail } from './detail.tsx'
 import {
@@ -17,6 +17,7 @@ import {
 } from './filters.ts'
 import { FilterBar } from './filters.tsx'
 import { PostingsGrid } from './grid.tsx'
+import { DEFAULT_DISPLAY } from './recommendation.ts'
 
 const VIEW_LABELS: Record<View, string> = { grid: 'Grid', board: 'Board' }
 
@@ -68,12 +69,16 @@ export function PostingsPage() {
   const [criteriaSets, setCriteriaSets] = useState<readonly CriteriaSetRow[]>([])
   const [error, setError] = useState<string | undefined>()
   const [saving, setSaving] = useState(false)
+  /** Read once on load; until it lands, or if it cannot be read, the default display and the server's ask floor apply. */
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const display = settings?.recommendationDisplay ?? DEFAULT_DISPLAY
   const { filters } = state
   const { criteriaSetId, includeSetAside } = filters
 
   useEffect(() => {
     data.phases().then(setPhases, (failure: unknown) => setError(message(failure, 'could not load the phases')))
     data.criteriaSets().then(setCriteriaSets, () => setCriteriaSets([]))
+    data.settings().then(setSettings, () => setSettings(null))
   }, [])
 
   const reload = useCallback(async () => {
@@ -97,7 +102,7 @@ export function PostingsPage() {
     void reload()
   }, [reload])
 
-  const shown = useMemo(() => sortRows(applyFilters(rows ?? [], filters), state.sort), [rows, filters, state.sort])
+  const shown = useMemo(() => sortRows(applyFilters(rows ?? [], filters, display), state.sort, display), [rows, filters, state.sort, display])
 
   async function reorder(patches: readonly RankPatch[]): Promise<void> {
     setRows((current) => (current === undefined ? current : withRanks(current, patches)))
@@ -119,7 +124,7 @@ export function PostingsPage() {
       <header className="page-head postings-head">
         <div>
           <h1>Postings</h1>
-          <p className="muted">Every posting recorded, scored against one criteria set. Bands use the default ask floor.</p>
+          <p className="muted">Every posting recorded, scored against one criteria set. The recommendation shown is set in Settings.</p>
         </div>
         <ViewToggle view={state.view} onChange={(view) => setState({ ...state, view })} />
       </header>
@@ -139,7 +144,7 @@ export function PostingsPage() {
       {rows === undefined && error === undefined && <p className="muted">Loading…</p>}
       {rows !== undefined &&
         (state.view === 'grid' ? (
-          <PostingsGrid rows={shown} sort={state.sort} selectedId={state.posting} onSort={(sort) => setState({ ...state, sort })} onSelect={select} />
+          <PostingsGrid rows={shown} sort={state.sort} selectedId={state.posting} display={display} onSort={(sort) => setState({ ...state, sort })} onSelect={select} />
         ) : (
           <PostingsBoard
             rows={shown}
@@ -147,11 +152,20 @@ export function PostingsPage() {
             phases={phases}
             selectedId={state.posting}
             saving={saving}
+            display={display}
             onSelect={select}
             onReorder={(patches) => void reorder(patches)}
           />
         ))}
-      {state.posting !== null && <PostingDetail postingId={state.posting} onClose={() => select(null)} onChanged={() => void reload()} />}
+      {state.posting !== null && (
+        <PostingDetail
+          postingId={state.posting}
+          display={display}
+          {...(settings === null ? {} : { askFloor: settings.askFloor })}
+          onClose={() => select(null)}
+          onChanged={() => void reload()}
+        />
+      )}
     </div>
   )
 }

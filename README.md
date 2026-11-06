@@ -193,12 +193,13 @@ notes. Otherwise no notebook tool is registered, and the server says why in one 
 
 ## Plugin skills
 
-The Claude Code plugin ships four skills in [.claude-plugin/skills/](.claude-plugin/skills/):
+The Claude Code plugin ships five skills in [.claude-plugin/skills/](.claude-plugin/skills/):
 
 - `notebook-store-postings`: how to store postings and documents in Open Notebook.
 - `criteria-weighting`: gates, weights and anchors, and how to elicit them.
 - `scoring-questions`: question types that fine-tune the criteria, and where answers go.
 - `past-work-gates-and-flags`: what a user can tell about past work, turned into gates and flags.
+- `recommendation-verdicts`: giving, revising and explaining the agent's apply, ask or skip verdict.
 
 They are generic on purpose. Your own criteria, thresholds and preferences belong in a personal
 variant that git never tracks. To make one, copy a skill into a directory whose name starts
@@ -214,9 +215,16 @@ and a test checks that git ignores them. A variant in `.claude-plugin/skills/` l
 plugin when Claude Code runs it from this clone; one in `~/.claude/skills/` loads in every
 project and is outside any repository.
 
+## For agents
+
+The tracker is built to be driven by an agent through the MCP server. [AGENTS.md](AGENTS.md)
+holds the instructions for any agent: the order of work, the fields only the user writes, and
+how to give a verdict next to the rules recommendation. [docs/prompts/](docs/prompts/README.md)
+holds short prompts to paste into a session, such as adding a posting or importing a sheet.
+
 ## The HTTP service
 
-`bun run serve` starts the internal HTTP service: 27 routes under `/api` for the web app, and
+`bun run serve` starts the internal HTTP service: 29 routes under `/api` for the web app, and
 `GET /health`. It reads `DATABASE_URL` from `.env`, so run `bun run db:up` and
 `bun run db:migrate` first. It listens on port 3000; `PORT` changes it.
 
@@ -337,10 +345,10 @@ the OIDC settings alone. There is no other recovery path.
 
 ## The MCP server
 
-`bun run mcp` starts the MCP server, which offers 57 tools for recording, scoring and reading
+`bun run mcp` starts the MCP server, which offers 60 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
 repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
-`registered 57 MCP tools` to stderr, which is how you see that every tool module loaded.
+`registered 60 MCP tools` to stderr, which is how you see that every tool module loaded.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).

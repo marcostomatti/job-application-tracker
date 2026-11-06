@@ -68,10 +68,33 @@ describe('PostingDetailView', () => {
     expect(html).toContain('Long commute days')
   })
 
+  test("shows both recommendations, the agent's reason, and says they disagree", () => {
+    const html = render()
+    const section = html.slice(html.indexOf('>Recommendation<'), html.indexOf('>Score<'))
+
+    expect(section).toContain('pd-band-ask')
+    expect(section).toContain('pd-band-skip')
+    expect(section).toContain('The on-call load outweighs the domain fit.')
+    expect(section).toContain('They disagree: the rules say Ask, the agent says Skip.')
+  })
+
+  test('with no agent verdict it says so, and under agent it says the rules band stands in', () => {
+    const detail = detailFixture({ recommendation: { rules: 'ask', agent: null, disagree: false } })
+    const both = render({ detail })
+    const agent = render({ detail, display: 'agent' })
+
+    expect(both).toContain('No verdict on this score.')
+    expect(both).not.toContain('They disagree')
+    expect(both).not.toContain('until the agent gives a verdict')
+    expect(agent).toContain('until the agent gives a verdict')
+  })
+
   test('a gate rated 0 reads as blocking and puts the posting in skip', () => {
     const html = render({ detail: detailFixture({ remoteCoverage: 0 }) })
-    expect(html).toContain('blocks')
-    expect(html).toContain('pd-band-skip')
+    const score = html.slice(html.indexOf('>Score<'))
+    expect(score).toContain('blocks')
+    expect(score).toContain('pd-band-skip')
+    expect(score).not.toContain('pd-band-ask')
   })
 
   test('shows dispositions, origins and the questions with one answer box per open question', () => {
@@ -88,9 +111,9 @@ describe('PostingDetailView', () => {
   })
 
   test('says what is missing rather than rendering blank', () => {
-    const detail = { ...detailFixture(), summary: null, latestStage: null, scores: [], dispositions: [], origins: [], questions: [] }
+    const detail = { ...detailFixture({ recommendation: null }), summary: null, latestStage: null, scores: [], dispositions: [], origins: [], questions: [] }
     const html = render({ detail, history: null, stages: [] })
-    for (const line of ['No summary written yet.', 'No stage recorded yet.', 'The stage history could not be read.', 'The stage registry is empty', 'no score recorded yet', 'Neither set aside nor rejected.', 'No origin recorded.', 'No questions yet.']) {
+    for (const line of ['No summary written yet.', 'No stage recorded yet.', 'The stage history could not be read.', 'The stage registry is empty', 'no score recorded yet', 'No recommendation: the posting has no score yet.', 'Neither set aside nor rejected.', 'No origin recorded.', 'No questions yet.']) {
       expect(html).toContain(line)
     }
   })

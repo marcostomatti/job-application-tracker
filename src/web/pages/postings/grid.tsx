@@ -1,7 +1,9 @@
 import type { KeyboardEvent } from 'react'
 
-import type { PostingListRow } from '../../data.ts'
-import { BAND_LABELS, bandOf, formatScore, isoDay, nextSort, type GridSort, type SortKey } from './filters.ts'
+import type { PostingListRow, RecommendationDisplay } from '../../data.ts'
+import { formatScore, isoDay, nextSort, type GridSort, type SortKey } from './filters.ts'
+import { RecommendationChips } from './recommendation-chips.tsx'
+import { DEFAULT_DISPLAY, recommendationView } from './recommendation.ts'
 
 export interface PostingsGridProps {
   /** Already filtered and sorted. */
@@ -10,6 +12,8 @@ export interface PostingsGridProps {
   readonly selectedId: number | null
   readonly onSort: (next: GridSort) => void
   readonly onSelect: (postingId: number) => void
+  /** Which recommendation the column shows; the Settings choice, read once by the page. */
+  readonly display?: RecommendationDisplay
 }
 
 const COLUMNS: readonly { key: SortKey; label: string; className?: string }[] = [
@@ -17,7 +21,7 @@ const COLUMNS: readonly { key: SortKey; label: string; className?: string }[] = 
   { key: 'role', label: 'Role' },
   { key: 'phase', label: 'Phase / stage' },
   { key: 'score', label: 'Score', className: 'num' },
-  { key: 'apply', label: 'Apply' },
+  { key: 'recommendation', label: 'Recommendation' },
   { key: 'seen', label: 'Posted', className: 'date' },
   { key: 'updated', label: 'Updated', className: 'date' },
 ]
@@ -37,8 +41,8 @@ function SortHeader({ column, sort, onSort }: { column: (typeof COLUMNS)[number]
   )
 }
 
-function Row({ row, selected, onSelect }: { row: PostingListRow; selected: boolean; onSelect: (postingId: number) => void }) {
-  const band = bandOf(row)
+function Row({ row, selected, display, onSelect }: { row: PostingListRow; selected: boolean; display: RecommendationDisplay; onSelect: (postingId: number) => void }) {
+  const view = recommendationView(row.recommendation, display)
   const { posting, company, stage, phase, score } = row
   const select = (): void => onSelect(posting.id)
   const onKey = (event: KeyboardEvent): void => {
@@ -65,12 +69,11 @@ function Row({ row, selected, onSelect }: { row: PostingListRow; selected: boole
         )}
       </td>
       <td data-label="Score" className="num">
-        <span className={`band-chip band-${band}`} title={BAND_LABELS[band]}>
-          <span className="dot" aria-hidden="true" />
-          {formatScore(score?.overall)}
-        </span>
+        {formatScore(score?.overall)}
       </td>
-      <td data-label="Apply">{score === null ? <span className="muted">—</span> : score.recommendApply ? <strong className="apply-yes">Yes</strong> : <span className="muted">No</span>}</td>
+      <td data-label="Recommendation">
+        <RecommendationChips view={view} />
+      </td>
       <td data-label="Posted" className="date">
         {posting.seenAt}
       </td>
@@ -82,7 +85,7 @@ function Row({ row, selected, onSelect }: { row: PostingListRow; selected: boole
 }
 
 /** The postings as a table, one column sort at a time; a click or Enter on a row opens it. */
-export function PostingsGrid({ rows, sort, selectedId, onSort, onSelect }: PostingsGridProps) {
+export function PostingsGrid({ rows, sort, selectedId, onSort, onSelect, display = DEFAULT_DISPLAY }: PostingsGridProps) {
   if (rows.length === 0) return <p className="muted empty">No postings match these filters.</p>
   return (
     <div className="card postings-grid-card">
@@ -96,7 +99,7 @@ export function PostingsGrid({ rows, sort, selectedId, onSort, onSelect }: Posti
         </thead>
         <tbody>
           {rows.map((row) => (
-            <Row key={row.posting.id} row={row} selected={row.posting.id === selectedId} onSelect={onSelect} />
+            <Row key={row.posting.id} row={row} selected={row.posting.id === selectedId} display={display} onSelect={onSelect} />
           ))}
         </tbody>
       </table>

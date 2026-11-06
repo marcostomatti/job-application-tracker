@@ -1,4 +1,4 @@
-import type { PhaseRegistryRow, PostingListRow, StageRegistryRow } from '../../src/web/data.ts'
+import type { AgentVerdict, PhaseRegistryRow, PostingListRow, Recommendation, RulesBand, StageRegistryRow } from '../../src/web/data.ts'
 
 /** Invented rows for the postings page tests: no real employer, role or person. */
 
@@ -24,12 +24,29 @@ interface RowInput {
   readonly rank?: number | null
   readonly seenAt?: string
   readonly setAside?: boolean
+  /** The server's rules band; by default what the rules give for the score at the default ask floor, gates open. */
+  readonly rules?: RulesBand
+  /** The agent's verdict; none by default. */
+  readonly agent?: AgentVerdict | null
+}
+
+/** The rules band the server would send for an ungated score at the 0.5 ask floor. */
+function rulesFor(scored: boolean, overall: number | null, recommendApply: boolean): RulesBand {
+  if (!scored) return 'unscored'
+  if (recommendApply) return 'apply'
+  if (overall === null) return 'unscored'
+  return overall < 0.5 ? 'skip' : 'ask'
+}
+
+export function recommendation(rules: RulesBand, agent: AgentVerdict | null = null): Recommendation {
+  return { rules, agent, disagree: agent !== null && agent.band !== rules }
 }
 
 export function row(input: RowInput): PostingListRow {
   const phaseId = input.phaseId ?? null
   const phase = phaseId === null ? null : (PHASES.find((entry) => entry.id === phaseId) ?? null)
   const scored = input.scored ?? true
+  const overall = input.overall === undefined ? 0.6 : input.overall
   return {
     posting: {
       id: input.id,
@@ -64,7 +81,7 @@ export function row(input: RowInput): PostingListRow {
           postingId: input.id,
           criteriaSetId: 1,
           scoredAt: '2026-03-02',
-          overall: input.overall === undefined ? 0.6 : input.overall,
+          overall,
           limiterRequirementId: null,
           limiterCoverage: null,
           limiterIsUnknown: false,
@@ -74,8 +91,11 @@ export function row(input: RowInput): PostingListRow {
           recommendApply: input.recommendApply ?? false,
           isRescore: false,
           note: null,
+          agentVerdict: input.agent?.band ?? null,
+          agentReason: input.agent?.reason ?? null,
         }
       : null,
     setAside: input.setAside ?? false,
+    recommendation: recommendation(input.rules ?? rulesFor(scored, overall, input.recommendApply ?? false), input.agent ?? null),
   }
 }

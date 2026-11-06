@@ -1,13 +1,14 @@
 import type { Db } from '../../data/repositories/db.ts'
 import { moveIfRecommended, type StageEvent } from '../../data/repositories/dispositions.ts'
 import { listPendingRescore, requestRescore } from '../../data/repositories/rescore.ts'
-import { getBestScores, getScoreHistory, scorePosting, type ScoreRow } from '../../data/repositories/scores.ts'
+import { getBestScores, getScoreHistory, scorePosting, setScoreVerdict, type ScoreRow } from '../../data/repositories/scores.ts'
 import {
   PendingRescoreQuerySchema,
   PostingScoresQuerySchema,
   RescoreRequestInputSchema,
   ScorePostingBulkSchema,
   ScorePostingCallSchema,
+  ScoreVerdictSetInputSchema,
   type PostingScoresQuery,
   type ScorePostingInput,
 } from '../../schemas/scores.ts'
@@ -45,6 +46,16 @@ export async function readBestScores(db: Db, args: PostingScoresQuery): Promise<
 const SCALE_NOTE =
   'Give scale (stars, percent or basic) to read overall, floor and ceiling on that scale instead of 0..1; recommendApply is always the stored verdict. '
 
+/**
+ * The sentence every scoring tool adds about the agent verdict. The server computes the rules
+ * recommendation from the score itself, so a verdict that only restates the score range adds
+ * nothing; the useful verdicts are the agent's own view and the user's own column.
+ */
+const VERDICT_NOTE =
+  'Optionally give verdict { band: apply|ask|skip, reason? } with your own view of the posting; it is stored on this score, beside the recommendation the server computes from the score. ' +
+  'Give one whenever you have a view. When the source data the user gave has its own recommendation column (for example a spreadsheet\'s Apply/Skip column), use THAT as the band rather than deriving one from the score range. ' +
+  'Leave it out when you have neither: the score then carries no verdict. To change a verdict later without rescoring, use score_verdict_set. '
+
 /** §11.1 group 3: scoring postings against a criteria set, reading scores, and re-score requests. */
 export const scoreTools: ToolDefinition[] = [
   defineTool({
@@ -57,6 +68,7 @@ export const scoreTools: ToolDefinition[] = [
       'The move follows THIS score only: a posting scored under a set that says no is not moved, even when another current set recommends it, so a posting can appear in the recommended filter (posting_search with recommendApply true, which looks across all current sets) without having been shortlisted. ' +
       'The score and the move are one atomic step. Scoring the same posting and set again on the same day replaces that score; on a later day it adds a re-score. ' +
       'A rating needs a coverage from 0 to 1, or null for not rated; a requirement you do not rate counts as not rated. Get requirement ids from criteria_requirements. ' +
+      VERDICT_NOTE +
       SCALE_NOTE,
     input: ScorePostingCallSchema,
     run: async ({ scale, ...input }, db) => scaleScoredMove(await db.transaction(async (tx) => scoreAndMove(tx, input)), scale),
@@ -113,12 +125,24 @@ export const scoreTools: ToolDefinition[] = [
       'Each item moves its own posting to the shortlist phase when, and only when, its own score recommends applying and the posting is not already applied. ' +
       'All or none: if any item fails, no score is stored, no posting moves, and the error names the failing item by its index. ' +
       'Prefer this to repeated score_posting calls when working through a re-score request from rescore_pending. ' +
-      'One scale, outside items, applies to every answer of the call. ' +
+      'One scale, outside items, applies to every answer of the call. Each item may carry its own verdict. ' +
+      VERDICT_NOTE +
       SCALE_NOTE,
     input: ScorePostingBulkSchema,
     run: async (args, db) =>
       (await inOneTransaction(db, args.items, (tx, item) => scoreAndMove(tx, item))).map((result) =>
         scaleScoredMove(result, args.scale),
       ),
+  }),
+  defineTool({
+    name: 'score_verdict_set',
+    title: 'Set or clear the agent verdict on a score',
+    description:
+      'Sets, or clears with verdict null, YOUR verdict { band: apply|ask|skip, reason? } on the latest score of ONE posting under one criteria set (the default set when criteriaSetId is left out), and returns that score. ' +
+      'Nothing is rescored: the overall, the ratings, recommendApply and the stage stay as they are. ' +
+      'Use it to record the user\'s own recommendation (for example an Apply/Skip column) or a view you formed after scoring. ' +
+      'A verdict belongs to one score, so a later score starts without one. A posting with no score under the set is a not-found error; score it with score_posting first.',
+    input: ScoreVerdictSetInputSchema,
+    run: async (args, db) => setScoreVerdict(db, args),
   }),
 ]

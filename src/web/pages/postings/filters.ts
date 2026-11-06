@@ -3,9 +3,9 @@
  * grid's sort and the board's column order. Pure so the semantics are tested without a render,
  * and so the grid and the board read one filtered list and switching view never loses a filter.
  */
-import { DEFAULT_ASK_FLOOR, leadBand } from '../../../stats/bands.ts'
 import { LEAD_BANDS, type LeadBand } from '../../../stats/types.ts'
-import type { PhaseRegistryRow, PostingListRow } from '../../data.ts'
+import type { PhaseRegistryRow, PostingListRow, RecommendationDisplay } from '../../data.ts'
+import { bandRank, DEFAULT_DISPLAY, primaryBand } from './recommendation.ts'
 
 export { BAND_LABELS, BAND_ORDER } from '../../charts/options.ts'
 
@@ -27,8 +27,11 @@ export interface PostingFilters {
 
 export const EMPTY_FILTERS: PostingFilters = { search: '', phase: null, band: null, includeSetAside: false, criteriaSetId: null }
 
-export type SortKey = 'company' | 'role' | 'phase' | 'score' | 'apply' | 'seen' | 'updated'
-export const SORT_KEYS: readonly SortKey[] = ['company', 'role', 'phase', 'score', 'apply', 'seen', 'updated']
+export type SortKey = 'company' | 'role' | 'phase' | 'score' | 'recommendation' | 'seen' | 'updated'
+export const SORT_KEYS: readonly SortKey[] = ['company', 'role', 'phase', 'score', 'recommendation', 'seen', 'updated']
+
+/** Sort keys an older link may carry, read as the column that replaced them. */
+const SORT_ALIASES: Readonly<Record<string, SortKey>> = { apply: 'recommendation' }
 
 export interface GridSort {
   readonly key: SortKey
@@ -65,7 +68,7 @@ function phaseFilter(raw: string | null): PhaseFilter {
 /** `<key>:asc` or `<key>:desc`; anything else is the default order. */
 function gridSort(raw: string | null): GridSort {
   const [key, direction] = (raw ?? '').split(':')
-  const sortKey = oneOf(key ?? null, SORT_KEYS)
+  const sortKey = oneOf(SORT_ALIASES[key ?? ''] ?? key ?? null, SORT_KEYS)
   if (sortKey === null || (direction !== 'asc' && direction !== 'desc')) return DEFAULT_SORT
   return { key: sortKey, desc: direction === 'desc' }
 }
@@ -107,14 +110,12 @@ export function encodeUrlState(state: PostingsUrlState): string {
 }
 
 /**
- * The lead band of a row's score. A list row carries no per-requirement ratings, so a gate
- * blocked with an overall at or above the ask floor reads as `ask` here, where the stats page
- * (which reads the ratings) would say `skip`. `apply` is the stored verdict, never recomputed.
+ * The band a row is filtered, sorted and coloured by: the server's recommendation (the rules band
+ * is gate-aware and uses the configured ask floor), read through the display choice, so under
+ * `agent` it is the agent's verdict where there is one.
  */
-export function bandOf(row: PostingListRow, askFloor: number = DEFAULT_ASK_FLOOR): LeadBand {
-  const { score } = row
-  if (score === null) return 'unscored'
-  return leadBand({ overall: score.overall, recommendApply: score.recommendApply, gateBlocked: false, softCoverages: [] }, askFloor)
+export function bandOf(row: PostingListRow, display: RecommendationDisplay = DEFAULT_DISPLAY): LeadBand {
+  return primaryBand(row.recommendation, display)
 }
 
 /** Folded so a search without accents finds a name with them, whatever the case. */
@@ -134,12 +135,12 @@ function matchesPhase(row: PostingListRow, phase: PhaseFilter): boolean {
 }
 
 /** The rows the filters keep, in the order given. A new array; the input is not touched. */
-export function applyFilters(rows: readonly PostingListRow[], filters: PostingFilters, askFloor: number = DEFAULT_ASK_FLOOR): PostingListRow[] {
+export function applyFilters(rows: readonly PostingListRow[], filters: PostingFilters, display: RecommendationDisplay = DEFAULT_DISPLAY): PostingListRow[] {
   const needle = fold(filters.search.trim())
   return rows.filter((row) => {
     if (needle !== '' && !haystack(row).includes(needle)) return false
     if (!matchesPhase(row, filters.phase)) return false
-    if (filters.band !== null && bandOf(row, askFloor) !== filters.band) return false
+    if (filters.band !== null && bandOf(row, display) !== filters.band) return false
     if (!filters.includeSetAside && row.setAside) return false
     return true
   })
@@ -153,7 +154,13 @@ export function isoDay(value: string | Date | null | undefined): string {
 
 type SortValue = string | number | null
 
-function sortValue(row: PostingListRow, key: SortKey): SortValue {
+/** The recommendation as one sortable number: the band first, the overall breaking ties within it. */
+function recommendationValue(row: PostingListRow, display: RecommendationDisplay): number | null {
+  const rank = bandRank(bandOf(row, display))
+  return rank === null ? null : rank * 10 + (row.score?.overall ?? 0)
+}
+
+function sortValue(row: PostingListRow, key: SortKey, display: RecommendationDisplay): SortValue {
   switch (key) {
     case 'company':
       return fold(row.company.name)
@@ -163,8 +170,8 @@ function sortValue(row: PostingListRow, key: SortKey): SortValue {
       return row.phase === null ? null : row.phase.sort * 100_000 + (row.stage?.sort ?? 0)
     case 'score':
       return row.score?.overall ?? null
-    case 'apply':
-      return row.score === null ? null : row.score.recommendApply ? 1 : 0
+    case 'recommendation':
+      return recommendationValue(row, display)
     case 'seen':
       return row.posting.seenAt
     case 'updated':
@@ -182,10 +189,10 @@ function compareValues(a: SortValue, b: SortValue): number {
  * posting with no score is not a low-scoring one. Ties fall back to the id, newest first, so
  * the order is the same on every reload.
  */
-export function sortRows(rows: readonly PostingListRow[], sort: GridSort): PostingListRow[] {
+export function sortRows(rows: readonly PostingListRow[], sort: GridSort, display: RecommendationDisplay = DEFAULT_DISPLAY): PostingListRow[] {
   return [...rows].sort((left, right) => {
-    const a = sortValue(left, sort.key)
-    const b = sortValue(right, sort.key)
+    const a = sortValue(left, sort.key, display)
+    const b = sortValue(right, sort.key, display)
     if (a === null && b !== null) return 1
     if (b === null && a !== null) return -1
     const decided = a === null || b === null ? 0 : compareValues(a, b)

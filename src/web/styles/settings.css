@@ -1,0 +1,87 @@
+/* settings page styles: use the tokens on :root in ../styles.css only. */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 640px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+fieldset.settings-group {
+  min-width: 0;
+}
+
+.settings-group legend {
+  padding: 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-lead {
+  margin: 0;
+  font-size: 13px;
+}
+
+.settings-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.settings-option.checked {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+}
+
+.settings-option input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.settings-option-label {
+  display: block;
+  font-weight: 600;
+}
+
+.settings-option-help {
+  display: block;
+  font-size: 13px;
+}
+
+.settings-floor {
+  max-width: 200px;
+}
+
+.settings-floor input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-saved {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .settings-floor {
+    max-width: none;
+  }
+}

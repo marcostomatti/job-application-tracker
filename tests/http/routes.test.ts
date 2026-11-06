@@ -31,8 +31,8 @@ afterAll(async () => {
 })
 
 /**
- * The route table of the brief (§11.2), and the three routes the web pages added after it (the
- * stage history and the two question writes), copied here so a route added or dropped fails a test.
+ * The route table of the brief (§11.2), and the five routes the web pages added after it (the
+ * stage history, the two question writes, and the settings read and write), copied here so a route added or dropped fails a test.
  * The stage history mirrors no tool: no MCP tool reads the whole history, only the latest event.
  */
 const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> = [
@@ -63,6 +63,8 @@ const BRIEF_TABLE: ReadonlyArray<readonly [string, string, readonly string[]]> =
   ['GET', '/api/postings/:id/stages', []],
   ['POST', '/api/postings/:id/questions', ['posting_question_add']],
   ['PUT', '/api/questions/:id/answer', ['posting_question_answer']],
+  ['GET', '/api/settings', ['settings_get']],
+  ['PATCH', '/api/settings', ['settings_update']],
 ]
 
 /** A parameter's name is invisible to a client, so two paths are the same route when their shapes are. */
@@ -80,11 +82,11 @@ const dataOf = (outcome: HttpOutcome): unknown => (outcome.body as { data: unkno
 const errorOf = (outcome: HttpOutcome): { name: string; message: string } => (outcome.body as { error: { name: string; message: string } }).error
 
 describe('the route table', () => {
-  test('mounts exactly the 27 routes of the table, at the same methods and paths', () => {
+  test('mounts exactly the 29 routes of the table, at the same methods and paths', () => {
     const mounted = ROUTES.map((spec) => `${spec.method.toUpperCase()} /api${shapeOf(spec.path)}`).sort()
     const table = BRIEF_TABLE.map(([method, path]) => `${method} ${shapeOf(path)}`).sort()
 
-    expect(ROUTES).toHaveLength(27)
+    expect(ROUTES).toHaveLength(29)
     expect(mounted).toEqual(table)
   })
 
@@ -117,8 +119,8 @@ describe('the route table', () => {
       }
     }
 
-    // 27 routes: the disposition route mirrors two tools and the stage history none.
-    expect(checked).toBe(27)
+    // 29 routes: the disposition route mirrors two tools and the stage history none.
+    expect(checked).toBe(29)
   })
 
   test('two routes may share one schema because two tools do: the summary and origin reads, and the score reads', () => {

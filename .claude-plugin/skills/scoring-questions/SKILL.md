@@ -24,6 +24,7 @@ fill them in.
 | Threshold | An anchor needs a line | "At what point does the commute stop being acceptable?" | Anchors |
 | Rejected-posting review | The user rejected a posting that scored well | "What made you say no to this one?" | A missing requirement, or a weight |
 | Surprise review | A low-scoring posting excites the user | "What do you like here that the score missed?" | A missing requirement, or a weight |
+| Disagreement review | The agent verdict and the rules band differ (see the recommendation-verdicts skill) | "The score says skip because of the location gate, but your note says apply. Is that gate negotiable?" | A gate, a weight, or the verdict |
 | Unknown follow-up | A rating is unknown because the posting does not say | "Is this worth asking them, or can we leave it unknown?" | A posting question, or a lower weight |
 | Past-work anchor | An anchor is abstract | "Think of a team you liked. What did this look like there?" | Anchors in the user's terms |
 

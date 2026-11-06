@@ -10,10 +10,12 @@ import type { PostingQuestion } from '../data/repositories/questions.ts'
 import type { RegistryRowOf } from '../data/repositories/registries.ts'
 import type { ScoreRow } from '../data/repositories/scores.ts'
 import type { TextAsset } from '../data/repositories/texts.ts'
+import type { AgentVerdict, AppSettings, AppSettingsPatch, Recommendation, RecommendationDisplay, RulesBand } from '../schemas/recommendation.ts'
 import type { Scale } from '../scoring/scale.ts'
 import { request } from './api.ts'
 
 export type { CriteriaSetRow, PostingDetail, PostingListRow, PostingQuestion, RequirementRow, ScoreRow, StageEvent, TextAsset }
+export type { AgentVerdict, AppSettings, AppSettingsPatch, Recommendation, RecommendationDisplay, RulesBand }
 
 export type StageRegistryRow = RegistryRowOf<'stage'>
 export type PhaseRegistryRow = RegistryRowOf<'phase'>
@@ -75,4 +77,9 @@ export const data = {
   /** GET /api/criteria-sets/:criteriaSetId/requirements */
   requirements: (criteriaSetId: number): Promise<RequirementRow[]> =>
     request('GET', `/api/criteria-sets/${id(criteriaSetId)}/requirements`),
+
+  /** NEW: GET /api/settings — the ask floor and which recommendation the pages show. */
+  settings: (): Promise<AppSettings> => request('GET', '/api/settings'),
+  /** NEW: PATCH /api/settings — changes the named settings and returns them all. */
+  updateSettings: (patch: AppSettingsPatch): Promise<AppSettings> => request('PATCH', '/api/settings', patch),
 }

@@ -19,8 +19,21 @@ describe('ALL_TOOLS', () => {
     expect(names.length).toBe(new Set(names).size)
   })
 
-  test('ALL_TOOLS covers groups 1 to 9 of the spec, and the market stats', () => {
-    expect(ALL_TOOLS.length).toBe(57)
+  test('ALL_TOOLS covers groups 1 to 9 of the spec, the market stats, the score verdict and the settings', () => {
+    expect(ALL_TOOLS.length).toBe(60)
+  })
+
+  test('the recommendation tools are registered: the verdict write and the settings pair', () => {
+    const names = new Set(ALL_TOOLS.map((tool) => tool.name))
+    for (const name of ['score_verdict_set', 'settings_get', 'settings_update']) expect(names.has(name)).toBe(true)
+  })
+
+  test('the scoring tools tell an agent to prefer the user\'s own recommendation column as its verdict', () => {
+    for (const name of ['score_posting', 'score_posting_bulk']) {
+      const description = ALL_TOOLS.find((tool) => tool.name === name)?.description ?? ''
+      expect(description).toContain('verdict')
+      expect(description).toContain('use THAT as the band')
+    }
   })
 
   test('every tool has a non-empty title and description', () => {
