@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
 import { ScaleSchema } from '../scoring/scale.ts'
 import { RATING_CONFIDENCES } from './discriminators.ts'
+import { AgentVerdictSchema } from './recommendation.ts'
 
 /** Trimmed, non-empty and storable: a blank note says nothing, and NUL is refused. */
 const text = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
@@ -61,6 +62,22 @@ export const detourIdsOf = (ratings: readonly RatingInput[]): number[] =>
 
 const hasDuplicate = (values: readonly number[]): boolean => new Set(values).size !== values.length
 
+/** A verdict the table can store: the contract's shape, with NUL refused in the reason as in any stored text. */
+const StorableVerdictSchema = AgentVerdictSchema.refine((verdict) => verdict.reason === null || hasNoNul(verdict.reason), {
+  message: NO_NUL_MESSAGE,
+  path: ['reason'],
+})
+
+/**
+ * The agent's own recommendation, stored on the score it is given with. Left out, the score
+ * carries none; a same-day re-score replaces the whole row, so it replaces the verdict too.
+ */
+const verdictField = StorableVerdictSchema.optional().describe(
+  'Your own verdict on this posting: { band: apply|ask|skip, reason? (at most 500 chars) }. ' +
+    'When the data the user gave carries its own recommendation (for example an Apply/Skip column in a spreadsheet), use that as the band; ' +
+    'do not derive one from the score range, which the server already does.',
+)
+
 /** The fields of one scoring pass, shared by a single call and an item of a bulk one. */
 const scorePostingFields = {
   postingId: IdSchema,
@@ -68,6 +85,7 @@ const scorePostingFields = {
   ratings: z.array(RatingInputSchema),
   penalties: z.array(PenaltyInputSchema),
   note: text.optional(),
+  verdict: verdictField,
 }
 
 /**
@@ -102,6 +120,18 @@ export type ScorePostingInput = z.infer<typeof ScorePostingInputSchema>
 
 /** Up to `BULK_MAX` scoring passes, all or none, with one scale for every answer of the call. */
 export const ScorePostingBulkSchema = bulkOf(ScorePostingInputSchema).extend({ scale: ScaleSchema })
+
+/**
+ * Sets or clears the agent verdict on a posting's latest score under one set, without scoring
+ * again. `verdict: null` clears it; leaving `criteriaSetId` out means the default set.
+ */
+export const ScoreVerdictSetInputSchema = z.strictObject({
+  postingId: IdSchema,
+  criteriaSetId: IdSchema.optional(),
+  verdict: StorableVerdictSchema.nullable().describe('The verdict to store, or null to clear the one stored.'),
+})
+
+export type ScoreVerdictSetInput = z.infer<typeof ScoreVerdictSetInputSchema>
 
 /** The posting whose scores a read returns, and the scale they are shown on. */
 export const PostingScoresQuerySchema = z.strictObject({ postingId: IdSchema, scale: ScaleSchema })

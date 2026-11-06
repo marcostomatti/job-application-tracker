@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { DEFAULT_ASK_FLOOR } from '../../../stats/bands.ts'
-import { data, type PostingDetail as PostingDetailData, type RequirementRow, type StageHistoryRow, type StageRegistryRow } from '../../data.ts'
+import {
+  data,
+  type PostingDetail as PostingDetailData,
+  type RecommendationDisplay,
+  type RequirementRow,
+  type StageHistoryRow,
+  type StageRegistryRow,
+} from '../../data.ts'
 import { dispositionLabel, formatDay, latestScore, locationLine, postingLink } from './detail-labels.ts'
 import { QuestionList } from './detail-questions.tsx'
-import { ScoreBreakdown } from './detail-score.tsx'
+import { RecommendationSummary, ScoreBreakdown } from './detail-score.tsx'
 import { CurrentStage, StageForm, StageTimeline, type StageEventDraft } from './detail-stages.tsx'
+import { DEFAULT_DISPLAY } from './recommendation.ts'
 
 const TITLE_ID = 'posting-detail-title'
 
@@ -23,6 +31,8 @@ export interface PostingDetailViewProps extends DetailHandlers {
   /** The latest score's set requirements; null while loading or when they could not be read. */
   readonly requirements: readonly RequirementRow[] | null
   readonly askFloor: number
+  /** The Settings display choice; the panel shows both recommendations either way. */
+  readonly display?: RecommendationDisplay
   readonly error: string | null
 }
 
@@ -121,7 +131,7 @@ function Origins({ origins }: { origins: PostingDetailData['origins'] }) {
  * mount, so a test can render it with no server.
  */
 export function PostingDetailView(props: PostingDetailViewProps & { onClose: () => void }) {
-  const { detail, history, stages, requirements, askFloor, error, onClose } = props
+  const { detail, history, stages, requirements, askFloor, error, onClose, display = DEFAULT_DISPLAY } = props
   const { posting, company } = detail
   const link = postingLink(posting)
   const score = latestScore(detail.scores)
@@ -157,6 +167,9 @@ export function PostingDetailView(props: PostingDetailViewProps & { onClose: () 
         <CurrentStage latest={detail.latestStage} />
         <StageTimeline history={history} />
         <StageForm stages={stages} onRecord={props.onRecordStage} />
+      </Section>
+      <Section title="Recommendation">
+        <RecommendationSummary recommendation={detail.recommendation} display={display} />
       </Section>
       <Section title="Score">
         <ScoreBreakdown score={score} otherSets={Math.max(0, detail.scores.length - 1)} requirements={requirements} askFloor={askFloor} />
@@ -213,7 +226,17 @@ async function loadPosting(postingId: number): Promise<Loaded> {
 }
 
 /** The posting detail panel: loads one posting, shows it, and writes stage events and questions. */
-export function PostingDetail({ postingId, onClose, onChanged }: { postingId: number; onClose: () => void; onChanged: () => void }) {
+export interface PostingDetailProps {
+  readonly postingId: number
+  /** The Settings display choice, read once by the page. */
+  readonly display?: RecommendationDisplay
+  /** The configured ask floor, read once by the page; the default until it lands. */
+  readonly askFloor?: number
+  readonly onClose: () => void
+  readonly onChanged: () => void
+}
+
+export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor = DEFAULT_ASK_FLOOR, onClose, onChanged }: PostingDetailProps) {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
@@ -307,7 +330,8 @@ export function PostingDetail({ postingId, onClose, onChanged }: { postingId: nu
           history={loaded.history}
           stages={stages}
           requirements={requirements}
-          askFloor={DEFAULT_ASK_FLOOR}
+          askFloor={askFloor}
+          display={display}
           error={writeError}
           onClose={onClose}
           {...handlers}

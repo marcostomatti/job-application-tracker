@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
 import { BulkItemError, ConflictError, NotFoundError } from '../../errors.ts'
 import type { PostingFilter, PostingInput, PostingPatch } from '../../schemas/postings.ts'
+import type { Recommendation } from '../../schemas/recommendation.ts'
 import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
 import { postingDisposition, postingStageEvent } from '../schema/dispositions.ts'
@@ -12,6 +13,7 @@ import { penaltyKind, phase as phaseTable, rejectionReason, route, setAsideReaso
 import { postingPenalty, postingRating, postingScore } from '../schema/scores.ts'
 import { findCompany, upsertCompany, type Company } from './companies.ts'
 import { readQuestionsOf, type PostingQuestion } from './questions.ts'
+import { recommendationIn, recommendationsOf } from './recommendations.ts'
 import { nonSupersededSetIds } from './criteria.ts'
 import type { Db } from './db.ts'
 import { isItemFault } from './item-fault.ts'
@@ -65,7 +67,11 @@ export type DispositionDetail = { readonly disposition: Disposition; readonly re
 
 export type OriginDetail = { readonly origin: Origin; readonly routeLabel: string | null }
 
-/** Everything the detail modal shows for one posting. */
+/**
+ * Everything the detail modal shows for one posting. `recommendation` is both recommendations of
+ * the default set's latest score, the score a list row carries when no set is named; null when the
+ * posting has no score under the default set (or there is no default set).
+ */
 export type PostingDetail = {
   readonly posting: Posting
   readonly company: Company
@@ -76,6 +82,7 @@ export type PostingDetail = {
   readonly dispositions: readonly DispositionDetail[]
   readonly origins: readonly OriginDetail[]
   readonly questions: readonly PostingQuestion[]
+  readonly recommendation: Recommendation | null
 }
 
 /**
@@ -83,7 +90,9 @@ export type PostingDetail = {
  * stage event; `score` is the latest score under the criteria set the query named; else, when
  * the query asked for an answer to `recommendApply`, the standing score that gives it; else the
  * default set's latest. `setAside` says whether any disposition of kind `set_aside` exists, so a
- * caller that asked to include set-aside postings can tell which they are.
+ * caller that asked to include set-aside postings can tell which they are. `recommendation` is
+ * both recommendations of that `score`, computed on the server with its real gates and the
+ * configured ask floor; a row with no score is `unscored` with no agent verdict.
  */
 export type PostingListRow = {
   readonly posting: Posting
@@ -92,6 +101,7 @@ export type PostingListRow = {
   readonly phase: RegistryRowOf<'phase'> | null
   readonly score: Score | null
   readonly setAside: boolean
+  readonly recommendation: Recommendation
 }
 
 /** The internal discriminator of a disposition that sets a lead aside. */
@@ -353,6 +363,19 @@ async function readOrigins(db: Db, postingId: number): Promise<OriginDetail[]> {
   return rows
 }
 
+/** Both recommendations of the posting's latest score under the active default set, or null with no such score. */
+async function readDefaultRecommendation(db: Db, postingId: number): Promise<Recommendation | null> {
+  const [latest] = await db
+    .select({ score: postingScore })
+    .from(postingScore)
+    .innerJoin(criteriaSet, eq(criteriaSet.id, postingScore.criteriaSetId))
+    .where(and(eq(postingScore.postingId, postingId), eq(criteriaSet.isDefault, true), isNull(criteriaSet.archivedAt)))
+    .orderBy(desc(postingScore.scoredAt), desc(postingScore.id))
+    .limit(1)
+  if (!latest) return null
+  return recommendationIn(await recommendationsOf(db, [latest.score]), latest.score)
+}
+
 /**
  * The detail modal's read: the posting with its company, its summary, its latest stage
  * event, the latest score under each criteria set that is not superseded (the same sets
@@ -362,7 +385,7 @@ async function readOrigins(db: Db, postingId: number): Promise<OriginDetail[]> {
  */
 export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
   const row = await readPostingRow(db, id)
-  const [company, references, summary, latestStage, scores, dispositions, origins, questions] = await Promise.all([
+  const [company, references, summary, latestStage, scores, dispositions, origins, questions, recommendation] = await Promise.all([
     findCompany(db, row.companyId),
     readReferences(db, row),
     findSummary(db, id),
@@ -371,8 +394,9 @@ export async function getPosting(db: Db, id: number): Promise<PostingDetail> {
     readDispositions(db, id),
     readOrigins(db, id),
     readQuestionsOf(db, id),
+    readDefaultRecommendation(db, id),
   ])
-  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins, questions }
+  return { posting: row, company, references, summary, latestStage, scores, dispositions, origins, questions, recommendation }
 }
 
 /**
@@ -494,6 +518,8 @@ function conditionsOf(query: PostingFilter): SQL[] {
  * score recommends apply. The row's `score` is then the standing score that gives the answer
  * (the best-scoring one when several do), not the default set's, so a listed row never shows a
  * score that contradicts why it is listed. With no `recommendApply` either, it is the default set's.
+ * Each row's `recommendation` is read for the page's scores together, in a fixed number of
+ * further queries (`recommendationsOf`), never one per row.
  */
 export async function searchPostings(db: Db, query: PostingFilter): Promise<PostingListRow[]> {
   const rows = await db
@@ -515,7 +541,8 @@ export async function searchPostings(db: Db, query: PostingFilter): Promise<Post
     .orderBy(desc(posting.seenAt), desc(posting.id))
     .limit(query.limit)
     .offset(query.offset)
-  return rows
+  const recommendations = await recommendationsOf(db, rows.flatMap((row) => (row.score === null ? [] : [row.score])))
+  return rows.map((row) => ({ ...row, recommendation: recommendationIn(recommendations, row.score) }))
 }
 
 /** The columns a patch changes, with the normalised role kept in step with the title. */

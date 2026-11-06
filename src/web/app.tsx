@@ -4,6 +4,7 @@ import { auth, type SessionState } from './api.ts'
 import { CriteriaPage } from './pages/criteria.tsx'
 import { LoginPage } from './pages/login.tsx'
 import { PostingsPage } from './pages/postings/index.tsx'
+import { SettingsPage } from './pages/settings.tsx'
 import { StatsPage } from './pages/stats.tsx'
 import { TextsPage } from './pages/texts.tsx'
 import { TokensPage } from './pages/tokens.tsx'
@@ -22,6 +23,7 @@ export const PAGES: readonly AppPage[] = [
   { path: '/criteria', label: 'Criteria', render: () => <CriteriaPage /> },
   { path: '/stats', label: 'Stats', render: () => <StatsPage /> },
   { path: '/tokens', label: 'Tokens', render: () => <TokensPage /> },
+  { path: '/settings', label: 'Settings', render: () => <SettingsPage /> },
 ]
 
 /** The page for a path, or the first page for `/` and for any path the app does not draw. */

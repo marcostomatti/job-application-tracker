@@ -1,11 +1,12 @@
-import { and, desc, eq, lt, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
+import { and, desc, eq, isNull, lt, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import { ConflictError } from '../../errors.ts'
+import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Requirement, ScoreInput } from '../../entities/scoring.ts'
 import { REQUIREMENT_KINDS, type RequirementKind } from '../../schemas/discriminators.ts'
-import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePostingInput } from '../../schemas/scores.ts'
+import { detourIdsOf, type PenaltyInput, type RatingInput, type ScorePostingInput, type ScoreVerdictSetInput } from '../../schemas/scores.ts'
 import { scoreAgainstSet, type ScoreResult } from '../../scoring/score-against-set.ts'
+import { verdictColumnsOf } from '../../stats/recommendation.ts'
 import { isForeignKeyViolation } from '../driver-faults.ts'
 import { criteriaSet, requirement } from '../schema/criteria.ts'
 import { postingPenalty, postingRating, postingRatingDetour, postingScore } from '../schema/scores.ts'
@@ -164,12 +165,15 @@ async function hasEarlierScore(db: Db, postingId: number, criteriaSetId: number)
  */
 async function upsertScoreRow(db: Db, input: ScorePostingInput, values: ScoreValues): Promise<StoredScore> {
   const isRescore = await hasEarlierScore(db, input.postingId, input.criteriaSetId)
+  // The verdict is written on both paths, as two nulls when none is given: a same-day re-score
+  // replaces the score, and a verdict given on the replaced numbers is not one on these.
+  const verdict = verdictColumnsOf(input.verdict)
   const [written] = await db
     .insert(postingScore)
-    .values({ postingId: input.postingId, criteriaSetId: input.criteriaSetId, isRescore, ...pickDefined(values, SCORE_COLUMNS) })
+    .values({ postingId: input.postingId, criteriaSetId: input.criteriaSetId, isRescore, ...pickDefined(values, SCORE_COLUMNS), ...verdict })
     .onConflictDoUpdate({
       target: [postingScore.postingId, postingScore.criteriaSetId, postingScore.scoredAt],
-      set: pickDefined(values, SCORE_COLUMNS),
+      set: { ...pickDefined(values, SCORE_COLUMNS), ...verdict },
     })
     .returning()
   if (!written) throw new Error('The score upsert returned no row.')
@@ -331,4 +335,38 @@ export async function getBestScores(db: Db, postingId: number): Promise<ScoreRow
     if (!latestBySet.has(row.criteriaSetId)) latestBySet.set(row.criteriaSetId, row)
   }
   return [...latestBySet.values()]
+}
+
+/** The set a verdict call names, else the active default set; none at all is a not-found error. */
+async function verdictSetId(db: Db, criteriaSetId: number | undefined): Promise<number> {
+  if (criteriaSetId !== undefined) return criteriaSetId
+  const [found] = await db
+    .select({ id: criteriaSet.id })
+    .from(criteriaSet)
+    .where(and(eq(criteriaSet.isDefault, true), isNull(criteriaSet.archivedAt)))
+    .limit(1)
+  if (!found) throw new NotFoundError('criteria set', 'default (there is none yet)')
+  return found.id
+}
+
+/**
+ * Sets or clears the agent verdict on the posting's latest score under the set (by day, then
+ * id), and returns that score as `score_history` reads it. Nothing is rescored: the numbers, the
+ * ratings and the move rule are untouched. A posting with no score under the set is a
+ * `NotFoundError` naming both, because a verdict only exists beside a score.
+ */
+export async function setScoreVerdict(db: Db, input: ScoreVerdictSetInput): Promise<ScoreRow> {
+  await assertPostingExists(db, input.postingId)
+  const setId = await verdictSetId(db, input.criteriaSetId)
+  const [latest] = await db
+    .select({ id: postingScore.id })
+    .from(postingScore)
+    .where(and(eq(postingScore.postingId, input.postingId), eq(postingScore.criteriaSetId, setId)))
+    .orderBy(desc(postingScore.scoredAt), desc(postingScore.id))
+    .limit(1)
+  if (!latest) throw new NotFoundError('score', `of posting ${input.postingId} under criteria set ${setId}`)
+  await db.update(postingScore).set(verdictColumnsOf(input.verdict)).where(eq(postingScore.id, latest.id))
+  const [row] = await readScoreRows(db, input.postingId, eq(postingScore.id, latest.id))
+  if (!row) throw new Error('The score whose verdict was just set could not be read back.')
+  return row
 }

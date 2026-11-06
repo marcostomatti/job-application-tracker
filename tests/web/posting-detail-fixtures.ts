@@ -1,5 +1,5 @@
 /** Invented fixtures for the posting detail tests: no real company, person or host. */
-import type { PostingDetail, RequirementRow, StageHistoryRow, StageRegistryRow } from '../../src/web/data.ts'
+import type { PostingDetail, Recommendation, RequirementRow, StageHistoryRow, StageRegistryRow } from '../../src/web/data.ts'
 
 const stage = (id: number, label: string, sort: number): StageRegistryRow =>
   ({ id, label, key: label.toLowerCase(), phaseId: 1, sort, isTerminal: false, isRepeatable: false, isTraction: false, isApplied: false, archivedAt: null }) as StageRegistryRow
@@ -17,8 +17,12 @@ const rating = (requirementId: number, coverage: number | null, key: string, lab
   requirementLabel: label,
 })
 
-export function detailFixture(overrides: { remoteCoverage?: number | null } = {}): PostingDetail {
+/** By default the server's reading of the score below: rules ask, and an agent verdict that disagrees. */
+export const RECOMMENDATION: Recommendation = { rules: 'ask', agent: { band: 'skip', reason: 'The on-call load outweighs the domain fit.' }, disagree: true }
+
+export function detailFixture(overrides: { remoteCoverage?: number | null; recommendation?: Recommendation | null } = {}): PostingDetail {
   return {
+    recommendation: overrides.recommendation === undefined ? RECOMMENDATION : overrides.recommendation,
     posting: {
       id: 42,
       postingKey: 'https://jobs.example.test/roles/42',

@@ -4,8 +4,9 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { requirement } from '../../src/data/schema/criteria.ts'
-import { postingRating } from '../../src/data/schema/scores.ts'
+import { postingRating, postingScore } from '../../src/data/schema/scores.ts'
 import { RATING_CONFIDENCES, REQUIREMENT_KINDS } from '../../src/schemas/discriminators.ts'
+import { AGENT_VERDICTS } from '../../src/schemas/recommendation.ts'
 
 afterAll(closeDb)
 
@@ -21,6 +22,7 @@ function membersOf(checkText: string): string[] {
 const CHECKS = [
   { constraint: 'requirement_kind_check', table: requirement, members: REQUIREMENT_KINDS },
   { constraint: 'posting_rating_confidence_check', table: postingRating, members: RATING_CONFIDENCES },
+  { constraint: 'posting_score_agent_verdict_check', table: postingScore, members: AGENT_VERDICTS },
 ] as const
 
 /**

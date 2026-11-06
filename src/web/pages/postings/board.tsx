@@ -1,5 +1,7 @@
-import type { PhaseRegistryRow, PostingListRow } from '../../data.ts'
-import { BAND_LABELS, bandOf, boardColumns, formatScore, orderColumn, rankPatches, reorderColumn, type BoardColumn, type RankPatch } from './filters.ts'
+import type { PhaseRegistryRow, PostingListRow, RecommendationDisplay } from '../../data.ts'
+import { boardColumns, formatScore, orderColumn, rankPatches, reorderColumn, type BoardColumn, type RankPatch } from './filters.ts'
+import { RecommendationChips } from './recommendation-chips.tsx'
+import { DEFAULT_DISPLAY, recommendationView } from './recommendation.ts'
 
 export interface PostingsBoardProps {
   /** The filtered rows: what the columns show. */
@@ -12,6 +14,8 @@ export interface PostingsBoardProps {
   readonly saving: boolean
   readonly onSelect: (postingId: number) => void
   readonly onReorder: (patches: readonly RankPatch[]) => void
+  /** Which recommendation a card shows; the Settings choice, read once by the page. */
+  readonly display?: RecommendationDisplay
 }
 
 const columnKey = (column: BoardColumn): string => (column.phase === null ? 'none' : String(column.phase.id))
@@ -22,6 +26,7 @@ function Card({
   first,
   last,
   saving,
+  display,
   onSelect,
   onMove,
 }: {
@@ -30,10 +35,12 @@ function Card({
   first: boolean
   last: boolean
   saving: boolean
+  display: RecommendationDisplay
   onSelect: () => void
   onMove: (step: -1 | 1) => void
 }) {
-  const band = bandOf(row)
+  const view = recommendationView(row.recommendation, display)
+  const band = view.primary.band
   const { posting, company, stage } = row
   return (
     <li className={`board-card band-edge-${band}${selected ? ' selected' : ''}${row.setAside ? ' set-aside' : ''}`}>
@@ -41,10 +48,7 @@ function Card({
         <span className="board-card-company">{company.name}</span>
         <span className="board-card-role">{posting.roleTitle}</span>
         <span className="board-card-meta">
-          <span className={`band-chip band-${band}`}>
-            <span className="dot" aria-hidden="true" />
-            {BAND_LABELS[band]} {formatScore(row.score?.overall)}
-          </span>
+          <RecommendationChips view={view} suffix={formatScore(row.score?.overall)} />
           <span className="muted">{stage?.label ?? 'No stage yet'}</span>
           {row.setAside && <span className="aside-tag">set aside</span>}
         </span>
@@ -65,7 +69,7 @@ function Card({
  * The postings in one column per phase, registry order. A card's arrows move it within its
  * column; the move ranks the whole column 1..n through `onReorder`.
  */
-export function PostingsBoard({ rows, allRows, phases, selectedId, saving, onSelect, onReorder }: PostingsBoardProps) {
+export function PostingsBoard({ rows, allRows, phases, selectedId, saving, onSelect, onReorder, display = DEFAULT_DISPLAY }: PostingsBoardProps) {
   const columns = boardColumns(rows, phases)
   if (columns.length === 0) return <p className="muted empty">No postings match these filters.</p>
 
@@ -97,6 +101,7 @@ export function PostingsBoard({ rows, allRows, phases, selectedId, saving, onSel
                   first={index === 0}
                   last={index === column.rows.length - 1}
                   saving={saving}
+                  display={display}
                   onSelect={() => onSelect(row.posting.id)}
                   onMove={(step) => move(column, row.posting.id, step)}
                 />

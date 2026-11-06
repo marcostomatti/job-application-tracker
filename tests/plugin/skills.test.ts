@@ -23,8 +23,8 @@ describe('the plugin skills', () => {
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('personal-'))
     .map((entry) => entry.name)
 
-  test('the four committed skills are there', () => {
-    expect(committed.sort()).toEqual(['criteria-weighting', 'notebook-store-postings', 'past-work-gates-and-flags', 'scoring-questions'])
+  test('the five committed skills are there', () => {
+    expect(committed.sort()).toEqual(['criteria-weighting', 'notebook-store-postings', 'past-work-gates-and-flags', 'recommendation-verdicts', 'scoring-questions'])
   })
 
   for (const name of committed) {

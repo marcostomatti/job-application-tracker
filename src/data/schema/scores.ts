@@ -12,6 +12,7 @@ import {
   unique,
 } from 'drizzle-orm/pg-core'
 
+import { AGENT_REASON_MAX } from '../../schemas/recommendation.ts'
 import { criteriaSet, detour, requirement } from './criteria.ts'
 import { posting } from './postings.ts'
 import { penaltyKind } from './registries.ts'
@@ -22,6 +23,10 @@ import { penaltyKind } from './registries.ts'
  * mirror what `scoreAgainstSet` returns. `limiterIsUnknown` says the named limiter is only a
  * requirement nobody has rated yet. The unique key makes a same-day re-score for the same set
  * a no-op, while a genuine re-score on another day is a new row marked `isRescore`.
+ *
+ * `agentVerdict` and `agentReason` are the agent's own recommendation beside the computed one
+ * (`src/schemas/recommendation.ts`). They live on the score because a verdict is about the
+ * posting as scored under this set: a new score starts without one. A reason needs a verdict.
  */
 export const postingScore = pgTable(
   'posting_score',
@@ -44,6 +49,8 @@ export const postingScore = pgTable(
     recommendApply: boolean('recommend_apply').notNull().default(false),
     isRescore: boolean('is_rescore').notNull().default(false),
     note: text(),
+    agentVerdict: text('agent_verdict'),
+    agentReason: text('agent_reason'),
   },
   (table) => [
     unique('posting_score_posting_set_day_unique').on(
@@ -72,6 +79,10 @@ export const postingScore = pgTable(
       'posting_score_limiter_coverage_check',
       sql`${table.limiterCoverage} >= 0 AND ${table.limiterCoverage} <= 1`,
     ),
+    // The members are AGENT_VERDICTS (src/schemas/recommendation.ts); tests/data/discriminators.test.ts compares them.
+    check('posting_score_agent_verdict_check', sql`${table.agentVerdict} IN ('apply', 'ask', 'skip')`),
+    check('posting_score_agent_reason_length_check', sql`char_length(${table.agentReason}) <= ${sql.raw(String(AGENT_REASON_MAX))}`),
+    check('posting_score_agent_reason_needs_verdict_check', sql`${table.agentVerdict} IS NOT NULL OR ${table.agentReason} IS NULL`),
   ],
 )
 
