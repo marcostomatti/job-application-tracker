@@ -17,7 +17,11 @@ export class LoginThrottle {
   private attempts = 0
   private lockedUntil = 0
 
-  constructor(private readonly now: () => number = Date.now) {}
+  private readonly now: () => number
+
+  constructor(now: () => number = Date.now) {
+    this.now = now
+  }
 
   /**
    * Seconds left in the pause, or 0 when this attempt may go ahead, in which case it is counted.
