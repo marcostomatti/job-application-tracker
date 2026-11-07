@@ -120,12 +120,17 @@ const NAME_VERSION_CONSTRAINT = 'criteria_set_name_version_unique'
  * the error is indistinguishable from a real failure.
  */
 export class CriteriaSetConflictError extends ConflictError {
+  readonly setName: string
+  readonly version: number
+
   constructor(
-    readonly setName: string,
-    readonly version: number,
+    setName: string,
+    version: number,
     options?: ErrorOptions,
   ) {
     super('criteria set', `"${setName}" at version ${version}`, options)
+    this.setName = setName
+    this.version = version
     this.name = 'CriteriaSetConflictError'
   }
 }
