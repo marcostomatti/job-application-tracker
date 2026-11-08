@@ -1,16 +1,13 @@
 /**
- * The postings page's state and its pure functions: the URL query and back, the filters, the
- * grid's sort and the board's column order. Pure so the semantics are tested without a render,
- * and so the grid and the board read one filtered list and switching view never loses a filter.
+ * The postings and board pages' state and its pure functions: the URL query and back, the
+ * filters, the grid's sort and the board's column order. Pure so the semantics are tested
+ * without a render, and so both pages read the same filters the same way.
  */
 import { LEAD_BANDS, type LeadBand } from '../../../stats/types.ts'
 import type { PhaseRegistryRow, PostingListRow, RecommendationDisplay } from '../../data.ts'
 import { bandRank, DEFAULT_DISPLAY, primaryBand } from './recommendation.ts'
 
 export { BAND_LABELS, BAND_ORDER } from '../../charts/options.ts'
-
-export type View = 'grid' | 'board'
-export const VIEWS: readonly View[] = ['grid', 'board']
 
 /** The phase filter: a phase id, `none` for rows with no stage yet, or `null` for every phase. */
 export type PhaseFilter = number | 'none' | null
@@ -23,9 +20,11 @@ export interface PostingFilters {
   readonly includeSetAside: boolean
   /** The criteria set the scores are read under; `null` is the server's default set. */
   readonly criteriaSetId: number | null
+  /** Board only: skip postings are left off the board unless this is on. The postings table ignores it. */
+  readonly showSkip: boolean
 }
 
-export const EMPTY_FILTERS: PostingFilters = { search: '', phase: null, band: null, includeSetAside: false, criteriaSetId: null }
+export const EMPTY_FILTERS: PostingFilters = { search: '', phase: null, band: null, includeSetAside: false, criteriaSetId: null, showSkip: false }
 
 export type SortKey = 'company' | 'role' | 'phase' | 'score' | 'recommendation' | 'seen' | 'updated'
 export const SORT_KEYS: readonly SortKey[] = ['company', 'role', 'phase', 'score', 'recommendation', 'seen', 'updated']
@@ -43,13 +42,12 @@ export const DEFAULT_SORT: GridSort = { key: 'seen', desc: true }
 
 /** The whole page as the URL holds it. */
 export interface PostingsUrlState {
-  readonly view: View
   readonly posting: number | null
   readonly filters: PostingFilters
   readonly sort: GridSort
 }
 
-export const DEFAULT_URL_STATE: PostingsUrlState = { view: 'grid', posting: null, filters: EMPTY_FILTERS, sort: DEFAULT_SORT }
+export const DEFAULT_URL_STATE: PostingsUrlState = { posting: null, filters: EMPTY_FILTERS, sort: DEFAULT_SORT }
 
 const POSITIVE_INT = /^[1-9]\d*$/
 
@@ -80,7 +78,6 @@ function gridSort(raw: string | null): GridSort {
 export function decodeUrlState(search: string): PostingsUrlState {
   const params = new URLSearchParams(search)
   return {
-    view: oneOf(params.get('view'), VIEWS) ?? DEFAULT_URL_STATE.view,
     posting: positiveInt(params.get('posting')),
     sort: gridSort(params.get('sort')),
     filters: {
@@ -89,6 +86,7 @@ export function decodeUrlState(search: string): PostingsUrlState {
       band: oneOf(params.get('band'), LEAD_BANDS),
       includeSetAside: params.get('aside') === '1',
       criteriaSetId: positiveInt(params.get('set')),
+      showSkip: params.get('skip') === '1',
     },
   }
 }
@@ -97,12 +95,12 @@ export function decodeUrlState(search: string): PostingsUrlState {
 export function encodeUrlState(state: PostingsUrlState): string {
   const params = new URLSearchParams()
   const { filters, sort } = state
-  if (state.view !== DEFAULT_URL_STATE.view) params.set('view', state.view)
   if (filters.search !== '') params.set('q', filters.search)
   if (filters.phase !== null) params.set('phase', String(filters.phase))
   if (filters.band !== null) params.set('band', filters.band)
   if (filters.includeSetAside) params.set('aside', '1')
   if (filters.criteriaSetId !== null) params.set('set', String(filters.criteriaSetId))
+  if (filters.showSkip) params.set('skip', '1')
   if (sort.key !== DEFAULT_SORT.key || sort.desc !== DEFAULT_SORT.desc) params.set('sort', `${sort.key}:${sort.desc ? 'desc' : 'asc'}`)
   if (state.posting !== null) params.set('posting', String(state.posting))
   const query = params.toString()

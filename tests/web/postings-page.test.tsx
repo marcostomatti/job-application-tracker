@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { PostingsBoard } from '../../src/web/pages/postings/board.tsx'
 import { EMPTY_FILTERS } from '../../src/web/pages/postings/filters.ts'
 import { FilterBar } from '../../src/web/pages/postings/filters.tsx'
 import { PostingsGrid } from '../../src/web/pages/postings/grid.tsx'
@@ -67,25 +66,6 @@ describe('PostingsGrid', () => {
     expect(renderToStaticMarkup(<PostingsGrid rows={[]} sort={{ key: 'seen', desc: true }} selectedId={null} onSort={noop} onSelect={noop} />)).toContain(
       'No postings match these filters.',
     )
-  })
-})
-
-describe('PostingsBoard', () => {
-  test('one column per phase in registry order, a no-phase column last, and move buttons disabled at the edges', () => {
-    const html = renderToStaticMarkup(
-      <PostingsBoard rows={ROWS} allRows={ROWS} phases={PHASES} selectedId={null} saving={false} onSelect={noop} onReorder={noop} />,
-    )
-
-    const order = ['Shortlist', 'Applied', 'No phase'].map((label) => html.indexOf(`<h2>${label}</h2>`))
-    expect(order.every((at) => at >= 0)).toBe(true)
-    expect([...order].sort((a, b) => a - b)).toEqual(order)
-    expect(html).not.toContain('Retired column')
-    expect(html).toContain('board-card band-edge-apply')
-    expect(html).toContain('Apply 4.0')
-    expect(html).toContain('rec-disagree')
-    expect(html).toContain('No stage yet')
-    // Each column here holds one card, so both of its arrows are disabled.
-    expect(html.match(/disabled=""/g)?.length).toBe(ROWS.length * 2)
   })
 })
 

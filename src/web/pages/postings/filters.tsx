@@ -10,6 +10,11 @@ export interface FilterBarProps {
   readonly shown: number
   readonly total: number
   readonly onChange: (next: PostingFilters) => void
+  /**
+   * `table` (the default) filters by phase and band; `board` drops both, since the columns are
+   * the phases and skip postings are hidden there, and offers to show the skip ones instead.
+   */
+  readonly variant?: 'table' | 'board'
 }
 
 function readPhase(value: string): PhaseFilter {
@@ -23,10 +28,12 @@ const isDefault = (filters: PostingFilters): boolean =>
   filters.phase === EMPTY_FILTERS.phase &&
   filters.band === EMPTY_FILTERS.band &&
   filters.includeSetAside === EMPTY_FILTERS.includeSetAside &&
-  filters.criteriaSetId === EMPTY_FILTERS.criteriaSetId
+  filters.criteriaSetId === EMPTY_FILTERS.criteriaSetId &&
+  filters.showSkip === EMPTY_FILTERS.showSkip
 
-/** The one filter bar both views share: search, phase, band, the criteria set and set-aside postings. */
-export function FilterBar({ filters, phases, criteriaSets, shown, total, onChange }: FilterBarProps) {
+/** The filter bar the board and the table share: search, phase, band, the criteria set and set-aside postings. */
+export function FilterBar({ filters, phases, criteriaSets, shown, total, onChange, variant = 'table' }: FilterBarProps) {
+  const onTable = variant === 'table'
   const set = (patch: Partial<PostingFilters>): void => onChange({ ...filters, ...patch })
   const activePhases = phases.filter((phase) => phase.archivedAt === null)
 
@@ -36,6 +43,7 @@ export function FilterBar({ filters, phases, criteriaSets, shown, total, onChang
         <span>Search</span>
         <input type="search" value={filters.search} placeholder="Company, role, place or stage" onChange={(event) => set({ search: event.target.value })} />
       </label>
+      {onTable && (
       <label className="field">
         <span>Phase</span>
         <select value={filters.phase === null ? '' : String(filters.phase)} onChange={(event) => set({ phase: readPhase(event.target.value) })}>
@@ -48,6 +56,8 @@ export function FilterBar({ filters, phases, criteriaSets, shown, total, onChang
           <option value="none">No stage yet</option>
         </select>
       </label>
+      )}
+      {onTable && (
       <label className="field">
         <span>Band</span>
         <select value={filters.band ?? ''} onChange={(event) => set({ band: event.target.value === '' ? null : (event.target.value as LeadBand) })}>
@@ -59,6 +69,7 @@ export function FilterBar({ filters, phases, criteriaSets, shown, total, onChang
           ))}
         </select>
       </label>
+      )}
       <label className="field">
         <span>Criteria set</span>
         <select
@@ -77,6 +88,12 @@ export function FilterBar({ filters, phases, criteriaSets, shown, total, onChang
         <input type="checkbox" checked={filters.includeSetAside} onChange={(event) => set({ includeSetAside: event.target.checked })} />
         <span>Show set-aside</span>
       </label>
+      {!onTable && (
+        <label className="postings-toggle">
+          <input type="checkbox" checked={filters.showSkip} onChange={(event) => set({ showSkip: event.target.checked })} />
+          <span>Show skip</span>
+        </label>
+      )}
       <div className="postings-count">
         <span className="muted">
           {shown === total ? `${total} postings` : `${shown} of ${total} postings`}

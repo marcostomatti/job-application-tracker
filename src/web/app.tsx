@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { auth, type SessionState } from './api.ts'
+import { BoardPage } from './pages/board/index.tsx'
 import { CriteriaPage } from './pages/criteria.tsx'
 import { LoginPage } from './pages/login.tsx'
 import { PostingsPage } from './pages/postings/index.tsx'
@@ -18,6 +19,7 @@ export interface AppPage {
 
 /** The pages behind the sign-in, in nav order. The first is where `/` lands. */
 export const PAGES: readonly AppPage[] = [
+  { path: '/board', label: 'Board', render: () => <BoardPage /> },
   { path: '/postings', label: 'Postings', render: () => <PostingsPage /> },
   { path: '/texts', label: 'Texts', render: () => <TextsPage /> },
   { path: '/criteria', label: 'Criteria', render: () => <CriteriaPage /> },

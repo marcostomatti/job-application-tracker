@@ -60,6 +60,11 @@ describe('the page table', () => {
     expect(pageFor('/').path).toBe(PAGES[0]?.path ?? '')
     expect(pageFor('/nowhere').path).toBe(PAGES[0]?.path ?? '')
   })
+
+  test('the board is the entry page, and the postings table is a page of its own', () => {
+    expect(pageFor('/').path).toBe('/board')
+    expect(pageFor('/postings').path).toBe('/postings')
+  })
 })
 
 describe('request', () => {

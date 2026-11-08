@@ -57,6 +57,7 @@ describe('the scores group', () => {
       'score_history',
       'score_posting',
       'score_posting_bulk',
+      'score_verdict_set',
     ])
   })
 
