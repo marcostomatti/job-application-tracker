@@ -29,10 +29,9 @@ describe('the URL state', () => {
 
   test('every field survives a round trip', () => {
     const state = {
-      view: 'board' as const,
       posting: 42,
       sort: { key: 'score' as const, desc: false },
-      filters: { search: 'data eng', phase: 'none' as const, band: 'ask' as const, includeSetAside: true, criteriaSetId: 7 },
+      filters: { search: 'data eng', phase: 'none' as const, band: 'ask' as const, includeSetAside: true, criteriaSetId: 7, showSkip: true },
     }
 
     expect(decodeUrlState(encodeUrlState(state))).toEqual(state)
@@ -41,7 +40,6 @@ describe('the URL state', () => {
   test('an unreadable field falls back on its own and keeps the rest', () => {
     const state = decodeUrlState('?view=kanban&posting=-3&band=maybe&sort=score:sideways&phase=2&q=ops')
 
-    expect(state.view).toBe('grid')
     expect(state.posting).toBeNull()
     expect(state.filters.band).toBeNull()
     expect(state.sort).toEqual(DEFAULT_URL_STATE.sort)

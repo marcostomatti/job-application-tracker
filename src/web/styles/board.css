@@ -1,0 +1,129 @@
+/* --- the board: dragging, dropping and the faded column --- */
+
+/* The card is the drag surface: a press that travels picks it up, a still one is a click. */
+.board-card-drag {
+  cursor: grab;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.postings-board.is-dragging,
+.postings-board.is-dragging .board-card-drag {
+  cursor: grabbing;
+}
+
+/* The card left behind while its copy follows the pointer: a placeholder, not a second card. */
+.board-card.dragging {
+  opacity: 0.35;
+  box-shadow: none;
+}
+
+/* The copy under the pointer. */
+.board-card-overlay {
+  cursor: grabbing;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+  transform: rotate(1.5deg);
+}
+
+.board-card-overlay.moving {
+  transform: rotate(-2deg) scale(0.97);
+}
+
+/* The landing line between cards: drawn on the slot, so it does not travel with the dragged card. */
+.board-slot {
+  position: relative;
+}
+
+.board-slot.drop-above::before,
+.board-slot.drop-below::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.board-slot.drop-above::before {
+  top: -6px;
+}
+
+.board-slot.drop-below::after {
+  bottom: -6px;
+}
+
+/* A column a card would move into: a tint and an accent border. */
+.board-column {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    opacity 160ms ease,
+    filter 160ms ease;
+}
+
+.board-column.drop-target {
+  border: 2px dashed var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, var(--surface-2));
+  padding: 11px;
+}
+
+.board-drop-hint {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/*
+ * The resolved column fades toward the page: still a drop target and still clickable, so a card
+ * sent there by accident can come back, and full strength again the moment it is used.
+ */
+.board-column.fading {
+  opacity: 0.42;
+  filter: grayscale(0.7);
+}
+
+.board-column.fading:hover,
+.board-column.fading:focus-within,
+.board-column.fading.drop-target {
+  opacity: 1;
+  filter: none;
+}
+
+/* The move dialog. */
+.move-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in oklab, var(--fg1) 28%, transparent);
+}
+
+.move-dialog {
+  width: min(560px, 100%);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+.move-dialog h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.move-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
