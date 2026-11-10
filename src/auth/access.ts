@@ -32,6 +32,23 @@ export async function liveSessionId(req: Request, db: Db): Promise<string | unde
 }
 
 /**
+ * The credential an `Authorization` header carries: the `API_KEY` or a minted, unrevoked API
+ * token, else `undefined`. Only the strict form `requireApiKey` reads counts: `Bearer`, one
+ * space, one token. It takes the raw header so a plain `node:http` server, such as the MCP
+ * listener, can use the same check as `/api` without an express request.
+ */
+export async function bearerCredentialOf(
+  header: unknown,
+  db: Db,
+  apiKey: string | undefined,
+): Promise<'api-key' | 'api-token' | undefined> {
+  const presented = bearerToken(header)
+  if (presented === undefined) return undefined
+  if (apiKey !== undefined && apiKey !== '' && verifyApiKey(presented, apiKey)) return 'api-key'
+  return (await useToken(db, presented)) ? 'api-token' : undefined
+}
+
+/**
  * Which credential the request carries, checked in this order: a bearer token is the
  * `API_KEY` or a minted API token, and otherwise a signed session cookie. A bearer that is
  * present and wrong is a refusal even when a good cookie is present too, so a client never
@@ -39,13 +56,7 @@ export async function liveSessionId(req: Request, db: Db): Promise<string | unde
  */
 export async function credentialOf(req: Request, db: Db, apiKey: string | undefined): Promise<Credential | undefined> {
   const header = req.headers.authorization
-  if (header !== undefined) {
-    // The strict form `requireApiKey` reads: `Bearer`, one space, one token.
-    const presented = bearerToken(header)
-    if (presented === undefined) return undefined
-    if (apiKey !== undefined && apiKey !== '' && verifyApiKey(presented, apiKey)) return 'api-key'
-    return (await useToken(db, presented)) ? 'api-token' : undefined
-  }
+  if (header !== undefined) return bearerCredentialOf(header, db, apiKey)
   return (await liveSessionId(req, db)) === undefined ? undefined : 'session'
 }
 

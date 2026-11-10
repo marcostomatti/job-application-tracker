@@ -391,7 +391,26 @@ reach the port can call every tool, including the ones that write and the ones t
 posting aside. The package binds **every network interface**, not only loopback (a socket
 listing shows `*:8080` and `*:3001`), so on a machine joined to a network the port is
 reachable from other machines. Use HTTP only behind a firewall that allows loopback alone, or
-where you put your own authenticating proxy in front of it.
+where you put your own authenticating proxy in front of it. For HTTP that checks a key, use the
+web app's MCP listener below.
+
+**HTTP with a key, from the web app.** Set `MCP_PORT` and `bun run serve` starts the MCP server
+over HTTP too, on that port, beside the web app. Unset, it starts no listener and nothing
+changes. Every request must carry `Authorization: Bearer <key>`, where the key is the `API_KEY`
+or an API token minted on the Tokens page, the same credentials `/api` accepts. A request
+without one, or with a wrong or revoked one, gets a 401 before it reaches a session, with the
+same body whatever the reason. Each client gets a session of its own, as above. The port allows
+1,000 requests a minute in all, the web app's own budget, and answers 429 past it, before the
+bearer is checked.
+
+```sh
+MCP_PORT=8080 bun run serve
+```
+
+It is a port of its own, and not a route on the web app, because the web app reads JSON bodies
+before its routes run and the MCP session table reads each body itself. Mint one token per
+client, so each can be revoked on its own. The key travels in a header, so put HTTPS in front
+of the port when a client reaches it over a network.
 
 **Connecting a client over HTTP.** A client such as Insomnia or the MCP Inspector connects to
 `http://localhost:8080/mcp` with the Streamable HTTP transport and no auth. The server answers
