@@ -12,6 +12,9 @@ import { parseAuthConfig, type AuthConfig } from '../auth/config.ts'
 import { authRouter } from '../auth/routes.ts'
 import { DEFAULT_BACKUP_DIR, startBackupSchedule, type BackupWiring } from '../backup/schedule.ts'
 import { closeDb, getDb } from '../data/client.ts'
+import { startMcpListener, type McpListener } from '../mcp/http-listener.ts'
+import { ALL_TOOLS } from '../mcp/tools/index.ts'
+import { notebookStartup } from '../notebook/startup.ts'
 import { mountRoutes } from './routes/index.ts'
 
 const MAX_PORT = 65_535
@@ -41,6 +44,11 @@ export interface StartOptions {
    * spawns a dump. A test of the wiring passes its own, with a stand-in for `pg_dump`.
    */
   readonly backup?: BackupWiring
+  /**
+   * The port for the MCP server over HTTP. Defaults to `MCP_PORT`; with neither, no MCP
+   * listener starts. 0 picks a free port, which a test reads back from the listener.
+   */
+  readonly mcpPort?: number
 }
 
 /** Thrown before anything is opened when neither an API key nor a login is configured. Its message carries no key. */
@@ -86,6 +94,37 @@ function resolvePort(requested: number | undefined, env: NodeJS.ProcessEnv): num
   const raw = env.PORT
   if (raw === undefined || raw === '') return undefined
   return assertPort(Number(raw), 'PORT')
+}
+
+/** The MCP listener's port from the caller, else `MCP_PORT`, else `undefined` for no listener. */
+export function resolveMcpPort(requested: number | undefined, env: NodeJS.ProcessEnv): number | undefined {
+  if (requested !== undefined) {
+    if (requested === 0) return 0
+    return assertPort(requested, 'the mcpPort option')
+  }
+  const raw = env.MCP_PORT
+  if (raw === undefined || raw === '') return undefined
+  return assertPort(Number(raw), 'MCP_PORT')
+}
+
+/**
+ * Starts the MCP listener when a port is given, with every tool and, when a notebook is
+ * configured and answers now, the notebook tools too. The notebook is probed once here, not
+ * per session, so a client connecting never waits on it.
+ */
+async function startMcp(
+  db: ReturnType<typeof getDb>,
+  apiKey: string | undefined,
+  port: number | undefined,
+): Promise<McpListener | undefined> {
+  if (port === undefined) return undefined
+  const notebook = await notebookStartup(process.env)
+  const tools = [...ALL_TOOLS, ...(notebook?.tools ?? [])]
+  const listener = await startMcpListener({ db, apiKey, tools, port })
+  const log = createLogger('mcp-http')
+  log.info({ port: listener.port(), tools: tools.length }, 'MCP over HTTP is listening')
+  if (notebook) log.info({ notebookTools: notebook.tools.length }, notebook.message)
+  return listener
 }
 
 /**
@@ -164,6 +203,7 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
   const auth = parseAuthConfig(process.env)
   const apiKey = configuredApiKey(process.env, auth)
   const port = resolvePort(opts.port, process.env)
+  const mcpPort = resolveMcpPort(opts.mcpPort, process.env)
   const webDist = opts.webDist ?? DEFAULT_WEB_DIST
   const db = getDb()
 
@@ -196,14 +236,31 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
       }
     },
   })
+  let mcp: McpListener | undefined
+  try {
+    mcp = await startMcp(db, apiKey, mcpPort)
+  } catch (error: unknown) {
+    // A port that is taken stops the start, as a taken web port does, instead of running half.
+    // The start's own error is the one rethrown, even when the cleanup fails too.
+    await service.stop().catch(() => undefined)
+    throw error
+  }
   // Started once the server is listening, and not awaited (see `startBackups`).
   const backups = startBackups(db, backupOptionsFor(process.env, opts.backup))
   return {
     ...service,
-    // The schedule stops first, while the pool it reads settings from is still open.
+    // The schedule and the MCP sessions stop first, while the pool they use is still open.
+    // Each step runs even when an earlier one throws, so the web port and the pool always close.
     stop: async () => {
-      await (await backups)?.stop()
-      await service.stop()
+      try {
+        await (await backups)?.stop()
+      } finally {
+        try {
+          await mcp?.stop()
+        } finally {
+          await service.stop()
+        }
+      }
     },
   }
 }
