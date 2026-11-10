@@ -14,9 +14,6 @@ import { DEFAULT_BACKUP_DIR, startBackupSchedule, type BackupWiring } from '../b
 import { closeDb, getDb } from '../data/client.ts'
 import { mountRoutes } from './routes/index.ts'
 
-/** The port used when neither the caller nor `PORT` names one. The MCP server's HTTP mode takes 8080 and 3001. */
-const DEFAULT_PORT = 3000
-
 const MAX_PORT = 65_535
 
 /**
@@ -34,7 +31,7 @@ const DEFAULT_WEB_DIST = resolve(import.meta.dir, '../web/dist')
 const APP_PATHS = ['/', '/login', '/board', '/postings', '/texts', '/criteria', '/stats', '/tokens', '/settings']
 
 export interface StartOptions {
-  /** The port to listen on. Defaults to `PORT`, then 3000. Ignored under `NODE_ENV=test`, which binds an ephemeral one. */
+  /** The port to listen on. Defaults to `PORT`, then 3000; under `NODE_ENV=test` with neither set, a free port. */
   readonly port?: number
   /** The directory holding the built web app. Defaults to `src/web/dist`; nothing is served when it does not exist. */
   readonly webDist?: string
@@ -78,11 +75,16 @@ function assertPort(port: number, what: string): number {
   return port
 }
 
-/** The port from the caller, else `PORT`, else the default; a port that is not a port number is refused. */
-function resolvePort(requested: number | undefined, env: NodeJS.ProcessEnv): number {
+/**
+ * The port from the caller, else `PORT`, else `undefined`; a port that is not a port number is
+ * refused. With `undefined` the chassis picks: 3000, or a free port under `NODE_ENV=test`. The
+ * chassis honours any port it is handed, even under test, so the default is left to it.
+ * The MCP server's HTTP mode takes 8080 and 3001.
+ */
+function resolvePort(requested: number | undefined, env: NodeJS.ProcessEnv): number | undefined {
   if (requested !== undefined) return assertPort(requested, 'the port option')
   const raw = env.PORT
-  if (raw === undefined || raw === '') return DEFAULT_PORT
+  if (raw === undefined || raw === '') return undefined
   return assertPort(Number(raw), 'PORT')
 }
 
@@ -168,6 +170,9 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
   const service = await createService({
     serviceId: 'job-application-tracker',
     port,
+    // A taken port stops the start, as it did before the chassis learned to fall back to the next
+    // free one: the board is bookmarked at one address, and a service on another looks down.
+    strictPort: true,
     rateLimit: RATE_LIMIT,
     dependencies: [postgresDependency(db)],
     register: (app, { logger }) => {

@@ -1,10 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
-import express from 'express'
 import { sql } from 'drizzle-orm'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import type { Server } from 'node:http'
+import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -27,38 +26,34 @@ const TEST_KEY = 'test-key-for-the-server-entry-'.padEnd(GENERATED_KEY_LENGTH, '
 
 type Running = {
   readonly handle: ServiceHandle
-  /** Every server `app.listen` created while the service started: the chassis's own is the first. */
-  readonly chassisServers: readonly Server[]
 }
 
 const savedEnv = { apiKey: process.env.API_KEY, databaseUrl: process.env.DATABASE_URL, logLevel: process.env.LOG_LEVEL }
 let running: Running | undefined
 
 /**
- * Starts the service in this process. The patched `listen` collects the chassis's own server, so
- * a test can see it listen and close. No request is sent: a request is answered and logged by
- * the chassis's request logger, which has no level setting, so every test that sends one runs
- * the service in a process of its own, in `service.integration.test.ts`.
+ * Starts the service in this process. The handle names the port the chassis bound, so a test
+ * can see it listen and close. No request is sent: a request is answered and logged by the
+ * chassis's request logger, which has no level setting, so every test that sends one runs the
+ * service in a process of its own, in `service.integration.test.ts`.
  */
 async function start(opts?: Parameters<typeof startService>[0]): Promise<Running> {
   if (process.env.NODE_ENV !== 'test') throw new Error('these tests need NODE_ENV=test')
-  const chassisServers: Server[] = []
-  const original = express.application.listen
-  // Patched by hand and not with spyOn: express copies `listen` onto each app it makes, so the
-  // copy outlives the patch and a spy's restore would reset the very function the app holds.
-  express.application.listen = function (this: unknown, ...args: unknown[]): Server {
-    const server = (original as (...a: unknown[]) => Server).apply(this, args)
-    chassisServers.push(server)
-    return server
-  } as typeof original
-  let handle: ServiceHandle
-  try {
-    handle = await startService(opts)
-  } finally {
-    express.application.listen = original
-  }
-  running = { handle, chassisServers }
+  const handle = await startService(opts)
+  running = { handle }
   return running
+}
+
+/** Whether something on this machine accepts a TCP connection on `port`. */
+async function accepts(port: number): Promise<boolean> {
+  return new Promise<boolean>((answer) => {
+    const socket = connect({ host: '127.0.0.1', port })
+    socket.once('connect', () => {
+      socket.destroy()
+      answer(true)
+    })
+    socket.once('error', () => answer(false))
+  })
 }
 
 async function stopRunning(): Promise<void> {
@@ -113,7 +108,8 @@ describe('startService', () => {
     // the database failure instead of the key's, so the message tells the two orders apart.
     process.env.DATABASE_URL = `postgres://tracker:unused@localhost:${await unusedPort()}/tracker`
     await closeDb()
-    const listen = spyOn(express.application, 'listen')
+    // The chassis listens through a node:http server, so a spy on its prototype sees any listen.
+    const listen = spyOn(http.Server.prototype, 'listen')
 
     try {
       const failure = await startService().catch((error: unknown) => error)
@@ -125,7 +121,7 @@ describe('startService', () => {
     } finally {
       listen.mockRestore()
     }
-    expect(typeof express.application.listen).toBe('function')
+    expect(typeof http.Server.prototype.listen).toBe('function')
   })
 
   test('the refusal names the fix', async () => {
@@ -153,15 +149,17 @@ describe('startService', () => {
   })
 
   test('stop() closes the server and the pool', async () => {
-    const { handle, chassisServers } = await start()
+    const { handle } = await start()
     const db = getDb()
     await db.execute(sql`select 1`)
-    expect(chassisServers[0]?.listening).toBe(true)
+    // With no port named, the chassis binds a free one under test, never the default 3000
+    expect(handle.port).not.toBe(3000)
+    expect(await accepts(handle.port)).toBe(true)
 
     await handle.stop()
     running = undefined
 
-    expect(chassisServers[0]?.listening).toBe(false)
+    expect(await accepts(handle.port)).toBe(false)
     const afterStop = (async () => db.execute(sql`select 1`))()
     await expect(afterStop).rejects.toThrow()
   })
@@ -214,11 +212,11 @@ describe('startService', () => {
 
         try {
           // Act: startService resolves although the first check is waiting on the gate
-          const { chassisServers } = await start({ backup: { db: scratch, outDir: backupDir, spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
+          const { handle } = await start({ backup: { db: scratch, outDir: backupDir, spawn, timers, databaseUrl: FAKE_URL, logger: silent } })
           await until(() => calls.length === 1)
 
           // Assert: the dump is still in flight and the service already listens
-          expect(chassisServers[0]?.listening).toBe(true)
+          expect(await accepts(handle.port)).toBe(true)
           expect(cleared).toEqual([])
         } finally {
           release()
@@ -263,9 +261,9 @@ describe('startService', () => {
           clearInterval: () => {},
         }
 
-        const { chassisServers } = await start({ backup: { db: scratch, outDir: tmpdir(), timers, logger } })
+        const { handle } = await start({ backup: { db: scratch, outDir: tmpdir(), timers, logger } })
 
-        expect(chassisServers[0]?.listening).toBe(true)
+        expect(await accepts(handle.port)).toBe(true)
         await until(() => logged.length > 0)
         expect(logged.join('\n')).not.toContain('leaky')
       })

@@ -134,7 +134,7 @@ describe('the service with a key and no web bundle', () => {
     }
   })
 
-  test('a body that is not JSON is answered by the chassis with a string error, the case the README documents as outside the envelope', async () => {
+  test('a body that is not JSON is answered by the chassis with a code and a message, the case the README documents as outside the envelope', async () => {
     const response = await fetch(`${origin}/api/postings`, {
       method: 'POST',
       headers: { ...bearer(TEST_KEY), 'content-type': 'application/json' },
@@ -142,8 +142,10 @@ describe('the service with a key and no web bundle', () => {
     })
 
     expect(response.status).toBe(400)
-    const body = (await response.json()) as { error: unknown }
-    expect(typeof body.error).toBe('string')
+    const body = (await response.json()) as { success?: unknown; code: unknown; message: unknown }
+    expect(body.success).toBeUndefined()
+    expect(typeof body.code).toBe('string')
+    expect(typeof body.message).toBe('string')
   })
 
   test('/api with a wrong token answers 401', async () => {
