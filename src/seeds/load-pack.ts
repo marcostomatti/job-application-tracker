@@ -13,14 +13,19 @@ export type LoadResult = { criteriaSetId: number; requirementCount: number }
 
 /** Raised when the lint finds a weight or an apply_threshold in the pack file. */
 export class PackCarriesJudgementError extends Error {
+  readonly file: string
+  readonly findings: readonly LintFinding[]
+
   constructor(
-    readonly file: string,
-    readonly findings: readonly LintFinding[],
+    file: string,
+    findings: readonly LintFinding[],
   ) {
     super(
       `${file} carries judgement and cannot be installed: ` +
         findings.map((finding) => `line ${finding.line}, ${finding.detail}`).join('; '),
     )
+    this.file = file
+    this.findings = findings
     this.name = 'PackCarriesJudgementError'
   }
 }

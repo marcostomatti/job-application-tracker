@@ -3,12 +3,17 @@ const CSRF_HEADERS = { 'x-jat-csrf': '1' } as const
 
 /** A refusal or failure from the server, carrying its envelope's name and message. */
 export class ApiError extends Error {
+  readonly status: number
+  readonly errorName: string
+
   constructor(
-    readonly status: number,
-    readonly errorName: string,
+    status: number,
+    errorName: string,
     message: string,
   ) {
     super(message)
+    this.status = status
+    this.errorName = errorName
     this.name = 'ApiError'
   }
 }

@@ -20,6 +20,7 @@
         "zod": "^4.6.7",
       },
       "devDependencies": {
+        "@open-tomato/typescript-config": "^0.1.0",
         "@types/bun": "latest",
         "@types/express": "^5.0.6",
         "@types/react": "19",
@@ -105,6 +106,8 @@
     "@open-tomato/service-logger": ["@open-tomato/service-logger@2.0.0", "", { "dependencies": { "@open-tomato/service": "^2.0.0", "pino": "^10.4.0", "pino-http": "^11.0.0" } }, "sha512-hDvlkv4o2qbNi/+hhfPevzZ4QuJkZZuM2qynwLfeq/C8ZGTB7ZyvIX1Frx1SG6Ge535/drdNshfShT3AxUvhGQ=="],
 
     "@open-tomato/service-mcp": ["@open-tomato/service-mcp@2.1.0", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "@open-tomato/service": "^2.0.0", "@open-tomato/service-logger": "^2.0.0", "zod": "^4.6.7" } }, "sha512-sinDwB+qkeMetJ889lVM6Pcc5SzxcukUehFErDwUtp6IVFGrM6Dc62k8oB26ct6depdJNNLlYqhTSyPLewMzZw=="],
+
+    "@open-tomato/typescript-config": ["@open-tomato/typescript-config@0.1.0", "", { "peerDependencies": { "typescript": ">=5.8.0" } }, "sha512-Vj7i7jIW9ZFNSTJK/BLX93Tzk9pk9t+j6J3Q5Z78Lb9Fq+SAJdauUhbISl5H4wraYIA6HlkSddkX+1jI/jbSSg=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 

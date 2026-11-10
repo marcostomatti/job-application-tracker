@@ -1,6 +1,7 @@
 {
   "version": "1.0.0",
   "devDependencies": {
+    "@open-tomato/typescript-config": "^0.1.0",
     "@types/bun": "latest",
     "@types/express": "^5.0.6",
     "@types/react": "19",

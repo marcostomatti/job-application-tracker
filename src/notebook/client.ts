@@ -87,12 +87,14 @@ function isTimeout(error: unknown): boolean {
  * kept between calls, so a notebook that comes back is used again on the next call.
  */
 export class NotebookClient {
+  private readonly config: NotebookConfig
   private readonly timeoutMs: number
 
   constructor(
-    private readonly config: NotebookConfig,
+    config: NotebookConfig,
     options: NotebookClientOptions = {},
   ) {
+    this.config = config
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 

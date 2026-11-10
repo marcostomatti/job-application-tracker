@@ -22,8 +22,11 @@ export interface PendingLogin {
 
 /** Why a callback was refused. Logged by this name; the browser sees one generic message. */
 export class OidcLoginError extends Error {
-  constructor(readonly reason: string) {
+  readonly reason: string
+
+  constructor(reason: string) {
     super(`OIDC sign-in refused: ${reason}`)
+    this.reason = reason
     this.name = 'OidcLoginError'
   }
 }
@@ -51,10 +54,16 @@ export class OidcClient {
   private endpoints: Promise<OidcEndpoints> | undefined
   private jwks: ReturnType<typeof createRemoteJWKSet> | undefined
 
+  private readonly config: OidcConfig
+  private readonly fetchImpl: typeof fetch
+
   constructor(
-    private readonly config: OidcConfig,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    config: OidcConfig,
+    fetchImpl: typeof fetch = fetch,
+  ) {
+    this.config = config
+    this.fetchImpl = fetchImpl
+  }
 
   /** The provider's endpoints, fetched once; a failed fetch is forgotten so the next sign-in tries again. */
   discover(): Promise<OidcEndpoints> {
