@@ -120,7 +120,7 @@ For a job search, the same pattern works per employer or per posting:
 
 With `OPEN_NOTEBOOK_URL` set, the MCP server asks the notebook for one authenticated read when it
 starts. If the notebook answers, ten tools are added; if it is not set, unreachable, or refuses the
-key, none is added and the server writes one line to stderr saying why, such as
+key, none is added and the server logs one line saying why (to stderr on stdio), such as
 `notebook tools off: OPEN_NOTEBOOK_URL is not set`. The line never holds the URL or the key.
 
 | Tool | What it does |

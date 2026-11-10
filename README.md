@@ -189,7 +189,7 @@ costs and how to set it up are in [docs/open-notebook.md](docs/open-notebook.md)
 When `OPEN_NOTEBOOK_URL` (and `OPEN_NOTEBOOK_API_KEY`, if the notebook has a password) is set in
 `.env` and the notebook answers at startup, the MCP server adds ten `notebook_*` tools: store a
 posting's text under its `posting_key`, store and read documents such as a CV, search, and add
-notes. Otherwise no notebook tool is registered, and the server says why in one stderr line.
+notes. Otherwise no notebook tool is registered, and the server says why in one log line.
 
 ## Plugin skills
 
@@ -273,9 +273,9 @@ inside the tool result (see "Two shapes of error" below). `/health` is outside t
 
 Two responses come from the package that runs the service and not from this code, so they are
 not in the envelope: a request body that is not valid JSON, or is over 1 MB, is answered with
-a 400 or 413 carrying `{ "error": "<text>" }` (a string), and a request over the rate limit
-gets a 429 with a plain-text body. A client should treat an `error` that is a string, or a
-body that is not JSON, as one of these.
+a 400 or 413 carrying `{ "code": "...", "message": "<text>" }` (no `success` field), and a
+request over the rate limit gets a 429 with a plain-text body. A client should treat a body
+without `success`, or a body that is not JSON, as one of these.
 
 ## Signing in
 
@@ -347,8 +347,9 @@ the OIDC settings alone. There is no other recovery path.
 
 `bun run mcp` starts the MCP server, which offers 60 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
-repository, so run `bun run db:up` and `bun run db:migrate` first. At start it prints
-`registered 60 MCP tools` to stderr, which is how you see that every tool module loaded.
+repository, so run `bun run db:up` and `bun run db:migrate` first. Once it is up it logs
+`registered MCP tools` with `tools: 60`, which is how you see that every tool module loaded. On
+stdio its log lines go to stderr, because stdout carries the protocol; on HTTP they go to stdout.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the
 default and the supported path. HTTP is opt-in**, because nothing authenticates it (see below).
@@ -375,9 +376,10 @@ process-level access: whoever can start the process, or reach the client that st
 every tool. Rely on who can run commands as you.
 
 **HTTP, opt-in.** Set `MCP_TRANSPORT=http` and the server listens on port 8080 (`PORT`
-changes it), with a health endpoint on port 3001 at `/health`. Those are the defaults of the
-`@open-tomato/service-mcp` package that runs the server, and the health port has no setting
-here.
+changes it), with a health endpoint on port 3001 at `/health` (`HEALTH_PORT` changes it).
+Those are the defaults of the `@open-tomato/service-mcp` package that runs the server. A port
+that is taken stops the start with an error naming the setting, instead of moving to the next
+free port, because a client configured for one URL would not find the server on another.
 
 ```sh
 MCP_TRANSPORT=http bun run mcp
@@ -393,12 +395,14 @@ where you put your own authenticating proxy in front of it.
 
 **Connecting a client over HTTP.** A client such as Insomnia or the MCP Inspector connects to
 `http://localhost:8080/mcp` with the Streamable HTTP transport and no auth. The server answers
-on any path, so `/mcp` is only a convention. Four things trip a first connection:
+on any path, so `/mcp` is only a convention. Four things matter on a first connection:
 
 - **`bun run mcp` alone is stdio.** It opens no port, so an HTTP client gets "connection
   refused". Start it with `MCP_TRANSPORT=http` as above.
-- **One session per server start.** The server holds a single MCP session. After a client
-  disconnects or reconnects, the next `initialize` is refused, so restart the server first.
+- **One session per client.** Each `initialize` opens a session of its own, so several
+  clients can connect at once, and a client that disconnects can connect again without a
+  restart. A request carrying the id of a session that has ended gets a 404, and the client
+  starts over with a new `initialize`.
 - **A plain HTTP request needs the MCP headers.** A client's MCP mode sends them for you. A
   hand-built request must send `Content-Type: application/json` and
   `Accept: application/json, text/event-stream`, then repeat the `Mcp-Session-Id` header from
@@ -410,7 +414,7 @@ on any path, so `/mcp` is only a convention. Four things trip a first connection
   (`docker compose ps` shows it) and the password the container was created with.
 
 The ten Open Notebook tools are added to that count only when a notebook is configured and
-answers at startup; a second stderr line then says `notebook tools on: 10 Open Notebook tools`,
+answers at startup; a second log line then says `notebook tools on: 10 Open Notebook tools`,
 or `notebook tools off: <why>`. See "Open Notebook, an optional companion" above.
 
 ### Two shapes of error
