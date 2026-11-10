@@ -1,6 +1,7 @@
 import { createMCP } from '@open-tomato/service-mcp'
 import { createLogger } from '@open-tomato/service-logger'
 
+import packageJson from '../../package.json' with { type: 'json' }
 import { getDb } from '../data/client.ts'
 import { notebookStartup } from '../notebook/startup.ts'
 import { registerTools } from './register.ts'
@@ -29,6 +30,9 @@ const logger = createLogger(SERVICE_ID, { destination: transport === 'stdio' ? '
 
 const handle = createMCP({
   serviceId: SERVICE_ID,
+  // Reported to clients in `initialize` and logged in the `started` line. The HTTP service reads
+  // the same field, from the package.json in the directory it is started in.
+  version: packageJson.version,
   // A taken port stops the start instead of moving to the next free one: an MCP client is
   // configured with one URL, and a server on another port would look like a server that is down.
   strictPort: true,
