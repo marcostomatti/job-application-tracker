@@ -436,6 +436,82 @@ The ten Open Notebook tools are added to that count only when a notebook is conf
 answers at startup; a second log line then says `notebook tools on: 10 Open Notebook tools`,
 or `notebook tools off: <why>`. See "Open Notebook, an optional companion" above.
 
+### Claude Desktop with a server on another machine
+
+Claude Desktop's own MCP configuration (`claude_desktop_config.json`) only starts programs on
+the same machine and talks to them over stdio. To reach the web app's MCP listener on another
+machine, Claude Desktop starts a bridge instead: a small local program that reads the protocol on
+stdio and sends each message over HTTPS, with the bearer header added.
+[`mcp-remote`](https://github.com/punkpeye/mcp-remote) is one such bridge, and these steps were
+tried with version 0.16.5.
+
+Claude Desktop's connectors, the ones added by URL in its settings, are a different path: they
+are called from Anthropic's servers, so they reach only a server that is public on the internet.
+A server reachable only on your own network needs the bridge.
+
+1. **Install the bridge once, at a fixed version.** A configuration that runs `npx mcp-remote`
+   downloads and runs the package again at every start; a global install runs the same code
+   each time.
+
+   ```sh
+   npm install -g mcp-remote@0.16.5
+   ```
+
+2. **Mint a token for this client** on the Tokens page, so it can be revoked on its own.
+3. **Put the header in a file only you can read.** With `--header-file`, the token stays out of
+   the process list, where `--header` would show it to every user of the machine. The format is
+   one `Name: value` per line, and `#` starts a comment.
+
+   ```sh
+   mkdir -p ~/.config/job-tracker && chmod 700 ~/.config/job-tracker
+   (umask 077 && printf 'Authorization: Bearer %s\n' '<token>' > ~/.config/job-tracker/mcp-headers)
+   ```
+
+4. **Point Claude Desktop at the bridge, by full paths.** Claude Desktop does not load your shell
+   profile, so a `node` installed by a version manager such as nvm is not on its `PATH`. Name
+   `node` and the bridge's script by their full paths: `command -v node` prints the first, and
+   the script is `dist/proxy.js` under `$(npm root -g)/mcp-remote`.
+
+   ```json
+   {
+     "mcpServers": {
+       "job-tracker": {
+         "command": "/full/path/to/node",
+         "args": [
+           "/full/path/to/node_modules/mcp-remote/dist/proxy.js",
+           "https://tracker.example.com/mcp",
+           "--header-file",
+           "/full/path/to/.config/job-tracker/mcp-headers",
+           "--transport",
+           "http-only"
+         ]
+       }
+     }
+   }
+   ```
+
+   `--transport http-only` keeps the bridge on Streamable HTTP, the transport this server
+   speaks, instead of falling back to the older SSE one.
+5. **Quit Claude Desktop completely and open it again.** It reads the configuration, and each
+   tool list, only at start.
+
+To check the bridge before you restart, run the same command by hand with an empty
+environment, which is close to what Claude Desktop gives it, and send it an `initialize`:
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
+  | env -i HOME="$HOME" /full/path/to/node /full/path/to/node_modules/mcp-remote/dist/proxy.js \
+      https://tracker.example.com/mcp --header-file ~/.config/job-tracker/mcp-headers --transport http-only
+```
+
+A line naming `job-application-tracker` in `serverInfo` means the bridge, the token and the
+server all work. A 401 means the token in the file is wrong or revoked.
+
+Two limits come with this setup. The bridge works only while the machine can reach the server,
+so a server on a home network is out of reach away from it. Switching the version manager to
+another Node version leaves the configuration pointing at the old one, so install the bridge
+again under the new version and update both paths.
+
 ### Two shapes of error
 
 A tool that fails inside the service returns `{ "error": { "name": "...", "message": "..." } }`
