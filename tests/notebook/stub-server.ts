@@ -42,6 +42,13 @@ export interface StubOptions {
   readonly password?: string
   /** Makes every `/api/` route answer this status, to play a failing notebook. */
   readonly failWith?: number
+  /** Answers 500 to a new text source once the stub holds this many sources, to play a notebook that fails mid-batch. */
+  readonly failSourcesAfter?: number
+  /**
+   * Stores a new text source but answers it in a shape the tracker does not know, once the stub
+   * holds this many sources: a notebook whose answer is lost after the store went through.
+   */
+  readonly garbleSourcesAfter?: number
 }
 
 export interface StubServer {
@@ -135,6 +142,7 @@ export function startStubNotebook(options: StubOptions = {}): StubServer {
       return json(kept.slice(offset, offset + limit).map(sourceListView))
     }
     if (path === '/api/sources/json' && method === 'POST') {
+      if (options.failSourcesAfter !== undefined && sources.length >= options.failSourcesAfter) return detail(500, 'stub: source store failed')
       const input = body as { type: string; title?: string; content?: string; notebooks?: string[]; embed?: boolean }
       if (input.type !== 'text') return detail(400, 'only text sources in the stub')
       for (const id of input.notebooks ?? []) {
@@ -148,7 +156,9 @@ export function startStubNotebook(options: StubOptions = {}): StubServer {
         embedded: input.embed === true,
         created: STAMP,
       }
+      const garble = options.garbleSourcesAfter !== undefined && sources.length >= options.garbleSourcesAfter
       sources.push(created)
+      if (garble) return json({ unexpected: true })
       return json({ ...(sourceView(created) as object), command_id: 'command:stub', status: 'new' })
     }
     const sourceMatch = /^\/api\/sources\/([^/]+)$/.exec(path)

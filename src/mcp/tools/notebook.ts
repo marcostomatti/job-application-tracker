@@ -2,6 +2,7 @@ import { findPostingKey } from '../../data/repositories/posting-key.ts'
 import type { Db } from '../../data/repositories/db.ts'
 import type { NotebookClient } from '../../notebook/client.ts'
 import type { SourceRow } from '../../notebook/responses.ts'
+import { sourcesTitled } from '../../notebook/source-titles.ts'
 import {
   NoteAddSchema,
   NotebookCreateSchema,
@@ -9,27 +10,20 @@ import {
   PostingSourcesSchema,
   PostingStoreSchema,
   SearchSchema,
-  SOURCE_PAGE_MAX,
   SourceAddTextSchema,
   SourceGetSchema,
   SourceListSchema,
   SourceRefSchema,
 } from '../../schemas/notebook.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
-
-/** How many pages of sources a lookup by title reads before it says the answer may be partial. */
-const TITLE_LOOKUP_PAGES = 20
-
-/**
- * How long a lookup by title starts new pages for. A page already sent still runs to the
- * client's own timeout, so the lookup can take this plus one timeout at most.
- */
-const TITLE_LOOKUP_BUDGET_MS = 30_000
+import { notebookBulkTools } from './notebook-bulk.ts'
 
 /** What the notebook tools need: the client, and the one tracker read they make. */
 export interface NotebookToolDeps {
   readonly client: NotebookClient
   readonly postingKeyOf: (db: Db, postingId: number) => Promise<string>
+  /** How long a bulk store may start new requests, in ms; a test sets it, and it defaults to `BULK_BUDGET_MS`. */
+  readonly bulkBudgetMs?: number
 }
 
 /** Every notebook tool name, in registration order, so a test can pin the set. */
@@ -44,27 +38,9 @@ export const NOTEBOOK_TOOL_NAMES = [
   'notebook_posting_sources',
   'notebook_search',
   'notebook_note_add',
+  'notebook_posting_store_bulk',
+  'notebook_source_add_text_bulk',
 ] as const
-
-/**
- * Reads every source in scope page by page and keeps those titled exactly `title`. Open
- * Notebook has no lookup by title, and a page holds at most 100, so this pages until a short
- * page, the page cap or the time budget. `complete` is false when a cap stopped it.
- */
-async function sourcesTitled(
-  client: NotebookClient,
-  title: string,
-  notebookId: string | undefined,
-): Promise<{ sources: SourceRow[]; complete: boolean }> {
-  const found: SourceRow[] = []
-  const deadline = Date.now() + TITLE_LOOKUP_BUDGET_MS
-  for (let page = 0; page < TITLE_LOOKUP_PAGES && Date.now() < deadline; page += 1) {
-    const rows = await client.listSources({ notebookId, limit: SOURCE_PAGE_MAX, offset: page * SOURCE_PAGE_MAX })
-    found.push(...rows.filter((row) => row.title === title))
-    if (rows.length < SOURCE_PAGE_MAX) return { sources: found, complete: true }
-  }
-  return { sources: found, complete: false }
-}
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true } as const
 const WRITES = { readOnlyHint: false, destructiveHint: false, openWorldHint: true } as const
@@ -77,6 +53,11 @@ const WRITES = { readOnlyHint: false, destructiveHint: false, openWorldHint: tru
  */
 export function notebookTools(deps: NotebookToolDeps): ToolDefinition[] {
   const { client, postingKeyOf } = deps
+  /** The sources titled with one posting key, from the shared lookup. */
+  const sourcesOne = async (title: string, notebookId: string | undefined): Promise<{ sources: readonly SourceRow[]; complete: boolean }> => {
+    const found = await sourcesTitled(client, new Set([title]), notebookId)
+    return { sources: found.byTitle.get(title) ?? [], complete: found.complete }
+  }
   return [
     defineTool({
       name: 'notebook_list',
@@ -167,7 +148,7 @@ export function notebookTools(deps: NotebookToolDeps): ToolDefinition[] {
       annotations: WRITES,
       run: async (args, db) => {
         const postingKey = await postingKeyOf(db, args.postingId)
-        const earlier = await sourcesTitled(client, postingKey, args.notebookId)
+        const earlier = await sourcesOne(postingKey, args.notebookId)
         const { fullText: _text, ...source } = await client.addTextSource({
           title: postingKey,
           content: args.content,
@@ -193,7 +174,7 @@ export function notebookTools(deps: NotebookToolDeps): ToolDefinition[] {
       annotations: READ_ONLY,
       run: async (args, db) => {
         const postingKey = await postingKeyOf(db, args.postingId)
-        const found = await sourcesTitled(client, postingKey, args.notebookId)
+        const found = await sourcesOne(postingKey, args.notebookId)
         return { postingKey, sources: found.sources, complete: found.complete }
       },
     }),
@@ -219,6 +200,7 @@ export function notebookTools(deps: NotebookToolDeps): ToolDefinition[] {
       annotations: WRITES,
       run: async (args) => client.addNote(args),
     }),
+    ...notebookBulkTools(deps),
   ]
 }
 

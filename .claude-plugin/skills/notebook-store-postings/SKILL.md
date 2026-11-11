@@ -24,6 +24,10 @@ reference you check a summary against.
 2. **Pick the notebook.** `notebook_list`; if there is none for this employer, `notebook_create`
    with the company name as the tracker stores it.
 3. **Store it.** `notebook_posting_store` with the posting id, the notebook id and the text.
+   For several postings, `notebook_posting_store_bulk` takes up to 50 in one call. It stops at
+   the first one that fails, and after about 40 seconds. Send `notAttempted` again, and the
+   `failed` item too, but when `failed.mayBeStored` is true check `notebook_posting_sources`
+   for that posting first, because the notebook may have kept it.
 4. **Check `earlierSources`.** A non-empty list means an older copy is there. When the new copy
    is the same posting re-pasted or updated, delete the older ones with `notebook_source_delete`
    once the new one reads back. Ask first when you are not sure they are the same posting.

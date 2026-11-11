@@ -11,7 +11,7 @@ scores, stage history, questions about postings and reusable texts. When the tra
 conversation disagree, the tracker is right, so read it before you answer from memory.
 
 The server starts with `bun run mcp`. The README explains the transports and the two shapes of
-error a tool can return. With Open Notebook configured, ten `notebook_*` tools are added for
+error a tool can return. With Open Notebook configured, twelve `notebook_*` tools are added for
 long text such as full postings and a CV; see [docs/open-notebook.md](docs/open-notebook.md).
 
 ## Tool families

@@ -1,7 +1,7 @@
 {
   "name": "job-application-tracker",
   "version": "0.1.0",
-  "description": "An agent-first job application tracker: 60 MCP tools over a Postgres database of postings, versioned scoring criteria, stage history and reusable texts, plus 10 Open Notebook tools when a notebook is configured, and skills for storing postings and tuning criteria.",
+  "description": "An agent-first job application tracker: 61 MCP tools over a Postgres database of postings, versioned scoring criteria, stage history and reusable texts, plus 12 Open Notebook tools when a notebook is configured, and skills for storing postings and tuning criteria.",
   "keywords": ["mcp", "job-search", "tracker", "scoring", "postgres", "open-notebook"],
   "license": "MIT",
   "mcpServers": "./.claude-plugin/mcp-servers.json",
