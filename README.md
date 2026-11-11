@@ -187,9 +187,10 @@ research, interview notes. The tracker does not depend on it. What it is, what y
 costs and how to set it up are in [docs/open-notebook.md](docs/open-notebook.md).
 
 When `OPEN_NOTEBOOK_URL` (and `OPEN_NOTEBOOK_API_KEY`, if the notebook has a password) is set in
-`.env` and the notebook answers at startup, the MCP server adds ten `notebook_*` tools: store a
-posting's text under its `posting_key`, store and read documents such as a CV, search, and add
-notes. Otherwise no notebook tool is registered, and the server says why in one log line.
+`.env` and the notebook answers at startup, the MCP server adds twelve `notebook_*` tools: store a
+posting's text under its `posting_key` (one, or up to 50 in one call), store and read documents
+such as a CV, search, and add notes. Otherwise no notebook tool is registered, and the server
+says why in one log line.
 
 ## Plugin skills
 
@@ -432,8 +433,8 @@ on any path, so `/mcp` is only a convention. Four things matter on a first conne
   it. Check that `DATABASE_URL` in `.env` names the port `bun run db:up` publishes
   (`docker compose ps` shows it) and the password the container was created with.
 
-The ten Open Notebook tools are added to that count only when a notebook is configured and
-answers at startup; a second log line then says `notebook tools on: 10 Open Notebook tools`,
+The twelve Open Notebook tools are added to that count only when a notebook is configured and
+answers at startup; a second log line then says `notebook tools on: 12 Open Notebook tools`,
 or `notebook tools off: <why>`. See "Open Notebook, an optional companion" above.
 
 ### Two shapes of error

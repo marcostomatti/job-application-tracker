@@ -2,7 +2,7 @@
 
 [Open Notebook](https://github.com/lfnovo/open-notebook) is an optional companion to this
 tracker. Nothing in the tracker needs it: the two run side by side, and an agent (or you) moves
-text between them. When you configure one, the tracker's MCP server adds ten `notebook_*` tools,
+text between them. When you configure one, the tracker's MCP server adds twelve `notebook_*` tools,
 so an agent can drive both through one server. This page says what it is, what each of the two
 keeps, what you gain by running both, what it costs you, and how to set it up.
 
@@ -119,7 +119,7 @@ For a job search, the same pattern works per employer or per posting:
 ## The tracker's notebook tools
 
 With `OPEN_NOTEBOOK_URL` set, the MCP server asks the notebook for one authenticated read when it
-starts. If the notebook answers, ten tools are added; if it is not set, unreachable, or refuses the
+starts. If the notebook answers, twelve tools are added; if it is not set, unreachable, or refuses the
 key, none is added and the server logs one line saying why (to stderr on stdio), such as
 `notebook tools off: OPEN_NOTEBOOK_URL is not set`. The line never holds the URL or the key.
 
@@ -131,6 +131,8 @@ key, none is added and the server logs one line saying why (to stderr on stdio),
 | `notebook_source_add_text` | Store pasted text, embedded for meaning search by default |
 | `notebook_source_delete` | Delete one document; the only tool marked destructive |
 | `notebook_posting_store` | Store a tracked posting's text, titled with its `posting_key` |
+| `notebook_posting_store_bulk` | Store up to 50 tracked postings' texts into one notebook in one call |
+| `notebook_source_add_text_bulk` | Store up to 50 texts, each with its own title, in one call |
 | `notebook_posting_sources` | Find the stored copies of one posting by its `posting_key` |
 | `notebook_search` | Search documents and notes, by words or by meaning |
 | `notebook_note_add` | Add a note in the user's words |
@@ -140,9 +142,27 @@ its only door. None of them writes to the tracker; the one tracker read is a pos
 `notebook_posting_store` deletes nothing: it lists the older copies with the same title, and the
 agent deletes them with `notebook_source_delete` once the new copy reads back.
 
+The two bulk tools take up to 50 items and 1,000,000 characters of text per call. Open Notebook
+has no batch endpoint, so the tracker sends the items one request after another, in order, and
+each request returns at once because the notebook embeds in the background. A wrong input, an
+unknown posting included, refuses the whole call before anything is sent. After that the call
+is not all or none, because a stored source cannot be taken back: it stops at the first item
+that fails, and answers `stored`, `failed` (that item's index and why) and `notAttempted`.
+
+Two things decide what a retry sends:
+
+- **`failed.mayBeStored`.** It is false when the notebook refused the item, so nothing was
+  stored and the item can be sent again. It is true when the answer was lost (a timeout, a
+  dropped connection, an answer the tracker cannot read): the notebook may have kept the item,
+  so check `notebook_posting_sources` for that posting before sending it again.
+- **`budgetReached`.** A bulk call starts no new item after about 40 seconds, because an MCP
+  client gives up on a call after about a minute and would never see the answer. The items it
+  did not reach are in `notAttempted`; send them in another call.
+
 If the notebook stops answering after startup, its tools stay listed and each call fails with
 `NotebookUnavailableError`; the next call tries again, so a notebook that comes back is used
-again without a restart. A call waits at most 15 seconds. A refused key is a
+again without a restart. Each request to the notebook waits at most 15 seconds, and a bulk
+call starts no new request after about 40 seconds. A refused key is a
 `NotebookRequestError` naming `OPEN_NOTEBOOK_API_KEY`, and an unknown id is a `NotFoundError`.
 
 The plugin's skills say how to use these tools well: `notebook-store-postings` for storing

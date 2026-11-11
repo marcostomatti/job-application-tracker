@@ -78,6 +78,53 @@ export const PostingStoreSchema = z.strictObject({
   embed: z.boolean().default(true),
 })
 
+/** The most items one bulk store sends: each is one request to the notebook, made one after another. */
+export const BULK_STORE_MAX = 50
+
+/**
+ * The most text one bulk store carries, all items together. A single source may be larger
+ * (`SOURCE_TEXT_MAX`); a call this size stays a few megabytes on the wire and a short wait.
+ */
+export const BULK_STORE_TEXT_MAX = 1_000_000
+
+const bulkText = z.string().min(1).max(BULK_STORE_TEXT_MAX)
+
+/** Refuses a bulk call whose items' texts add up to more than `BULK_STORE_TEXT_MAX`. */
+function withinBulkText<T extends { readonly content: string }>(items: readonly T[], ctx: z.RefinementCtx): void {
+  const total = items.reduce((sum, item) => sum + item.content.length, 0)
+  if (total > BULK_STORE_TEXT_MAX) {
+    ctx.addIssue({ code: 'custom', path: ['items'], message: `the items' texts add up to ${total} characters; at most ${BULK_STORE_TEXT_MAX} per call` })
+  }
+}
+
+/**
+ * Several postings stored into one notebook in one call. A posting named twice is refused,
+ * because both copies would carry the same title and the later would hide the earlier.
+ */
+export const PostingStoreBulkSchema = z
+  .strictObject({
+    notebookId: NotebookIdSchema,
+    embed: z.boolean().default(true),
+    items: z.array(z.strictObject({ postingId: IdSchema, content: bulkText })).min(1).max(BULK_STORE_MAX),
+  })
+  .superRefine((input, ctx) => {
+    withinBulkText(input.items, ctx)
+    const seen = new Set<number>()
+    input.items.forEach((item, index) => {
+      if (seen.has(item.postingId)) ctx.addIssue({ code: 'custom', path: ['items', index, 'postingId'], message: `posting ${item.postingId} is named twice` })
+      seen.add(item.postingId)
+    })
+  })
+
+/** Several texts stored as sources in the same notebooks in one call, each with its own title. */
+export const SourceAddTextBulkSchema = z
+  .strictObject({
+    notebookIds: z.array(NotebookIdSchema).min(1).max(NOTEBOOKS_PER_SOURCE_MAX),
+    embed: z.boolean().default(true),
+    items: z.array(z.strictObject({ title, content: bulkText })).min(1).max(BULK_STORE_MAX),
+  })
+  .superRefine((input, ctx) => withinBulkText(input.items, ctx))
+
 export const PostingSourcesSchema = z.strictObject({
   postingId: IdSchema,
   notebookId: NotebookIdSchema.optional(),
