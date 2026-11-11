@@ -345,10 +345,10 @@ the OIDC settings alone. There is no other recovery path.
 
 ## The MCP server
 
-`bun run mcp` starts the MCP server, which offers 60 tools for recording, scoring and reading
+`bun run mcp` starts the MCP server, which offers 61 tools for recording, scoring and reading
 your search, writes included. It reads `DATABASE_URL` from `.env` like the rest of the
 repository, so run `bun run db:up` and `bun run db:migrate` first. Once it is up it logs
-`registered MCP tools` with `tools: 60`, which is how you see that every tool module loaded. On
+`registered MCP tools` with `tools: 61`, which is how you see that every tool module loaded. On
 stdio its log lines go to stderr, because stdout carries the protocol; on HTTP they go to stdout.
 
 It has two transports, chosen by the `MCP_TRANSPORT` environment variable. **stdio is the

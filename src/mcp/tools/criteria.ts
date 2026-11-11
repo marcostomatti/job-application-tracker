@@ -1,4 +1,4 @@
-import { createCriteriaVersion, findCriteriaSet, type CriteriaSetRow, getRequirements, listCriteriaSets, setDefaultCriteriaSet, updateRequirement } from '../../data/repositories/criteria.ts'
+import { addRequirement, createCriteriaVersion, findCriteriaSet, type CriteriaSetRow, getRequirements, listCriteriaSets, setDefaultCriteriaSet, updateRequirement } from '../../data/repositories/criteria.ts'
 import { readMode, setMode } from '../../data/repositories/config.ts'
 import { EmptyInputSchema } from '../../schemas/common.ts'
 import { CriteriaModeInputSchema } from '../../schemas/config.ts'
@@ -7,6 +7,7 @@ import {
   CriteriaSetDefaultInputSchema,
   CriteriaSetQuerySchema,
   CriteriaVersionInputSchema,
+  RequirementAddInputSchema,
   RequirementUpdateInputSchema,
   type CriteriaSetQuery,
 } from '../../schemas/criteria.ts'
@@ -77,6 +78,17 @@ export const criteriaTools: ToolDefinition[] = [
       'EXPECT postings to drop out of the recommended-for-apply list: a new version of a name supersedes the older ones at once, and only the newest version of each name counts toward a recommendation, so every posting that was recommended only by the older version stops being recommended until it is scored against the new one. That is deliberate (the new criteria have not been applied yet, so the answer is unknown, not a stale yes). Fix it with rescore_request for the new set, then score each pending posting with score_posting. A copy filed under a different name starts at version 1 and supersedes nothing.',
     input: CriteriaVersionInputSchema,
     run: async (args, db) => createCriteriaVersion(db, args),
+  }),
+  defineTool({
+    name: 'criteria_requirement_add',
+    title: 'Add a requirement',
+    description:
+      'Adds ONE new requirement to a criteria set and returns it as stored, after the set\'s existing requirements. ' +
+      'key and label are required, and so are anchors (what a coverage of 0, 0.5 and 1 mean), because a weight means nothing without its rubric. kind is gate or soft (soft when left out), a weight is zero or more (left out or null means not set yet), and layerId names a layer row. ' +
+      'A key the set already has is a conflict, an unknown set is a not-found error, and an archived set or layer is refused. ' +
+      'Adding to a set already used for scoring changes what its new scores mean, and old scores have no rating for the new requirement; to keep history intact, make a copy with criteria_version_create first and add to the copy.',
+    input: RequirementAddInputSchema,
+    run: async (args, db) => addRequirement(db, args),
   }),
   defineTool({
     name: 'criteria_requirement_update',

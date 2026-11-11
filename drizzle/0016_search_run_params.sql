@@ -1,0 +1,1 @@
+ALTER TABLE "search_run" ADD COLUMN "params" jsonb;

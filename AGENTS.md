@@ -25,7 +25,7 @@ Each family is a group of tools that work on one kind of record:
 | Origins | `origin_record`, `origin_record_bulk`, `origin_attach`, `origin_list`, `origin_first_touch`, `route_counts`, `search_run_record` | How and when a lead reached the user |
 | Checks | `check_already_applied`, `check_reposted`, `check_posting_changed` | Yes/no answers before acting |
 | Summaries | `summary_write`, `summary_write_bulk`, `summary_get` | The condensed posting |
-| Criteria | `criteria_sets`, `criteria_requirements`, `criteria_version_create`, `criteria_requirement_update`, `criteria_set_default`, `criteria_mode_get`, `criteria_mode_set` | The rubrics postings are scored against |
+| Criteria | `criteria_sets`, `criteria_requirements`, `criteria_version_create`, `criteria_requirement_add`, `criteria_requirement_update`, `criteria_set_default`, `criteria_mode_get`, `criteria_mode_set` | The rubrics postings are scored against |
 | Scores | `score_posting`, `score_posting_bulk`, `score_verdict_set`, `score_history`, `score_best`, `rescore_request`, `rescore_pending` | Ratings, the overall value and the verdicts |
 | Questions | `posting_question_add`, `posting_question_add_bulk`, `posting_question_list`, `posting_question_answer` | Questions to ask the employer about one posting |
 | Stages | `stage_current`, `stage_append`, `stage_append_bulk`, `posting_set_aside`, `posting_reject`, `set_aside_list` | Where a posting stands, and why it was dropped |

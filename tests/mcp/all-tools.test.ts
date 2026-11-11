@@ -20,7 +20,7 @@ describe('ALL_TOOLS', () => {
   })
 
   test('ALL_TOOLS covers groups 1 to 9 of the spec, the market stats, the score verdict and the settings', () => {
-    expect(ALL_TOOLS.length).toBe(60)
+    expect(ALL_TOOLS.length).toBe(61)
   })
 
   test('the recommendation tools are registered: the verdict write and the settings pair', () => {

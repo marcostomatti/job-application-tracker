@@ -72,6 +72,24 @@ export const RequirementUpdateInputSchema = z.strictObject({
 
 export type RequirementUpdateInput = z.infer<typeof RequirementUpdateInputSchema>
 
+/**
+ * A new requirement for one criteria set. The key and the anchors are required, because a
+ * score names a requirement by its key and a weight means nothing without its rubric. `kind`
+ * defaults to soft, a weight left out is not set yet (`null`), and `layerId` names a layer row.
+ * The sort is never supplied: a new requirement goes after the ones the set already has.
+ */
+export const RequirementAddInputSchema = z.strictObject({
+  criteriaSetId: IdSchema,
+  key: requiredText,
+  label: requiredText,
+  kind: z.enum(REQUIREMENT_KINDS).optional(),
+  weight: z.number().min(0).nullable().optional(),
+  anchors: RequirementAnchorsSchema,
+  layerId: IdSchema.nullable().optional(),
+})
+
+export type RequirementAddInput = z.infer<typeof RequirementAddInputSchema>
+
 /** The criteria set to make the default. */
 export const CriteriaSetDefaultInputSchema = z.strictObject({ criteriaSetId: IdSchema })
 

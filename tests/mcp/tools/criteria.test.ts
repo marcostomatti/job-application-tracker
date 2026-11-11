@@ -19,6 +19,7 @@ describe('the criteria group', () => {
     expect(criteriaTools.map((tool) => tool.name).sort()).toEqual([
       'criteria_mode_get',
       'criteria_mode_set',
+      'criteria_requirement_add',
       'criteria_requirement_update',
       'criteria_requirements',
       'criteria_set_default',
@@ -149,5 +150,77 @@ describe('the criteria group', () => {
     const update = await client.call('criteria_requirement_update', { requirementId: [1], patch: { weight: 1 } })
 
     expect([version.failed, update.failed]).toEqual([true, true])
+  })
+
+  test('criteria_requirement_add adds a requirement after the existing ones and returns it as stored', async () => {
+    const client = await connectTools(criteriaTools, database())
+    const { setId } = await arranged('Grown')
+
+    const added = await client.call('criteria_requirement_add', {
+      criteriaSetId: setId,
+      key: 'focus',
+      label: 'Focus',
+      anchors: { '0': 'none', '0.5': 'partly', '1': 'fully' },
+    })
+    const rubric = await client.call('criteria_requirements', { criteriaSetId: setId })
+
+    expect(added.failed).toBe(false)
+    expect(added.body).toMatchObject({ key: 'focus', label: 'Focus', kind: 'soft', weight: null, layerLabel: null, detours: [] })
+    expect((rubric.body as Req[]).map((row) => row.key)).toEqual(['skill', 'focus'])
+  })
+
+  test('criteria_requirement_add takes a kind and a weight when given', async () => {
+    const client = await connectTools(criteriaTools, database())
+    const { setId } = await arranged('Gated')
+
+    const added = await client.call('criteria_requirement_add', {
+      criteriaSetId: setId,
+      key: 'remote',
+      label: 'Remote',
+      kind: 'gate',
+      weight: 2,
+      anchors: { '0': 'office', '0.5': 'hybrid', '1': 'remote' },
+    })
+
+    expect(added.body).toMatchObject({ key: 'remote', kind: 'gate', weight: 2 })
+  })
+
+  test('criteria_requirement_add refuses a key the set already has, an unknown set and an archived set', async () => {
+    const client = await connectTools(criteriaTools, database())
+    const { setId } = await arranged('Guarded')
+    const retired = await arranged('Guarded retired')
+    await archiveCriteriaSetForTest(database(), retired.setId)
+    const anchors = { '0': 'a', '0.5': 'b', '1': 'c' }
+
+    const duplicate = await client.call('criteria_requirement_add', { criteriaSetId: setId, key: 'skill', label: 'Again', anchors })
+    const missing = await client.call('criteria_requirement_add', { criteriaSetId: 999_999, key: 'x', label: 'X', anchors })
+    const archived = await client.call('criteria_requirement_add', { criteriaSetId: retired.setId, key: 'x', label: 'X', anchors })
+
+    expect([duplicate.failed, missing.failed, archived.failed]).toEqual([true, true, true])
+    expect(failureText(duplicate)).toContain('ConflictError')
+    expect(failureText(missing)).toContain('criteria set 999999 does not exist')
+    expect(failureText(archived)).toContain('ArchivedError')
+  })
+
+  test('criteria_requirement_add refuses missing anchors, a negative weight and an unknown field before touching the database', async () => {
+    const client = await connectTools(criteriaTools, untouchableDb())
+
+    const noAnchors = await client.call('criteria_requirement_add', { criteriaSetId: 1, key: 'x', label: 'X' })
+    const negative = await client.call('criteria_requirement_add', {
+      criteriaSetId: 1,
+      key: 'x',
+      label: 'X',
+      weight: -1,
+      anchors: { '0': 'a', '0.5': 'b', '1': 'c' },
+    })
+    const extra = await client.call('criteria_requirement_add', {
+      criteriaSetId: 1,
+      key: 'x',
+      label: 'X',
+      anchors: { '0': 'a', '0.5': 'b', '1': 'c' },
+      importance: 3,
+    })
+
+    expect([noAnchors.failed, negative.failed, extra.failed]).toEqual([true, true, true])
   })
 })

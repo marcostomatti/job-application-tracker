@@ -1,11 +1,13 @@
 import { asc, desc, eq, inArray, isNull, max, sql, type InferSelectModel, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 
-import { ArchivedError, NotFoundError } from '../../errors.ts'
-import type { RequirementPatch } from '../../schemas/criteria.ts'
+import { ArchivedError, ConflictError, NotFoundError } from '../../errors.ts'
+import type { RequirementAddInput, RequirementPatch } from '../../schemas/criteria.ts'
+import { isUniqueViolation } from '../driver-faults.ts'
 import { criteriaSet, detour, insertCriteriaSet, requirement } from '../schema/criteria.ts'
 import { layer } from '../schema/registries.ts'
 import type { Db } from './db.ts'
+import { assertNotArchived } from './registries.ts'
 import { pickDefined } from './pick-defined.ts'
 
 export type CriteriaSetRow = InferSelectModel<typeof criteriaSet>
@@ -204,6 +206,60 @@ export async function createCriteriaVersion(
     await copyDetours(tx, newIdByOldId)
     return created
   })
+}
+
+/** The constraint that keeps one key per set, which a duplicate key reports. */
+const KEY_PER_SET_CONSTRAINT = 'requirement_criteria_set_id_key_unique'
+
+/**
+ * Adds one requirement to a set and returns it as stored, with its layer label and detours.
+ * It goes after the set's existing requirements: its sort is one past the highest there.
+ *
+ * The set must exist (`NotFoundError`) and not be archived (`ArchivedError`), and a layer it
+ * names must be a live layer row. A key the set already has is a `ConflictError`, caught from
+ * the unique constraint rather than checked first, so two callers cannot both pass a check.
+ * The set row is locked for the transaction, so two adds number their sorts one after the other.
+ *
+ * Adding to a set that has scores changes what a new score of it means, not the stored ones:
+ * an old score has no rating for the new requirement. Prefer a new version first, as for an edit.
+ */
+export async function addRequirement(db: Db, input: RequirementAddInput): Promise<RequirementRow> {
+  const created = await db.transaction(async (tx) => {
+    const [set] = await tx
+      .select({ id: criteriaSet.id, archivedAt: criteriaSet.archivedAt })
+      .from(criteriaSet)
+      .where(eq(criteriaSet.id, input.criteriaSetId))
+      .for('no key update')
+    if (!set) throw new NotFoundError('criteria set', input.criteriaSetId)
+    if (set.archivedAt !== null) throw new ArchivedError('criteria set', input.criteriaSetId)
+    if (input.layerId !== undefined && input.layerId !== null) await assertNotArchived(tx, 'layer', input.layerId)
+    const [last] = await tx.select({ sort: max(requirement.sort) }).from(requirement).where(eq(requirement.criteriaSetId, set.id))
+    try {
+      const [row] = await tx
+        .insert(requirement)
+        .values({
+          criteriaSetId: set.id,
+          layerId: input.layerId ?? null,
+          key: input.key,
+          label: input.label,
+          kind: input.kind ?? 'soft',
+          weight: input.weight ?? null,
+          anchors: input.anchors,
+          sort: last?.sort === null || last?.sort === undefined ? 0 : last.sort + 1,
+        })
+        .returning({ id: requirement.id })
+      if (!row) throw new Error('The requirement insert returned no row.')
+      return row
+    } catch (error: unknown) {
+      if (isUniqueViolation(error, KEY_PER_SET_CONSTRAINT)) {
+        throw new ConflictError('requirement key', input.key, { cause: error })
+      }
+      throw error
+    }
+  })
+  const [row] = await readRequirementRows(db, eq(requirement.id, created.id))
+  if (!row) throw new NotFoundError('requirement', created.id)
+  return row
 }
 
 /**
