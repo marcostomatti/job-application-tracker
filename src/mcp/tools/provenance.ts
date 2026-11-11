@@ -93,6 +93,7 @@ export const provenanceTools: ToolDefinition[] = [
     title: 'Record a search run',
     description:
       'Records ONE machine search, what was asked (query) and where (source), and returns it with its id and the time it ran. ' +
+      'params optionally keeps the search parameters as any JSON value (filters, keywords, a radius), so searches can be compared later by what they asked for; null or left out means none. ' +
       'A run says nothing about postings by itself: pass its id as searchRunId to origin_record for each touch it found, so the query that found a lead can be traced.',
     input: SearchRunInputSchema,
     run: async (args, db) => recordSearchRun(db, args),

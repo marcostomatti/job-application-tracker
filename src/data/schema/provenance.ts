@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { date, index, integer, pgTable, pgView, text, timestamp } from 'drizzle-orm/pg-core'
+import { date, index, integer, jsonb, pgTable, pgView, text, timestamp } from 'drizzle-orm/pg-core'
 
 import { posting } from './postings.ts'
 import { route } from './registries.ts'
@@ -14,6 +14,10 @@ export const searchRun = pgTable('search_run', {
   id: integer().primaryKey().generatedAlwaysAsIdentity(),
   query: text().notNull(),
   source: text().notNull(),
+  // The search parameters as the caller sent them, any JSON, for comparing which searches find
+  // the better postings. SQL NULL when none were given; a JSON null sent as params is stored
+  // the same way. No screen shows it yet.
+  params: jsonb(),
   ranAt: timestamp('ran_at', { withTimezone: true }).notNull().defaultNow(),
 })
 

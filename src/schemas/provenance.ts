@@ -46,13 +46,68 @@ export type OriginInput = z.infer<typeof OriginInputSchema>
 
 export const OriginBulkSchema = bulkOf(OriginInputSchema)
 
+/** The longest `params` a search run keeps, as JSON text: a set of search filters, not a document. */
+export const SEARCH_PARAMS_MAX_CHARS = 65_536
+
+/** How deep `params` may nest. Search filters are shallow, and a cap keeps the checks off the stack limit. */
+export const SEARCH_PARAMS_MAX_DEPTH = 32
+
 /**
- * One machine query: what was asked and where. The database stamps when it ran. There is no
- * bulk form on purpose: recording one search run is not a collection operation.
+ * Why a JSON value cannot be kept, or `undefined` when it can: deeper than `maxDepth`, or a key
+ * or string holding NUL. It walks with its own stack rather than recursing, so a value nested
+ * thousands of levels deep is refused instead of overflowing the call stack.
+ */
+function jsonProblem(value: unknown, maxDepth: number): string | undefined {
+  const pending: Array<{ readonly value: unknown; readonly depth: number }> = [{ value, depth: 0 }]
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (next.depth > maxDepth) return `must nest at most ${maxDepth} levels deep`
+    if (typeof next.value === 'string') {
+      if (!hasNoNul(next.value)) return NO_NUL_MESSAGE
+    } else if (Array.isArray(next.value)) {
+      for (const item of next.value) pending.push({ value: item, depth: next.depth + 1 })
+    } else if (typeof next.value === 'object' && next.value !== null) {
+      for (const [key, item] of Object.entries(next.value)) {
+        if (!hasNoNul(key)) return NO_NUL_MESSAGE
+        pending.push({ value: item, depth: next.depth + 1 })
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The parameters of a search, any JSON value, kept as given so searches can be compared by
+ * what they asked for. It is listed as "any value" with a description, because the recursive
+ * JSON type publishes as a `$ref` some clients cannot read. The value arrived as JSON, so it is
+ * JSON; what is checked is its depth, NUL in a key or string, and then its length as JSON text,
+ * measured only once the depth is known to be small.
+ */
+const searchParams = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    const problem = jsonProblem(value, SEARCH_PARAMS_MAX_DEPTH)
+    if (problem !== undefined) {
+      ctx.addIssue({ code: 'custom', message: problem })
+      return
+    }
+    if (JSON.stringify(value).length > SEARCH_PARAMS_MAX_CHARS) {
+      ctx.addIssue({ code: 'custom', message: `must be at most ${SEARCH_PARAMS_MAX_CHARS} characters as JSON` })
+    }
+  })
+  .describe(
+    `The search parameters, any JSON value (an object, an array, a string, a number or a boolean), kept as given. ` +
+      `Null or left out means none. At most ${SEARCH_PARAMS_MAX_CHARS} characters as JSON and ${SEARCH_PARAMS_MAX_DEPTH} levels deep.`,
+  )
+
+/**
+ * One machine query: what was asked, where, and optionally its parameters as JSON. The
+ * database stamps when it ran. There is no bulk form on purpose: recording one search run is
+ * not a collection operation.
  */
 export const SearchRunInputSchema = z.strictObject({
   query: line,
   source: line,
+  params: searchParams.nullable().optional(),
 })
 
 export type SearchRunInput = z.infer<typeof SearchRunInputSchema>

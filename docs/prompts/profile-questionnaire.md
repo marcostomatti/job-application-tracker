@@ -21,7 +21,8 @@ At the end:
 1. Show me the proposed changes as a diff against the current set: each requirement, its old
    and new kind, weight and anchors, and the new ones.
 2. Wait for my yes. Then create a new version with criteria_version_create and apply the
-   changes with criteria_requirement_update.
+   changes with criteria_requirement_update, adding any new requirement with
+   criteria_requirement_add.
 3. Ask before making it the default, and before requesting a rescore.
 
 Privacy: do not store my answers anywhere public, in a file in this repository, or in a
@@ -33,5 +34,5 @@ Example of one exchange: "Q: Think of a job you left. What was the moment you kn
 weekend on-call. -> Red flag on 'on-call load'; ask whether it is a gate."
 
 Tools: `criteria_sets`, `criteria_requirements`, `criteria_version_create`,
-`criteria_requirement_update`, `criteria_set_default`, `rescore_request`, and
-`notebook_note_add` when a notebook is configured.
+`criteria_requirement_add`, `criteria_requirement_update`, `criteria_set_default`,
+`rescore_request`, and `notebook_note_add` when a notebook is configured.

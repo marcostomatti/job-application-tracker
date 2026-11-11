@@ -25,8 +25,9 @@ The score also names a limiting factor: the requirement that holds the posting b
    when the order of scores matches the order the user would put those postings in.
 3. Make a new version (`criteria_version_create`) before editing a set that has scores under
    it, so earlier scores stay readable under the set they were made with. Then edit the copy
-   with `criteria_requirement_update`, and make it the default with `criteria_set_default`
-   when the user agrees.
+   with `criteria_requirement_update`, add a new requirement to it with
+   `criteria_requirement_add`, and make it the default with `criteria_set_default` when the
+   user agrees.
 
 ## Eliciting weights
 
