@@ -1,8 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
+import { getParseErrorMessage } from '@modelcontextprotocol/sdk/server/zod-compat.js'
+import { type CallToolResult, ErrorCode, McpError, type ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { z, ZodType } from 'zod'
 
 import type { Db } from '../data/repositories/db.ts'
+import { publishedInput } from './published-input.ts'
 import { errorResult, okResult } from './result.ts'
 
 /**
@@ -61,24 +63,46 @@ export function defineTool<S extends ZodType>(spec: ToolSpec<S>): ToolDefinition
  * entry point that calls `createMCP` (which starts at once and exits the process when setup
  * throws) is the only place that may, and a test can pass a bare `McpServer`. The SDK throws
  * when two definitions share a name.
+ *
+ * A tool whose input is a union is listed with `publishedInput`'s object, so a client sees its
+ * fields. The SDK checks a call against that looser object, and the handler then checks it
+ * against the tool's own union, refusing it with the SDK's own wording. The second parse reads
+ * the first one's output, so it is sound only for a union whose branches add no defaults and
+ * whose transforms give the same value when run twice (a `trim`, as the registry schemas have).
  */
 export function registerTools(server: McpServer, db: Db, definitions: readonly ToolDefinition[]): void {
   for (const definition of definitions) {
+    const published = publishedInput(definition.input)
     server.registerTool(
       definition.name,
       {
         title: definition.title,
         description: definition.description,
-        inputSchema: definition.input,
+        inputSchema: published,
         ...(definition.annotations === undefined ? {} : { annotations: definition.annotations }),
       },
       async (args: unknown): Promise<CallToolResult> => {
+        const parsed = published === definition.input ? args : parseOwnInput(definition, args)
         try {
-          return okResult(await definition.run(args, db))
+          return okResult(await definition.run(parsed, db))
         } catch (error: unknown) {
           return errorResult(error)
         }
       },
     )
   }
+}
+
+/**
+ * Parses a call with the tool's own schema, after the SDK parsed it with the published one.
+ * A refusal is thrown as the SDK's own `InvalidParams` error, worded as the SDK words it, so a
+ * client cannot tell which of the two parses refused the call.
+ */
+function parseOwnInput(definition: ToolDefinition, args: unknown): unknown {
+  const result = definition.input.safeParse(args)
+  if (result.success) return result.data
+  throw new McpError(
+    ErrorCode.InvalidParams,
+    `Input validation error: Invalid arguments for tool ${definition.name}: ${getParseErrorMessage(result.error)}`,
+  )
 }
