@@ -287,11 +287,11 @@ describe('the search runs and checks group', () => {
   })
 
   test('search_run_record lists params without a recursive reference, and names its cap', () => {
-    const listed = z.toJSONSchema(SearchRunInputSchema, { io: 'input' }) as { properties: { params: Record<string, unknown> } }
+    const listed = z.toJSONSchema(SearchRunInputSchema, { io: 'input' })
     const text = JSON.stringify(listed)
 
     expect(text).not.toContain('$ref')
-    expect(JSON.stringify(listed.properties.params)).toContain(String(SEARCH_PARAMS_MAX_CHARS))
+    expect(JSON.stringify(listed.properties?.params)).toContain(String(SEARCH_PARAMS_MAX_CHARS))
   })
 
   test('search_run_record refuses a blank query, a NUL byte and an unknown field before touching the database', async () => {
