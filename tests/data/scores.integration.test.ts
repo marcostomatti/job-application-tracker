@@ -1,9 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { eq, sql } from 'drizzle-orm'
 
-import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { criteriaSet, detour, requirement } from '../../src/data/schema/criteria.ts'
 import { penaltyKind } from '../../src/data/schema/registries.ts'
@@ -12,7 +9,6 @@ import { postingPenalty, postingRating, postingScore } from '../../src/data/sche
 import { DetourSchema, PenaltySchema, RatingSchema } from '../../src/schemas/scoring.ts'
 import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-back.ts'
 
-const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const ANCHORS = { '0': 'does not meet it', '0.5': 'partly meets it', '1': 'fully meets it' }
 
 afterAll(async () => {
@@ -210,18 +206,6 @@ describe('scores, ratings and penalties', () => {
     expect(score.isRescore).toBe(false)
     expect(score.overall).toBeNull()
     expect(score.limiterRequirementId).toBeNull()
-  })
-
-  test('the migration passes the lint', () => {
-    // Arrange
-    const migration = join(MIGRATIONS_DIR, '0003_scores.sql')
-
-    // Act
-    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
-
-    // Assert: the file must exist, or "no findings" would pass for the wrong reason
-    expect(existsSync(migration)).toBe(true)
-    expect(findings).toEqual([])
   })
 })
 

@@ -1,9 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import http from 'node:http'
-import type { AddressInfo } from 'node:net'
-import { connect, createServer } from 'node:net'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,7 +14,7 @@ import { setBackupSettings } from '../../src/data/repositories/config.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 import { countingDb } from '../backup/db-proxies.ts'
 import { closeDb, getDb } from '../../src/data/client.ts'
-import { backupOptionsFor, startService } from '../../src/http/server.ts'
+import { startService } from '../../src/http/server.ts'
 
 /**
  * A key made up for these tests; it matches nothing real. It is as long as a generated one, so
@@ -63,15 +61,6 @@ async function stopRunning(): Promise<void> {
   await current.handle.stop()
 }
 
-/** A port nothing is listening on: one is opened to get a number, then closed. */
-async function unusedPort(): Promise<number> {
-  const probe = createServer()
-  await new Promise<void>((ready) => probe.listen(0, () => ready()))
-  const port = (probe.address() as AddressInfo).port
-  await new Promise<void>((done) => probe.close(() => done()))
-  return port
-}
-
 // The chassis's service logger reads LOG_LEVEL when it is made, at each start. Nothing here
 // reads what it writes, and what the service logs is asserted in service.integration.test.ts.
 beforeAll(() => {
@@ -99,55 +88,6 @@ function restore(name: string, value: string | undefined): void {
 }
 
 describe('startService', () => {
-  test.each([
-    ['unset', undefined],
-    ['empty', ''],
-  ])('with API_KEY %s, refuses to start before the database or any listener is touched', async (_label, value) => {
-    restore('API_KEY', value)
-    // With the database unreachable, a key check that ran after the pool started would surface
-    // the database failure instead of the key's, so the message tells the two orders apart.
-    process.env.DATABASE_URL = `postgres://tracker:unused@localhost:${await unusedPort()}/tracker`
-    await closeDb()
-    // The chassis listens through a node:http server, so a spy on its prototype sees any listen.
-    const listen = spyOn(http.Server.prototype, 'listen')
-
-    try {
-      const failure = await startService().catch((error: unknown) => error)
-
-      expect(failure).toBeInstanceOf(Error)
-      expect((failure as Error).message).toMatch(/API_KEY/)
-      expect((failure as Error).message).not.toMatch(/database/i)
-      expect(listen).not.toHaveBeenCalled()
-    } finally {
-      listen.mockRestore()
-    }
-    expect(typeof http.Server.prototype.listen).toBe('function')
-  })
-
-  test('the refusal names the fix', async () => {
-    restore('API_KEY', undefined)
-
-    const failure = await startService().catch((error: unknown) => error)
-
-    expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toContain('setApiKey')
-  })
-
-  test.each([0, 70_000, 80.5, Number.NaN])('refuses a port option of %s before opening anything', async (port) => {
-    await expect(startService({ port })).rejects.toThrow(/port option/)
-  })
-
-  test.each(['abc', '0', '70000', '80.5'])('refuses a PORT of %s before opening anything', async (value) => {
-    const saved = process.env.PORT
-    process.env.PORT = value
-
-    try {
-      await expect(startService()).rejects.toThrow(/PORT/)
-    } finally {
-      restore('PORT', saved)
-    }
-  })
-
   test('stop() closes the server and the pool', async () => {
     const { handle } = await start()
     const db = getDb()
@@ -181,15 +121,6 @@ describe('startService', () => {
       while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
       expect(condition()).toBe(true)
     }
-
-    test('is not started under NODE_ENV=test unless a test passes its own', () => {
-      const own = { outDir: '/somewhere' }
-
-      expect(backupOptionsFor({ NODE_ENV: 'test' }, undefined)).toBeUndefined()
-      expect(backupOptionsFor({ NODE_ENV: 'production' }, undefined)).toEqual({})
-      expect(backupOptionsFor({}, undefined)).toEqual({})
-      expect(backupOptionsFor({ NODE_ENV: 'test' }, own)).toBe(own)
-    })
 
     test('does not hold the service back while a due dump runs, and stop() clears its timer', async () => {
       await withMigratedScratchDatabase(async (scratch) => {

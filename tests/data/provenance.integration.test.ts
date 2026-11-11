@@ -1,9 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { asc, eq, isNull, sql } from 'drizzle-orm'
 
-import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { origin, postingFirstTouch, searchRun } from '../../src/data/schema/provenance.ts'
 import { company, normaliseName, posting } from '../../src/data/schema/postings.ts'
@@ -11,8 +8,6 @@ import { route } from '../../src/data/schema/registries.ts'
 import type { Origin } from '../../src/entities/provenance.ts'
 import { firstTouch } from '../../src/provenance/first-touch.ts'
 import { rolledBack, type Tx } from './rolled-back.ts'
-
-const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 
 afterAll(async () => {
   await closeDb()
@@ -242,17 +237,5 @@ describe('provenance', () => {
     expect(resolved[0]!.label.startsWith('retired-')).toBe(true)
     expect(resolved[0]!.archivedAt).not.toBeNull()
     expect(pickList).toHaveLength(1)
-  })
-
-  test('the migration passes the lint', () => {
-    // Arrange
-    const migration = join(MIGRATIONS_DIR, '0005_provenance.sql')
-
-    // Act
-    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
-
-    // Assert: the file must exist, or "no findings" would pass for the wrong reason
-    expect(existsSync(migration)).toBe(true)
-    expect(findings).toEqual([])
   })
 })

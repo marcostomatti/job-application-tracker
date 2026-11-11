@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
-import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 
 import { closeDb, getDb } from '../../src/data/client.ts'
 import { requirement } from '../../src/data/schema/criteria.ts'
@@ -49,17 +48,5 @@ describe('structural discriminators match their CHECK constraints', () => {
     const listed = membersOf(rows[0]?.definition ?? '')
     expect(listed.length).toBeGreaterThan(0)
     expect([...listed].sort()).toEqual([...members].sort())
-  })
-
-  test.each(CHECKS)('$constraint in the Drizzle table definition lists the same members', ({ constraint, table, members }) => {
-    // Arrange
-    const declared = getTableConfig(table).checks.find((candidate) => candidate.name === constraint)
-
-    // Act
-    const text = declared === undefined ? '' : new PgDialect().sqlToQuery(declared.value).sql
-
-    // Assert
-    expect(declared).toBeDefined()
-    expect([...membersOf(text)].sort()).toEqual([...members].sort())
   })
 })

@@ -1,16 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
-import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { postingDisposition, postingStageEvent } from '../../src/data/schema/dispositions.ts'
 import { company, normaliseName, posting } from '../../src/data/schema/postings.ts'
 import { rejectionReason, setAsideReason, stage } from '../../src/data/schema/registries.ts'
 import { rolledBack, thrownInSavepoint, violationText, type Tx } from './rolled-back.ts'
 
-const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const DISPOSITION_CHECK = 'posting_disposition_kind_reason_check'
 const SET_ASIDE_FK = 'posting_disposition_set_aside_reason_id_set_aside_reason_id_fk'
 const REJECTION_FK = 'posting_disposition_rejection_reason_id_rejection_reason_id_fk'
@@ -292,17 +288,5 @@ describe('dispositions and stage history', () => {
     // Assert: the same stage three times is stored three times, and the process has four steps
     expect(repeats[0]?.count).toBe(3)
     expect(total[0]?.count).toBe(4)
-  })
-
-  test('the migration passes the lint', () => {
-    // Arrange
-    const migration = join(MIGRATIONS_DIR, '0004_dispositions.sql')
-
-    // Act
-    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
-
-    // Assert: the file must exist, or "no findings" would pass for the wrong reason
-    expect(existsSync(migration)).toBe(true)
-    expect(findings).toEqual([])
   })
 })

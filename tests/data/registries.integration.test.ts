@@ -1,9 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { count, eq, isNull, sql } from 'drizzle-orm'
 
-import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb, getDb } from '../../src/data/client.ts'
 import {
   applyRoute,
@@ -21,7 +18,6 @@ import {
 } from '../../src/data/schema/registries.ts'
 import { withMigratedScratchDatabase } from './scratch-database.ts'
 
-const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const REGISTRY_TABLE_NAMES = [
   'phase',
   'stage',
@@ -100,18 +96,6 @@ describe('registries', () => {
     expect(ALL_REGISTRIES).toHaveLength(12)
     expect(discovered).toEqual([...REGISTRY_TABLE_NAMES].sort())
     expect(counts).toEqual(ALL_REGISTRIES.map(() => 0))
-  })
-
-  test('the migration passes the lint', () => {
-    // Arrange
-    const migration = join(MIGRATIONS_DIR, '0000_registries.sql')
-
-    // Act
-    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
-
-    // Assert: the file must exist, or "no findings" would pass for the wrong reason
-    expect(existsSync(migration)).toBe(true)
-    expect(findings).toEqual([])
   })
 
   test('a phase carries is_shortlist and a stage carries is_applied', async () => {

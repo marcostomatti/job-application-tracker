@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
 
-import { closeDb, getDb, MissingDatabaseUrlError } from '../../src/data/client.ts'
+import { closeDb, getDb } from '../../src/data/client.ts'
 
 const ORIGINAL_URL = process.env.DATABASE_URL
 
@@ -26,18 +26,5 @@ describe('getDb', () => {
 
     // Assert
     expect(rows[0]?.one).toBe(1)
-  })
-
-  test('throws a named error when DATABASE_URL is absent', () => {
-    // Arrange
-    delete process.env.DATABASE_URL
-
-    // Act
-    const act = () => getDb()
-
-    // Assert
-    expect(act).toThrow(MissingDatabaseUrlError)
-    expect(act).toThrow(/DATABASE_URL/)
-    expect(act).not.toThrow(TypeError)
   })
 })

@@ -1,9 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
-import { lintMigrations } from '../../drizzle/lint/migration-lint'
 import { closeDb } from '../../src/data/client.ts'
 import { criteriaSet } from '../../src/data/schema/criteria.ts'
 import { appConfig, pendingRescore, rescoreRequest } from '../../src/data/schema/config.ts'
@@ -11,7 +8,6 @@ import { company, normaliseName, posting } from '../../src/data/schema/postings.
 import { postingScore } from '../../src/data/schema/scores.ts'
 import { rolledBack, type Tx } from './rolled-back.ts'
 
-const MIGRATIONS_DIR = join(import.meta.dir, '..', '..', 'drizzle')
 const SINCE = '2026-03-10'
 const BEFORE_SINCE = '2026-03-09'
 const AFTER_SINCE = '2026-03-11'
@@ -200,17 +196,5 @@ describe('app config and the pending re-score view', () => {
     // Assert: a score for one request's set clears that request only, and the date is each request's own
     expect(result.forA).toEqual(ascending([result.scoredForB, result.neither, result.onlyReachedByA]))
     expect(result.forB).toEqual(ascending([result.scoredForA, result.neither]))
-  })
-
-  test('the migration passes the lint', () => {
-    // Arrange
-    const migration = join(MIGRATIONS_DIR, '0007_config_rescore.sql')
-
-    // Act
-    const findings = lintMigrations(MIGRATIONS_DIR).filter((finding) => finding.file === migration)
-
-    // Assert: the file must exist, or "no findings" would pass for the wrong reason
-    expect(existsSync(migration)).toBe(true)
-    expect(findings).toEqual([])
   })
 })

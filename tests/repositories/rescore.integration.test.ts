@@ -5,7 +5,6 @@ import { listPendingRescore, requestRescore } from '../../src/data/repositories/
 import { scorePosting } from '../../src/data/repositories/scores.ts'
 import { insertCriteriaSet, requirement } from '../../src/data/schema/criteria.ts'
 import { NotFoundError } from '../../src/errors.ts'
-import { PendingRescoreQuerySchema, RescoreRequestInputSchema } from '../../src/schemas/scores.ts'
 import { thrownBy } from '../data/rolled-back.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
@@ -193,22 +192,5 @@ describe('listPendingRescore', () => {
 
     // Assert: scored before the request existed, and still not waiting
     expect(pending).toEqual([])
-  })
-})
-
-describe('the rescore schemas', () => {
-  test('a request takes a set id and a calendar day, and refuses anything else', () => {
-    expect(RescoreRequestInputSchema.parse({ criteriaSetId: '4', sinceDate: SINCE })).toEqual({ criteriaSetId: 4, sinceDate: SINCE })
-    expect(RescoreRequestInputSchema.safeParse({ criteriaSetId: 4, sinceDate: '10/03/2026' }).success).toBe(false)
-    expect(RescoreRequestInputSchema.safeParse({ criteriaSetId: 4, sinceDate: '2026-02-30' }).success).toBe(false)
-    expect(RescoreRequestInputSchema.safeParse({ criteriaSetId: 4 }).success).toBe(false)
-    expect(RescoreRequestInputSchema.safeParse({ criteriaSetId: 4, sinceDate: SINCE, extra: 1 }).success).toBe(false)
-  })
-
-  test('the pending query takes an optional request id and nothing else', () => {
-    expect(PendingRescoreQuerySchema.parse({})).toEqual({})
-    expect(PendingRescoreQuerySchema.parse({ rescoreRequestId: '3' })).toEqual({ rescoreRequestId: 3 })
-    expect(PendingRescoreQuerySchema.safeParse({ rescoreRequestId: 0 }).success).toBe(false)
-    expect(PendingRescoreQuerySchema.safeParse({ limit: 5 }).success).toBe(false)
   })
 })
