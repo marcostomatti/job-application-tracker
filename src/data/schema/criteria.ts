@@ -77,7 +77,7 @@ export const requirement = pgTable(
     // Redundant as a key (id is already unique); it exists so a rating or a limiter can
     // reference the pair and the database can check the requirement is in the scored set.
     unique('requirement_criteria_set_id_id_unique').on(table.criteriaSetId, table.id),
-    // The members are REQUIREMENT_KINDS (src/schemas/discriminators.ts); tests/data/discriminators.test.ts compares them.
+    // The members are REQUIREMENT_KINDS (src/schemas/discriminators.ts); tests/data/discriminators.integration.test.ts compares them.
     check('requirement_kind_check', sql`${table.kind} IN ('gate', 'soft')`),
     // A negative weight is ignored by the overall yet still ranked by the limiter.
     // `< 'Infinity'` also rules out NaN, which Postgres orders above every number, so a weight is

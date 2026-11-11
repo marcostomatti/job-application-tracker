@@ -14,9 +14,15 @@ bun install
 cp .env.example .env     # placeholders for the local database, not real credentials
 bun run db:up            # starts Postgres 16 in Docker and waits until it is ready
 bun run db:migrate       # applies the migrations; every registry is still empty afterwards
-bun test                 # needs the database from the steps above
+bun run test             # the unit tests; they need no database
+bun run test:integration # the database tests; they need the database from the steps above
 bun run lint:migrations  # checks the migrations and any pack in seeds/vanilla/
 ```
+
+A test that needs Postgres lives in a file named `*.integration.test.ts`; every other test must
+run with no database. Nothing runs the integration tests on a schedule, so run them on demand,
+before a change to the schema, a repository or a database-backed tool. A plain `bun test` runs
+both kinds.
 
 ### If port 5432 is taken
 
