@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { z } from 'zod'
 
 import { appendStageEvent } from '../../../src/data/repositories/dispositions.ts'
 import { addPostings } from '../../../src/data/repositories/postings.ts'
@@ -6,6 +7,7 @@ import { addRegistryRows, archiveRegistryRow } from '../../../src/data/repositor
 import { writeSummary } from '../../../src/data/repositories/summaries.ts'
 import { provenanceTools } from '../../../src/mcp/tools/provenance.ts'
 import { BULK_MAX } from '../../../src/schemas/common.ts'
+import { SEARCH_PARAMS_MAX_CHARS, SearchRunInputSchema } from '../../../src/schemas/provenance.ts'
 import { connectTools, failureText, idOf, untouchableDb, useSharedScratchDatabase } from './harness.ts'
 
 const database = useSharedScratchDatabase()
@@ -239,6 +241,57 @@ describe('the search runs and checks group', () => {
 
     expect(run.body).toMatchObject({ query: 'typescript remote', source: 'a job board' })
     expect(touch.body).toMatchObject({ searchRunId })
+  })
+
+  test('search_run_record keeps the search parameters as JSON, and stores null when none are given', async () => {
+    const client = await connectTools(provenanceTools, database())
+    const params = { keywords: ['typescript', 'remote'], radiusKm: 50, filters: { seniority: 'senior', remote: true } }
+
+    const withParams = await client.call('search_run_record', { query: 'typescript remote', source: 'a job board', params })
+    const withNull = await client.call('search_run_record', { query: 'typescript remote', source: 'a job board', params: null })
+    const without = await client.call('search_run_record', { query: 'typescript remote', source: 'a job board' })
+
+    expect(withParams.body).toMatchObject({ params })
+    expect(withNull.body).toMatchObject({ params: null })
+    expect(without.body).toMatchObject({ params: null })
+  })
+
+  test('search_run_record takes any JSON value as params, a bare string or an empty one included', async () => {
+    const client = await connectTools(provenanceTools, database())
+
+    const list = await client.call('search_run_record', { query: 'q', source: 's', params: [1, 'two', null] })
+    const empty = await client.call('search_run_record', { query: 'q', source: 's', params: '' })
+
+    expect(list.body).toMatchObject({ params: [1, 'two', null] })
+    expect(empty.body).toMatchObject({ params: '' })
+  })
+
+  test('search_run_record refuses params holding a NUL byte or longer than its cap, before touching the database', async () => {
+    const client = await connectTools(provenanceTools, untouchableDb())
+
+    const nul = await client.call('search_run_record', { query: 'q', source: 's', params: { note: 'a\u0000b' } })
+    const huge = await client.call('search_run_record', { query: 'q', source: 's', params: { blob: 'x'.repeat(70_000) } })
+
+    expect([nul.failed, huge.failed]).toEqual([true, true])
+  })
+
+  test('search_run_record refuses params nested deeper than its cap as a validation error, not a crash', async () => {
+    const client = await connectTools(provenanceTools, untouchableDb())
+    let deep: unknown = 'bottom'
+    for (let level = 0; level < 100_000; level += 1) deep = [deep]
+
+    const outcome = await client.call('search_run_record', { query: 'q', source: 's', params: deep })
+
+    expect(outcome.failed).toBe(true)
+    expect(failureText(outcome)).toContain('Input validation error')
+  })
+
+  test('search_run_record lists params without a recursive reference, and names its cap', () => {
+    const listed = z.toJSONSchema(SearchRunInputSchema, { io: 'input' }) as { properties: { params: Record<string, unknown> } }
+    const text = JSON.stringify(listed)
+
+    expect(text).not.toContain('$ref')
+    expect(JSON.stringify(listed.properties.params)).toContain(String(SEARCH_PARAMS_MAX_CHARS))
   })
 
   test('search_run_record refuses a blank query, a NUL byte and an unknown field before touching the database', async () => {

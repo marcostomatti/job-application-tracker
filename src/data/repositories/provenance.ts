@@ -140,7 +140,7 @@ export async function getFirstTouch(db: Db, postingId: number): Promise<Origin |
 
 /** Records one machine query: what was asked and where. The database stamps when it ran. */
 export async function recordSearchRun(db: Db, input: SearchRunInput): Promise<SearchRun> {
-  const [written] = await db.insert(searchRun).values({ query: input.query, source: input.source }).returning()
+  const [written] = await db.insert(searchRun).values({ query: input.query, source: input.source, params: input.params ?? null }).returning()
   if (!written) throw new Error('The search run insert returned no row.')
   return written
 }
