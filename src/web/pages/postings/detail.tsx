@@ -4,11 +4,13 @@ import { DEFAULT_ASK_FLOOR } from '../../../stats/bands.ts'
 import {
   data,
   type PostingDetail as PostingDetailData,
+  type PostingTextState,
   type RecommendationDisplay,
   type RequirementRow,
   type StageHistoryRow,
   type StageRegistryRow,
 } from '../../data.ts'
+import { PostingFullText } from './detail-fulltext.tsx'
 import { dispositionLabel, formatDay, latestScore, locationLine, postingLink } from './detail-labels.ts'
 import { QuestionList } from './detail-questions.tsx'
 import { RecommendationSummary, ScoreBreakdown } from './detail-score.tsx'
@@ -34,6 +36,8 @@ export interface PostingDetailViewProps extends DetailHandlers {
   /** The Settings display choice; the panel shows both recommendations either way. */
   readonly display?: RecommendationDisplay
   readonly error: string | null
+  /** The full posting from the notebook; the section is left out when this is not given. */
+  readonly postingText?: PostingTextState
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -133,7 +137,7 @@ function Origins({ origins }: { origins: PostingDetailData['origins'] }) {
 export function PostingDetailView(props: PostingDetailViewProps & { onClose: () => void }) {
   const { detail, history, stages, requirements, askFloor, error, onClose, display = DEFAULT_DISPLAY } = props
   const { posting, company } = detail
-  const link = postingLink(posting)
+  const link = postingLink(posting, detail.summary?.extra)
   const score = latestScore(detail.scores)
 
   return (
@@ -163,6 +167,11 @@ export function PostingDetailView(props: PostingDetailViewProps & { onClose: () 
       <Section title="Summary">
         <Summary summary={detail.summary} />
       </Section>
+      {props.postingText !== undefined && (
+        <Section title="Full posting">
+          <PostingFullText state={props.postingText} />
+        </Section>
+      )}
       <Section title="Stage">
         <CurrentStage latest={detail.latestStage} />
         <StageTimeline history={history} />
@@ -242,6 +251,7 @@ export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor =
   const [writeError, setWriteError] = useState<string | null>(null)
   const [stages, setStages] = useState<readonly StageRegistryRow[]>([])
   const [requirements, setRequirements] = useState<readonly RequirementRow[] | null>(null)
+  const [postingText, setPostingText] = useState<PostingTextState>({ status: 'loading' })
 
   useEffect(() => {
     let live = true
@@ -251,6 +261,18 @@ export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor =
     loadPosting(postingId).then(
       (next) => live && setLoaded(next),
       (cause: unknown) => live && setLoadError(messageOf(cause)),
+    )
+    return () => {
+      live = false
+    }
+  }, [postingId])
+
+  useEffect(() => {
+    let live = true
+    setPostingText({ status: 'loading' })
+    data.postingText(postingId).then(
+      (value) => live && setPostingText({ status: 'ready', value }),
+      (cause: unknown) => live && setPostingText({ status: 'error', message: messageOf(cause) }),
     )
     return () => {
       live = false
@@ -329,6 +351,7 @@ export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor =
           detail={loaded.detail}
           history={loaded.history}
           stages={stages}
+          postingText={postingText}
           requirements={requirements}
           askFloor={askFloor}
           display={display}

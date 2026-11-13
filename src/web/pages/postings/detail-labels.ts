@@ -60,14 +60,35 @@ const WEB_URL = /^https?:\/\/\S+$/i
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /**
- * Where the user goes to read or apply for the role. The posting has no URL column, so a link
- * exists only when the posting key or the apply contact is itself a web address, or the contact is
- * an email address. Inert by construction: this returns an href for an anchor the user clicks;
- * nothing in the panel requests it.
+ * The `url` a summary's free-form `extra` holds, when it is a web address. `extra` is JSON with
+ * no CHECK on its shape, and some writers stored the object as JSON text, so text that parses to
+ * an object is read the same way. Anything else holds no url.
  */
-export function postingLink(posting: Pick<Posting, 'postingKey' | 'applyContact'>): PostingLink | null {
+function extraUrl(extra: unknown): string | null {
+  let value = extra
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const url = (value as Record<string, unknown>).url
+  return typeof url === 'string' && WEB_URL.test(url.trim()) ? url.trim() : null
+}
+
+/**
+ * Where the user goes to read or apply for the role. The posting has no URL column, so a link
+ * exists only when the posting key, the summary's `extra.url` or the apply contact is itself a
+ * web address, or the contact is an email address. Inert by construction: this returns an href
+ * for an anchor the user clicks; nothing in the panel requests it.
+ */
+export function postingLink(posting: Pick<Posting, 'postingKey' | 'applyContact'>, summaryExtra?: unknown): PostingLink | null {
   const key = posting.postingKey.trim()
   if (WEB_URL.test(key)) return { href: key, label: 'Open posting' }
+  const fromSummary = extraUrl(summaryExtra)
+  if (fromSummary !== null) return { href: fromSummary, label: 'Open posting' }
   const contact = (posting.applyContact ?? '').trim()
   if (WEB_URL.test(contact)) return { href: contact, label: 'Apply page' }
   if (EMAIL.test(contact)) return { href: `mailto:${encodeURIComponent(contact).replace('%40', '@')}`, label: 'Apply by email' }

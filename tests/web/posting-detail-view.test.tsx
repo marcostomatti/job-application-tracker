@@ -134,3 +134,37 @@ describe('PostingDetail', () => {
     expect(html).toContain('Loading posting')
   })
 })
+
+describe('the full posting section', () => {
+  const ready = (text: string | null, extra: Record<string, unknown> = {}) => ({
+    status: 'ready' as const,
+    value: { configured: true as const, postingKey: 'example/platform-engineer', copies: 1, complete: true, source: text === null ? null : { id: 'source:1', title: 'example/platform-engineer', created: '2026-11-10T09:00:00Z' }, text, totalChars: text?.length ?? 0, truncated: false, ...extra },
+  })
+
+  test('shows the stored text with where it came from', () => {
+    const html = render({ postingText: ready('We build widgets.\nYou know TypeScript.') })
+
+    expect(html).toContain('Full posting')
+    expect(html).toContain('We build widgets.')
+    expect(html).toContain('You know TypeScript.')
+    expect(html).toContain('stored 2026-11-10')
+  })
+
+  test('says when there are several copies or the text was cut', () => {
+    const html = render({ postingText: ready('text', { copies: 3, truncated: true, totalChars: 300000 }) })
+
+    expect(html).toContain('newest of 3 copies')
+    expect(html).toContain('cut at')
+  })
+
+  test('says what is missing: loading, no text stored, no notebook, or a notebook that failed', () => {
+    expect(render({ postingText: { status: 'loading' } })).toContain('Loading the full posting')
+    expect(render({ postingText: ready(null) })).toContain('No full text is stored in the notebook for this posting.')
+    expect(render({ postingText: { status: 'ready', value: { configured: false } } })).toContain('No notebook is configured')
+    expect(render({ postingText: { status: 'error', message: 'notebook unavailable' } })).toContain('notebook unavailable')
+  })
+
+  test('without the prop the section is not drawn', () => {
+    expect(render()).not.toContain('Full posting')
+  })
+})
