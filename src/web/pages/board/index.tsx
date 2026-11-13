@@ -57,7 +57,7 @@ export function BoardPage() {
   const select = (posting: number | null): void => setState({ ...state, posting })
 
   return (
-    <div className="page wide-page postings-page">
+    <div className="page wide-page postings-page board-page">
       <header className="page-head postings-head">
         <div>
           <h1>Board</h1>
