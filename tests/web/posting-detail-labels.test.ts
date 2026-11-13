@@ -77,6 +77,15 @@ describe('postingLink', () => {
     expect(postingLink({ postingKey: 'board:42', applyContact: null }, JSON.stringify({ url: 'https://jobs.example.test/42' }))?.href).toBe('https://jobs.example.test/42')
   })
 
+  test('a key with a known prefix opens its pattern, after a summary url and before the contact', () => {
+    const patterns = [{ prefix: 'board', template: 'https://jobs.example.test/view/{id}/' }]
+    const posting = { postingKey: 'board:42', applyContact: 'jobs@example.test' }
+
+    expect(postingLink(posting, undefined, patterns)).toEqual({ href: 'https://jobs.example.test/view/42/', label: 'Open posting' })
+    expect(postingLink(posting, { url: 'https://other.example.test/42' }, patterns)?.href).toBe('https://other.example.test/42')
+    expect(postingLink(posting, undefined, [])?.label).toBe('Apply by email')
+  })
+
   test('a url that is not a web address, or an extra that is not an object, adds no link', () => {
     expect(postingLink({ postingKey: 'board:42', applyContact: null }, { url: 'javascript:alert(1)' })).toBeNull()
     expect(postingLink({ postingKey: 'board:42', applyContact: null }, 'not json')).toBeNull()

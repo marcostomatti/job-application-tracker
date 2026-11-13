@@ -4,6 +4,7 @@
  */
 import { leadBand } from '../../../stats/bands.ts'
 import type { LeadBand } from '../../../stats/types.ts'
+import { linkFromKey, type PostingLinkPattern } from '../../../schemas/posting-links.ts'
 import { toScale } from '../../../scoring/scale.ts'
 import type { PostingDetail, RequirementRow } from '../../data.ts'
 
@@ -81,14 +82,21 @@ function extraUrl(extra: unknown): string | null {
 /**
  * Where the user goes to read or apply for the role. The posting has no URL column, so a link
  * exists only when the posting key, the summary's `extra.url` or the apply contact is itself a
- * web address, or the contact is an email address. Inert by construction: this returns an href
+ * web address, when a link pattern in the settings matches the key's prefix, or when the contact
+ * is an email address. Inert by construction: this returns an href
  * for an anchor the user clicks; nothing in the panel requests it.
  */
-export function postingLink(posting: Pick<Posting, 'postingKey' | 'applyContact'>, summaryExtra?: unknown): PostingLink | null {
+export function postingLink(
+  posting: Pick<Posting, 'postingKey' | 'applyContact'>,
+  summaryExtra?: unknown,
+  patterns: readonly PostingLinkPattern[] = [],
+): PostingLink | null {
   const key = posting.postingKey.trim()
   if (WEB_URL.test(key)) return { href: key, label: 'Open posting' }
   const fromSummary = extraUrl(summaryExtra)
   if (fromSummary !== null) return { href: fromSummary, label: 'Open posting' }
+  const fromPattern = linkFromKey(key, patterns)
+  if (fromPattern !== null) return { href: fromPattern, label: 'Open posting' }
   const contact = (posting.applyContact ?? '').trim()
   if (WEB_URL.test(contact)) return { href: contact, label: 'Apply page' }
   if (EMAIL.test(contact)) return { href: `mailto:${encodeURIComponent(contact).replace('%40', '@')}`, label: 'Apply by email' }

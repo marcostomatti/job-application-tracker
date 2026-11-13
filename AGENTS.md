@@ -97,6 +97,12 @@ A verdict belongs to the score it was given with. A new criteria version means a
 the verdict has to be given again. `settings_update` also picks what the app shows through
 `recommendationDisplay`: `rules`, `agent` or `both` (the default, so a disagreement is visible).
 
+`settings_update` also holds `postingLinkPatterns`, the user's rules for turning a posting key
+into a link in the posting panel: a key `<prefix>:<id>` opens that prefix's template with
+`{id}` filled in. The list is replaced whole, so read it with `settings_get` first and send it
+back with your change. Change it only when the user asks. A posting key in that form lets the
+panel link to a posting that has no URL stored.
+
 ## The rule for verdicts
 
 **When the data the user gives you carries its own recommendation, that recommendation is the

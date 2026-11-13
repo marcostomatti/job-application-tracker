@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm'
 import type { DrizzleClient } from '../../src/data/client.ts'
 import { readAppSettings, writeAppSettings } from '../../src/data/repositories/settings.ts'
 import { ASK_FLOOR_KEY } from '../../src/data/repositories/stats.ts'
+import { POSTING_LINK_PATTERNS_KEY } from '../../src/schemas/posting-links.ts'
 import { RECOMMENDATION_DISPLAY_KEY } from '../../src/schemas/recommendation.ts'
 import { withMigratedScratchDatabase } from '../data/scratch-database.ts'
 
@@ -27,7 +28,7 @@ describe('readAppSettings', () => {
 
     const settings = await withMigratedScratchDatabase((db) => readAppSettings(db, logger))
 
-    expect(settings).toEqual({ askFloor: 0.5, recommendationDisplay: 'both' })
+    expect(settings).toEqual({ askFloor: 0.5, recommendationDisplay: 'both', postingLinkPatterns: [] })
     expect(logged).toEqual([])
   })
 
@@ -40,7 +41,19 @@ describe('readAppSettings', () => {
       return readAppSettings(db, logger)
     })
 
-    expect(settings).toEqual({ askFloor: 0.5, recommendationDisplay: 'both' })
+    expect(settings).toEqual({ askFloor: 0.5, recommendationDisplay: 'both', postingLinkPatterns: [] })
+    expect(logged).toHaveLength(1)
+  })
+
+  test('hand-edited link patterns that do not parse read as none, and are logged', async () => {
+    const { logger, logged } = spyLogger()
+
+    const settings = await withMigratedScratchDatabase(async (db) => {
+      await handEdit(db, POSTING_LINK_PATTERNS_KEY, '[{"prefix": "board", "template": "javascript:alert({id})"}]')
+      return readAppSettings(db, logger)
+    })
+
+    expect(settings.postingLinkPatterns).toEqual([])
     expect(logged).toHaveLength(1)
   })
 })
@@ -53,7 +66,20 @@ describe('writeAppSettings', () => {
       return { first, second }
     })
 
-    expect(first).toEqual({ askFloor: 0.5, recommendationDisplay: 'agent' })
-    expect(second).toEqual({ askFloor: 0.6, recommendationDisplay: 'agent' })
+    expect(first).toEqual({ askFloor: 0.5, recommendationDisplay: 'agent', postingLinkPatterns: [] })
+    expect(second).toEqual({ askFloor: 0.6, recommendationDisplay: 'agent', postingLinkPatterns: [] })
+  })
+
+  test('stores the link patterns and reads them back, and an empty list clears them', async () => {
+    const patterns = [{ prefix: 'board', template: 'https://jobs.example.test/view/{id}/' }]
+
+    const { stored, cleared } = await withMigratedScratchDatabase(async (db) => {
+      const stored = await writeAppSettings(db, { postingLinkPatterns: patterns })
+      const cleared = await writeAppSettings(db, { postingLinkPatterns: [] })
+      return { stored, cleared }
+    })
+
+    expect(stored.postingLinkPatterns).toEqual(patterns)
+    expect(cleared.postingLinkPatterns).toEqual([])
   })
 })

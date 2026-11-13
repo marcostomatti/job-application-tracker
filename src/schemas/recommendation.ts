@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { PostingLinkPatternsSchema } from './posting-links.ts'
+
 /**
  * The two recommendations a posting can carry, and which of them the app shows.
  *
@@ -60,11 +62,13 @@ export interface Recommendation {
 export const AppSettingsSchema = z.strictObject({
   askFloor: z.number().min(0).max(1),
   recommendationDisplay: RecommendationDisplaySchema,
+  /** How a posting key becomes a link to the posting, per key prefix; empty means none. */
+  postingLinkPatterns: PostingLinkPatternsSchema,
 })
 
 export type AppSettings = z.infer<typeof AppSettingsSchema>
 
-/** A change to the settings: either field, never none. */
+/** A change to the settings: any of the fields, never none. */
 export const AppSettingsPatchSchema = AppSettingsSchema.partial().refine(
   (patch) => Object.values(patch).some((value) => value !== undefined),
   { message: 'a patch must name at least one setting to change' },
