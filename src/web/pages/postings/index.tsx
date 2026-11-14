@@ -47,7 +47,7 @@ export function PostingsPage() {
         <PostingDetail
           postingId={state.posting}
           display={display}
-          {...(settings === null ? {} : { askFloor: settings.askFloor })}
+          {...(settings === null ? {} : { askFloor: settings.askFloor, linkPatterns: settings.postingLinkPatterns })}
           onClose={() => select(null)}
           onChanged={() => void reload()}
         />

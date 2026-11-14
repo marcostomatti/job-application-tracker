@@ -85,3 +85,22 @@ fieldset.settings-group {
     max-width: none;
   }
 }
+
+/* --- the posting link patterns --- */
+
+.settings-pattern {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.settings-pattern-add {
+  align-self: flex-start;
+}
+
+@media (max-width: 640px) {
+  .settings-pattern {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

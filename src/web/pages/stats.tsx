@@ -17,8 +17,14 @@ import {
 
 const SCALES: readonly Scale[] = ['stars', 'percent', 'basic', 'ratio']
 
-/** How many stack tags and terms the page draws; the MCP read returns them all. */
-const TOP_STACK = 15
+/** How many industries and stack tags the page draws; the MCP read returns them all. */
+const TOP_COUNTS = 15
+
+/** The height of one bar's row in a count chart, so a chart grows with its rows instead of squeezing them. */
+const COUNT_ROW_PX = 26
+
+/** A count chart's height for `rows` bars: one row each, up to the cap, and never shorter than 160px. */
+const countChartHeight = (rows: number): number => Math.max(160, Math.min(TOP_COUNTS, rows) * COUNT_ROW_PX)
 
 interface CriteriaSetOption {
   readonly id: number
@@ -72,8 +78,8 @@ export function StatsView({ data, tokens }: { data: StatsResponse; tokens: Chart
       scatter: scoreScatterOption(stats, tokens),
       sources: sourceBarOption(stats, tokens),
       stages: countBarOption(stageRows(stats), tokens),
-      industries: countBarOption(stats.byIndustry.rows, tokens),
-      stack: countBarOption(stats.byStack.rows.slice(0, TOP_STACK), tokens),
+      industries: countBarOption(stats.byIndustry.rows.slice(0, TOP_COUNTS), tokens),
+      stack: countBarOption(stats.byStack.rows.slice(0, TOP_COUNTS), tokens),
       requirements: requirementBarOption(stats, tokens),
     }),
     [stats, tokens],
@@ -126,11 +132,11 @@ export function StatsView({ data, tokens }: { data: StatsResponse; tokens: Chart
       </Card>
 
       <Card title="Industry" n={`n=${stats.byIndustry.recorded}`} note={`${stats.byIndustry.notRecorded} postings have no industry in their summary.`}>
-        {stats.byIndustry.rows.length === 0 ? <Empty what="industries" /> : <EChart option={options.industries} ariaLabel="Postings per industry" />}
+        {stats.byIndustry.rows.length === 0 ? <Empty what="industries" /> : <EChart option={options.industries} ariaLabel="Postings per industry" height={countChartHeight(stats.byIndustry.rows.length)} />}
       </Card>
 
       <Card title="Stack" n={`n=${stats.byStack.recorded}`} note={`${stats.byStack.notRecorded} postings have no stack in their summary.`}>
-        {stats.byStack.rows.length === 0 ? <Empty what="stack tags" /> : <EChart option={options.stack} ariaLabel="Postings per stack tag" height={Math.max(160, Math.min(TOP_STACK, stats.byStack.rows.length) * 26)} />}
+        {stats.byStack.rows.length === 0 ? <Empty what="stack tags" /> : <EChart option={options.stack} ariaLabel="Postings per stack tag" height={countChartHeight(stats.byStack.rows.length)} />}
       </Card>
 
       <Card title="Loose indicators" n={`n=${stats.postings}`}>

@@ -316,6 +316,55 @@
   font-size: 13px;
 }
 
+/*
+ * Above phone width the board fills the window under the top bar, and each column scrolls its
+ * own cards, with no scroll bar drawn: a long column no longer stretches the page. The chain
+ * runs app -> main -> page -> board -> column -> cards, and each link takes the space left
+ * (`flex: 1`) and may shrink below its content (`min-height: 0`), so the cards are what scroll.
+ */
+@media (min-width: 641px) {
+  .app:has(.board-page) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+
+  .app:has(.board-page) > main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .board-page {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    padding-bottom: 24px;
+  }
+
+  .board-page .postings-board {
+    flex: 1;
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 320px;
+  }
+
+  .board-page .board-column {
+    min-height: 0;
+  }
+
+  .board-page .board-cards {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .board-page .board-cards::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* --- phone width --- */
 
 @media (max-width: 640px) {

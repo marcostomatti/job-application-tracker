@@ -154,7 +154,8 @@ export function startStubNotebook(options: StubOptions = {}): StubServer {
         full_text: input.content ?? null,
         notebooks: input.notebooks ?? [],
         embedded: input.embed === true,
-        created: STAMP,
+        // One second apart, so the newest source is the one with the latest stamp, as in Open Notebook.
+        created: new Date(Date.parse(STAMP) + sources.length * 1000).toISOString(),
       }
       const garble = options.garbleSourcesAfter !== undefined && sources.length >= options.garbleSourcesAfter
       sources.push(created)

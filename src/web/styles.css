@@ -328,11 +328,15 @@ code {
   color: var(--fg3);
 }
 
-/* --- the stats dashboard --- */
-
+/*
+ * The wide pages: board, postings, stats, criteria and texts. 1680px is a standard display width,
+ * and it fits six board columns of 260px with their gaps and the page padding.
+ */
 .wide-page {
-  max-width: 1280px;
+  max-width: 1680px;
 }
+
+/* --- the stats dashboard --- */
 
 .stats-head {
   display: flex;
