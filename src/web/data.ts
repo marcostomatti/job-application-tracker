@@ -8,6 +8,7 @@ import type { StageEvent } from '../data/repositories/dispositions.ts'
 import type { PostingDetail, PostingListRow, Posting } from '../data/repositories/postings.ts'
 import type { PostingQuestion } from '../data/repositories/questions.ts'
 import type { RegistryRowOf } from '../data/repositories/registries.ts'
+import type { PostingText } from '../notebook/posting-text.ts'
 import type { ScoreRow } from '../data/repositories/scores.ts'
 import type { TextAsset } from '../data/repositories/texts.ts'
 import type { AgentVerdict, AppSettings, AppSettingsPatch, Recommendation, RecommendationDisplay, RulesBand } from '../schemas/recommendation.ts'
@@ -16,6 +17,14 @@ import { request } from './api.ts'
 
 export type { CriteriaSetRow, PostingDetail, PostingListRow, PostingQuestion, RequirementRow, ScoreRow, StageEvent, TextAsset }
 export type { AgentVerdict, AppSettings, AppSettingsPatch, Recommendation, RecommendationDisplay, RulesBand }
+
+export type { PostingText }
+
+/** The posting panel's full-text read: still loading, failed with a message, or answered. */
+export type PostingTextState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'ready'; readonly value: PostingText }
 
 export type StageRegistryRow = RegistryRowOf<'stage'>
 export type PhaseRegistryRow = RegistryRowOf<'phase'>
@@ -54,6 +63,8 @@ export const data = {
 
   /** NEW: GET /api/postings/:postingId/stages — the whole stage history, oldest first. */
   stageHistory: (postingId: number): Promise<StageHistoryRow[]> => request('GET', `/api/postings/${id(postingId)}/stages`),
+  /** NEW: GET /api/postings/:postingId/notebook-text — the newest notebook copy of the posting's full text. */
+  postingText: (postingId: number): Promise<PostingText> => request('GET', `/api/postings/${id(postingId)}/notebook-text`),
   appendStage: (postingId: number, input: { stageId: number | null; occurredAt?: string; note?: string }): Promise<StageEvent> =>
     request('POST', `/api/postings/${id(postingId)}/stage`, input),
 

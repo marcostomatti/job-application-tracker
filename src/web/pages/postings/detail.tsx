@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
+import type { PostingLinkPattern } from '../../../schemas/posting-links.ts'
 import { DEFAULT_ASK_FLOOR } from '../../../stats/bands.ts'
 import {
   data,
   type PostingDetail as PostingDetailData,
+  type PostingTextState,
   type RecommendationDisplay,
   type RequirementRow,
   type StageHistoryRow,
   type StageRegistryRow,
 } from '../../data.ts'
+import { PostingFullText } from './detail-fulltext.tsx'
 import { dispositionLabel, formatDay, latestScore, locationLine, postingLink } from './detail-labels.ts'
 import { QuestionList } from './detail-questions.tsx'
 import { RecommendationSummary, ScoreBreakdown } from './detail-score.tsx'
@@ -34,6 +37,10 @@ export interface PostingDetailViewProps extends DetailHandlers {
   /** The Settings display choice; the panel shows both recommendations either way. */
   readonly display?: RecommendationDisplay
   readonly error: string | null
+  /** The full posting from the notebook; the section is left out when this is not given. */
+  readonly postingText?: PostingTextState
+  /** The Settings link patterns that turn a posting key into a link. */
+  readonly linkPatterns?: readonly PostingLinkPattern[]
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -133,7 +140,7 @@ function Origins({ origins }: { origins: PostingDetailData['origins'] }) {
 export function PostingDetailView(props: PostingDetailViewProps & { onClose: () => void }) {
   const { detail, history, stages, requirements, askFloor, error, onClose, display = DEFAULT_DISPLAY } = props
   const { posting, company } = detail
-  const link = postingLink(posting)
+  const link = postingLink(posting, detail.summary?.extra, props.linkPatterns)
   const score = latestScore(detail.scores)
 
   return (
@@ -163,6 +170,11 @@ export function PostingDetailView(props: PostingDetailViewProps & { onClose: () 
       <Section title="Summary">
         <Summary summary={detail.summary} />
       </Section>
+      {props.postingText !== undefined && (
+        <Section title="Full posting">
+          <PostingFullText state={props.postingText} />
+        </Section>
+      )}
       <Section title="Stage">
         <CurrentStage latest={detail.latestStage} />
         <StageTimeline history={history} />
@@ -225,6 +237,9 @@ async function loadPosting(postingId: number): Promise<Loaded> {
   return { detail, history }
 }
 
+/** No link patterns: one shared empty list, so a default prop does not change on every render. */
+const NO_PATTERNS: readonly PostingLinkPattern[] = []
+
 /** The posting detail panel: loads one posting, shows it, and writes stage events and questions. */
 export interface PostingDetailProps {
   readonly postingId: number
@@ -232,16 +247,19 @@ export interface PostingDetailProps {
   readonly display?: RecommendationDisplay
   /** The configured ask floor, read once by the page; the default until it lands. */
   readonly askFloor?: number
+  /** The Settings link patterns, read once by the page; none until they land. */
+  readonly linkPatterns?: readonly PostingLinkPattern[]
   readonly onClose: () => void
   readonly onChanged: () => void
 }
 
-export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor = DEFAULT_ASK_FLOOR, onClose, onChanged }: PostingDetailProps) {
+export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor = DEFAULT_ASK_FLOOR, linkPatterns = NO_PATTERNS, onClose, onChanged }: PostingDetailProps) {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [writeError, setWriteError] = useState<string | null>(null)
   const [stages, setStages] = useState<readonly StageRegistryRow[]>([])
   const [requirements, setRequirements] = useState<readonly RequirementRow[] | null>(null)
+  const [postingText, setPostingText] = useState<PostingTextState>({ status: 'loading' })
 
   useEffect(() => {
     let live = true
@@ -251,6 +269,18 @@ export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor =
     loadPosting(postingId).then(
       (next) => live && setLoaded(next),
       (cause: unknown) => live && setLoadError(messageOf(cause)),
+    )
+    return () => {
+      live = false
+    }
+  }, [postingId])
+
+  useEffect(() => {
+    let live = true
+    setPostingText({ status: 'loading' })
+    data.postingText(postingId).then(
+      (value) => live && setPostingText({ status: 'ready', value }),
+      (cause: unknown) => live && setPostingText({ status: 'error', message: messageOf(cause) }),
     )
     return () => {
       live = false
@@ -329,6 +359,8 @@ export function PostingDetail({ postingId, display = DEFAULT_DISPLAY, askFloor =
           detail={loaded.detail}
           history={loaded.history}
           stages={stages}
+          postingText={postingText}
+          linkPatterns={linkPatterns}
           requirements={requirements}
           askFloor={askFloor}
           display={display}

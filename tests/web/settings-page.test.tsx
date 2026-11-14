@@ -3,9 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 import { PAGES } from '../../src/web/app.tsx'
 import type { AppSettings } from '../../src/web/data.ts'
+import { patternsFromDrafts, samePatterns } from '../../src/web/pages/settings-link-patterns.tsx'
 import { ratioToStars, SettingsPage, settingsPatch, starsToRatio } from '../../src/web/pages/settings.tsx'
 
-const SAVED: AppSettings = { askFloor: 0.5, recommendationDisplay: 'both' }
+const SAVED: AppSettings = { askFloor: 0.5, recommendationDisplay: 'both', postingLinkPatterns: [] }
 
 describe('SettingsPage', () => {
   test('offers the three displays with one line each, the saved one checked', () => {
@@ -60,5 +61,32 @@ describe('settingsPatch', () => {
     expect(settingsPatch(SAVED, 'agent', 0.5)).toEqual({ recommendationDisplay: 'agent' })
     expect(settingsPatch(SAVED, 'both', 0.6)).toEqual({ askFloor: 0.6 })
     expect(settingsPatch(SAVED, 'rules', 0.4)).toEqual({ recommendationDisplay: 'rules', askFloor: 0.4 })
+  })
+})
+
+describe('the posting links form', () => {
+  const PATTERN = { prefix: 'board', template: 'https://jobs.example.test/view/{id}' }
+
+  test('shows each saved pattern with an example link, and its Save waits for a change', () => {
+    const html = renderToStaticMarkup(<SettingsPage initial={{ ...SAVED, postingLinkPatterns: [PATTERN] }} />)
+
+    expect(html).toContain('Posting links')
+    expect(html).toContain('value="board"')
+    expect(html).toContain('value="https://jobs.example.test/view/{id}"')
+    expect(html).toContain('https://jobs.example.test/view/12345')
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled=""[^>]*>Save links/)
+  })
+
+  test('patternsFromDrafts drops blank rows and names the row a problem is in', () => {
+    expect(patternsFromDrafts([PATTERN, { prefix: ' ', template: '' }])).toEqual({ patterns: [PATTERN] })
+    expect(patternsFromDrafts([PATTERN, { prefix: 'other', template: 'https://jobs.example.test/view/' }])).toEqual({
+      problem: 'Row 2: a template must hold {id}, where the id goes',
+    })
+  })
+
+  test('samePatterns tells an unchanged list from an edited one', () => {
+    expect(samePatterns([PATTERN], [PATTERN])).toBe(true)
+    expect(samePatterns([], [PATTERN])).toBe(false)
+    expect(samePatterns([{ ...PATTERN, prefix: 'other' }], [PATTERN])).toBe(false)
   })
 })

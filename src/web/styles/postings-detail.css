@@ -352,3 +352,24 @@
   font-weight: 600;
   color: var(--danger);
 }
+
+/* --- the full posting, from the notebook --- */
+
+.pd-fulltext-meta {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.pd-fulltext {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--fg1);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

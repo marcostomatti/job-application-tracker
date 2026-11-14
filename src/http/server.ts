@@ -14,8 +14,11 @@ import { DEFAULT_BACKUP_DIR, startBackupSchedule, type BackupWiring } from '../b
 import { closeDb, getDb } from '../data/client.ts'
 import { startMcpListener, type McpListener } from '../mcp/http-listener.ts'
 import { ALL_TOOLS } from '../mcp/tools/index.ts'
+import { NotebookClient } from '../notebook/client.ts'
+import { readNotebookConfig } from '../notebook/config.ts'
 import { notebookStartup } from '../notebook/startup.ts'
 import { mountRoutes } from './routes/index.ts'
+import { postingTextRoutes } from './routes/posting-text.ts'
 
 const MAX_PORT = 65_535
 
@@ -105,6 +108,16 @@ export function resolveMcpPort(requested: number | undefined, env: NodeJS.Proces
   const raw = env.MCP_PORT
   if (raw === undefined || raw === '') return undefined
   return assertPort(Number(raw), 'MCP_PORT')
+}
+
+/**
+ * The notebook client the web panel reads posting texts with, or none when no notebook is
+ * configured. It is not probed: a notebook that is down makes that one read fail, and the rest of
+ * the web app is unaffected.
+ */
+function webNotebookClient(env: NodeJS.ProcessEnv): NotebookClient | undefined {
+  const config = readNotebookConfig(env)
+  return config.kind === 'on' ? new NotebookClient(config.config) : undefined
 }
 
 /**
@@ -224,7 +237,7 @@ export async function startService(opts: StartOptions = {}): Promise<ServiceHand
       }
       app.use('/auth', authRouter(db, auth))
       app.use('/api', requireApiAccess(db, apiKey))
-      mountRoutes(app, db)
+      mountRoutes(app, db, postingTextRoutes(webNotebookClient(process.env)))
       if (existsSync(webDist)) {
         app.use(express.static(webDist))
         // The app routes in the browser, so a reload on /tokens or /stats gets the page and not a 404.

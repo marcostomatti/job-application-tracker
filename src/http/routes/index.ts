@@ -26,13 +26,14 @@ export const ROUTES: readonly RouteSpec[] = [
 ]
 
 /**
- * Mounts every route under `/api`.
+ * Mounts every route under `/api`, then `extra`: the routes built at startup, such as the one
+ * that needs the notebook client.
  *
  * No credential check is mounted here. The server entry mounts `requireApiAccess` on `/api`
  * before calling this; a second check in this function would test every request twice.
  */
-export function mountRoutes(app: Application, db: Db): void {
+export function mountRoutes(app: Application, db: Db, extra: readonly RouteSpec[] = []): void {
   const api = Router()
-  for (const spec of ROUTES) api[spec.method](spec.path, spec.handler(db))
+  for (const spec of [...ROUTES, ...extra]) api[spec.method](spec.path, spec.handler(db))
   app.use('/api', api)
 }

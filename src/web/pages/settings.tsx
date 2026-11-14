@@ -2,6 +2,7 @@ import { useEffect, useState, type SyntheticEvent } from 'react'
 
 import { data, type AppSettings, type AppSettingsPatch, type RecommendationDisplay } from '../data.ts'
 import { RECOMMENDATION_DISPLAYS } from './postings/recommendation.ts'
+import { LinkPatternsForm } from './settings-link-patterns.tsx'
 
 /** What the page needs from the server; the real one by default, a stand-in in tests. */
 export interface SettingsApi {
@@ -137,7 +138,7 @@ function SettingsForm({ saved, api, onSaved }: { saved: AppSettings; api: Settin
   )
 }
 
-/** The settings page: which recommendation the postings pages show, and the ask floor. */
+/** The settings page: which recommendation the postings pages show, the ask floor, and the posting link patterns. */
 export function SettingsPage({ api = data, initial }: SettingsPageProps) {
   const [saved, setSaved] = useState<AppSettings | undefined>(initial)
   const [error, setError] = useState<string | undefined>()
@@ -151,7 +152,7 @@ export function SettingsPage({ api = data, initial }: SettingsPageProps) {
     <div className="page">
       <header className="page-head">
         <h1>Settings</h1>
-        <p className="muted">How the postings pages read a recommendation. The postings page reads these when it opens.</p>
+        <p className="muted">How the postings pages read a recommendation, and how a posting key becomes a link. The postings page reads these when it opens.</p>
       </header>
       {error !== undefined && (
         <p className="error" role="alert">
@@ -159,7 +160,12 @@ export function SettingsPage({ api = data, initial }: SettingsPageProps) {
         </p>
       )}
       {saved === undefined && error === undefined && <p className="muted">Loading…</p>}
-      {saved !== undefined && <SettingsForm saved={saved} api={api} onSaved={setSaved} />}
+      {saved !== undefined && (
+        <>
+          <SettingsForm saved={saved} api={api} onSaved={setSaved} />
+          <LinkPatternsForm saved={saved} api={api} onSaved={setSaved} />
+        </>
+      )}
     </div>
   )
 }
