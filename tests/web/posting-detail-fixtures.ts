@@ -97,7 +97,7 @@ export function detailFixture(overrides: { remoteCoverage?: number | null; recom
     ],
     origins: [
       {
-        origin: { id: 1, postingId: 42, routeId: 1, touchedOn: '2026-09-30', recordedAt: '2026-10-01T09:00:00.000Z', note: null, searchRunId: null },
+        origin: { id: 1, postingId: 42, routeId: 1, touchedOn: '2026-09-30', recordedAt: '2026-10-01T09:00:00.000Z', note: null, searchRunId: null, rank: null, wasNew: null, titleTriage: null },
         routeLabel: 'Job board',
       },
     ],

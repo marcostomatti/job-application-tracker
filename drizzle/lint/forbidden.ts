@@ -32,6 +32,9 @@ export const ALLOWED_STRUCTURAL_LITERALS: readonly string[] = [
   'inbound',
   'referral',
   'imported_series',
+  // what a look at a search hit's title decided
+  'score',
+  'skip_title',
   // booleans stored as integers
   '0',
   '1',

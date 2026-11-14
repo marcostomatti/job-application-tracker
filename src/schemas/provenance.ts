@@ -2,6 +2,15 @@ import { z } from 'zod'
 
 import { bulkOf, hasNoNul, IdSchema, NO_NUL_MESSAGE } from './common.ts'
 
+/**
+ * What a look at a search hit's title alone decided, before the posting is read: `score` it,
+ * or `skip_title`, drop it on the title. The database's check names the same two values.
+ */
+export const SEARCH_HIT_TRIAGE = ['score', 'skip_title'] as const
+
+/** The fields only a touch from a search run can carry, because only a search lists postings. */
+const SEARCH_HIT_FIELDS = ['rank', 'wasNew', 'titleTriage'] as const
+
 /** A calendar day as `YYYY-MM-DD`, the shape a Postgres `date` column reads and writes. */
 const calendarDay = z.iso.date()
 
@@ -22,6 +31,12 @@ export const OriginSchema = z.object({
   // The query string, or a free line such as who said it and where.
   note: z.string().nullable(),
   searchRunId: z.number().int().nullable(),
+  // Where the run listed the posting, from 1; null when the run did not say.
+  rank: z.number().int().nullable(),
+  // False when the run marked the posting as already seen; null when it did not say.
+  wasNew: z.boolean().nullable(),
+  // What a look at the title alone decided, before any scoring; null when nobody triaged it.
+  titleTriage: z.enum(SEARCH_HIT_TRIAGE).nullable(),
 })
 
 /** A line of free text, trimmed and non-empty so a blank says nothing, and free of NUL, which Postgres cannot store. */
@@ -34,13 +49,28 @@ const line = z.string().trim().min(1).refine(hasNoNul, NO_NUL_MESSAGE)
  * and `touchedOn` is required and may be backdated or, by mistake, future-dated: it is stored
  * as typed and only ignored when first touch is derived.
  */
-export const OriginInputSchema = z.strictObject({
-  postingId: IdSchema.nullable().optional(),
-  routeId: IdSchema.nullable().optional(),
-  touchedOn: calendarDay,
-  note: line.optional(),
-  searchRunId: IdSchema.nullable().optional(),
-})
+export const OriginInputSchema = z
+  .strictObject({
+    postingId: IdSchema.nullable().optional(),
+    routeId: IdSchema.nullable().optional(),
+    touchedOn: calendarDay,
+    note: line.optional(),
+    searchRunId: IdSchema.nullable().optional(),
+    rank: z.number().int().min(1).nullable().optional()
+      .describe('Where the search run listed the posting, from 1. Only with searchRunId.'),
+    wasNew: z.boolean().nullable().optional()
+      .describe('False when the search run marked the posting as already seen. Only with searchRunId.'),
+    titleTriage: z.enum(SEARCH_HIT_TRIAGE).nullable().optional()
+      .describe('What a look at the title alone decided: score it, or skip_title. Only with searchRunId.'),
+  })
+  .superRefine((input, ctx) => {
+    if (input.searchRunId != null) return
+    for (const field of SEARCH_HIT_FIELDS) {
+      if (input[field] != null) {
+        ctx.addIssue({ code: 'custom', path: [field], message: `${field} needs a searchRunId: only a search run lists postings` })
+      }
+    }
+  })
 
 export type OriginInput = z.infer<typeof OriginInputSchema>
 
@@ -111,6 +141,11 @@ export const SearchRunInputSchema = z.strictObject({
 })
 
 export type SearchRunInput = z.infer<typeof SearchRunInputSchema>
+
+/** Naming one search run, to list the postings it found. */
+export const SearchRunHitsQuerySchema = z.strictObject({
+  searchRunId: IdSchema,
+})
 
 /**
  * Tying an existing touch to a posting. Both ids are required: the touch is named, not

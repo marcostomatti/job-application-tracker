@@ -22,7 +22,7 @@ Each family is a group of tools that work on one kind of record:
 |---|---|---|
 | Postings | `posting_add`, `posting_add_bulk`, `posting_get`, `posting_search`, `posting_update`, `posting_update_bulk` | One row per role at one employer |
 | Companies | `company_update`, `company_merge` | Employer names, cleaned or merged |
-| Origins | `origin_record`, `origin_record_bulk`, `origin_attach`, `origin_list`, `origin_first_touch`, `route_counts`, `search_run_record` | How and when a lead reached the user |
+| Origins | `origin_record`, `origin_record_bulk`, `origin_attach`, `origin_list`, `origin_first_touch`, `route_counts`, `search_run_record`, `search_run_hits` | How and when a lead reached the user, and what each search found |
 | Checks | `check_already_applied`, `check_reposted`, `check_posting_changed` | Yes/no answers before acting |
 | Summaries | `summary_write`, `summary_write_bulk`, `summary_get` | The condensed posting |
 | Criteria | `criteria_sets`, `criteria_requirements`, `criteria_version_create`, `criteria_requirement_add`, `criteria_requirement_update`, `criteria_set_default`, `criteria_mode_get`, `criteria_mode_set` | The rubrics postings are scored against |
@@ -45,6 +45,10 @@ A new posting goes through these steps. The prompts in `docs/prompts/` follow th
    then ask `check_already_applied` and `check_reposted` with its id. A repost is not a new
    posting: record the new sighting with `origin_record` on the existing one.
 2. **Add it.** `posting_add` (or `posting_add_bulk`), then `origin_record` for how it arrived.
+   When a search found it, record the search once with `search_run_record`, then pass its id
+   to `origin_record_bulk` with each hit's `rank`, `wasNew` and `titleTriage`, skipped titles
+   included (a skipped title may have no `postingId`, with the title in `note`), so
+   `search_run_hits` can show what each search found.
 3. **Summarise it.** `summary_write`. Before re-summarising a posting the tracker already has,
    `check_posting_changed` tells you whether the text changed.
 4. **Score it.** Read the set with `criteria_requirements`, then `score_posting` with your

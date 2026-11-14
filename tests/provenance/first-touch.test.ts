@@ -15,6 +15,9 @@ function touch(id: number, day: number, recorded: number, overrides: Partial<Ori
     recordedAt: new Date(`2026-11-${String(recorded).padStart(2, '0')}T12:00:00Z`),
     note: null,
     searchRunId: null,
+    rank: null,
+    wasNew: null,
+    titleTriage: null,
     ...overrides,
   }
 }
