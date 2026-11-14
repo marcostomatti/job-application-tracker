@@ -38,6 +38,8 @@
     "set-password": "bun src/auth/set-password.ts",
     "reset-credentials": "bun src/auth/reset-credentials.ts",
     "build:web": "bun build src/web/index.html --outdir src/web/dist --minify",
+    "test": "bun test --path-ignore-patterns='**/*.integration.test.ts'",
+    "test:integration": "bun test .integration.test.ts",
     "typecheck": "tsc --noEmit -p ."
   }
 }

@@ -1,14 +1,10 @@
-import { afterAll, describe, expect, test } from 'bun:test'
-import { sql } from 'drizzle-orm'
+import { describe, expect, test } from 'bun:test'
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 
-import { closeDb, getDb } from '../../src/data/client.ts'
 import { requirement } from '../../src/data/schema/criteria.ts'
 import { postingRating, postingScore } from '../../src/data/schema/scores.ts'
 import { RATING_CONFIDENCES, REQUIREMENT_KINDS } from '../../src/schemas/discriminators.ts'
 import { AGENT_VERDICTS } from '../../src/schemas/recommendation.ts'
-
-afterAll(closeDb)
 
 /**
  * Every quoted literal in a CHECK's text. Postgres rewrites `IN ('a', 'b')` as
@@ -33,24 +29,6 @@ const CHECKS = [
  * accepts what the API refuses.
  */
 describe('structural discriminators match their CHECK constraints', () => {
-  test.each(CHECKS)('$constraint lists exactly the members of the schema constant, in the migrated database', async ({ constraint, members }) => {
-    // Arrange
-    const db = getDb()
-
-    // Act
-    const rows = await db.execute<{ definition: string }>(sql`
-      select pg_get_constraintdef(oid) as definition
-      from pg_constraint
-      where conname = ${constraint} and contype = 'c' and connamespace = 'public'::regnamespace
-    `)
-
-    // Assert: one constraint, and its members are the constant's, as sets and in size
-    expect(rows).toHaveLength(1)
-    const listed = membersOf(rows[0]?.definition ?? '')
-    expect(listed.length).toBeGreaterThan(0)
-    expect([...listed].sort()).toEqual([...members].sort())
-  })
-
   test.each(CHECKS)('$constraint in the Drizzle table definition lists the same members', ({ constraint, table, members }) => {
     // Arrange
     const declared = getTableConfig(table).checks.find((candidate) => candidate.name === constraint)

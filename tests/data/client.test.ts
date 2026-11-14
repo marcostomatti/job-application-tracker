@@ -1,5 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
-import { sql } from 'drizzle-orm'
+import { afterEach, describe, expect, test } from 'bun:test'
 
 import { closeDb, getDb, MissingDatabaseUrlError } from '../../src/data/client.ts'
 
@@ -11,23 +10,7 @@ afterEach(async () => {
   else process.env.DATABASE_URL = ORIGINAL_URL
 })
 
-afterAll(async () => {
-  await closeDb()
-})
-
 describe('getDb', () => {
-  test('connects to the database named by DATABASE_URL', async () => {
-    // Arrange
-    process.env.DATABASE_URL =
-      ORIGINAL_URL ?? 'postgres://tracker:tracker@localhost:5432/tracker'
-
-    // Act
-    const rows = await getDb().execute(sql`select 1 as one`)
-
-    // Assert
-    expect(rows[0]?.one).toBe(1)
-  })
-
   test('throws a named error when DATABASE_URL is absent', () => {
     // Arrange
     delete process.env.DATABASE_URL

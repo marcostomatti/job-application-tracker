@@ -79,7 +79,7 @@ export const postingScore = pgTable(
       'posting_score_limiter_coverage_check',
       sql`${table.limiterCoverage} >= 0 AND ${table.limiterCoverage} <= 1`,
     ),
-    // The members are AGENT_VERDICTS (src/schemas/recommendation.ts); tests/data/discriminators.test.ts compares them.
+    // The members are AGENT_VERDICTS (src/schemas/recommendation.ts); tests/data/discriminators.integration.test.ts compares them.
     check('posting_score_agent_verdict_check', sql`${table.agentVerdict} IN ('apply', 'ask', 'skip')`),
     check('posting_score_agent_reason_length_check', sql`char_length(${table.agentReason}) <= ${sql.raw(String(AGENT_REASON_MAX))}`),
     check('posting_score_agent_reason_needs_verdict_check', sql`${table.agentVerdict} IS NOT NULL OR ${table.agentReason} IS NULL`),
@@ -119,7 +119,7 @@ export const postingRating = pgTable(
       foreignColumns: [requirement.criteriaSetId, requirement.id],
     }),
     check('posting_rating_coverage_check', sql`${table.coverage} >= 0 AND ${table.coverage} <= 1`),
-    // The members are RATING_CONFIDENCES (src/schemas/discriminators.ts); tests/data/discriminators.test.ts compares them.
+    // The members are RATING_CONFIDENCES (src/schemas/discriminators.ts); tests/data/discriminators.integration.test.ts compares them.
     check(
       'posting_rating_confidence_check',
       sql`${table.confidence} IN ('supported', 'partial', 'unknown')`,
