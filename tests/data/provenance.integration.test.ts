@@ -87,10 +87,14 @@ describe('provenance', () => {
     const { stored, first } = await rolledBack(async (tx, token) => {
       const routeId = await addRoute(tx, `board-${token}`)
       const postingId = await addPosting(tx, token, 'repost')
-      const [run] = await tx.insert(searchRun).values({ query: 'staff engineer', source: 'a board' }).returning()
+      // A repost is found by a later run of the same search: one run lists a posting once.
+      const [run, later] = await tx.insert(searchRun).values([
+        { query: 'staff engineer', source: 'a board' },
+        { query: 'staff engineer', source: 'a board' },
+      ]).returning()
       await tx.insert(origin).values([
         { postingId, routeId, touchedOn: '2026-02-10', searchRunId: run!.id },
-        { postingId, routeId, touchedOn: '2026-03-10', searchRunId: run!.id, note: 'reposted' },
+        { postingId, routeId, touchedOn: '2026-03-10', searchRunId: later!.id, note: 'reposted' },
       ])
       return {
         stored: await tx.select().from(origin).where(eq(origin.postingId, postingId)).orderBy(asc(origin.touchedOn)),

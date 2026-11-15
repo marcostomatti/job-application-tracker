@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
-import { date, index, integer, jsonb, pgTable, pgView, text, timestamp } from 'drizzle-orm/pg-core'
+import { boolean, check, date, index, integer, jsonb, pgTable, pgView, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
+import { SEARCH_HIT_TRIAGE } from '../../schemas/provenance.ts'
 import { posting } from './postings.ts'
 import { route } from './registries.ts'
 
@@ -33,6 +34,12 @@ export const searchRun = pgTable('search_run', {
  * posting leaves its origins behind, unattached, rather than taking the provenance with it.
  * `touched_on` is user-entered, so a future date is kept as typed and is only ignored when
  * first touch is derived.
+ *
+ * A touch from a search run is that run's hit, so it may also say where the run listed the
+ * posting (`rank`, from 1), whether the run marked it as already seen (`was_new`), and what a
+ * look at the title alone decided (`title_triage`). A touch with no run carries none of the
+ * three, and a run lists one posting once: the same posting from the same run again is a
+ * conflict, while a touch not yet attached to a posting is not held to that.
  */
 export const origin = pgTable(
   'origin',
@@ -44,9 +51,20 @@ export const origin = pgTable(
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
     note: text(),
     searchRunId: integer('search_run_id').references(() => searchRun.id),
+    rank: integer(),
+    wasNew: boolean('was_new'),
+    titleTriage: text('title_triage', { enum: SEARCH_HIT_TRIAGE }),
   },
   (table) => [
     index('origin_posting_touch_idx').on(table.postingId, table.touchedOn, table.recordedAt, table.id),
+    uniqueIndex('origin_search_run_posting_idx').on(table.searchRunId, table.postingId)
+      .where(sql`${table.searchRunId} IS NOT NULL AND ${table.postingId} IS NOT NULL`),
+    check('origin_rank_check', sql`${table.rank} >= 1`),
+    check('origin_title_triage_check', sql`${table.titleTriage} IN ('score', 'skip_title')`),
+    check(
+      'origin_search_hit_needs_run_check',
+      sql`${table.searchRunId} IS NOT NULL OR (${table.rank} IS NULL AND ${table.wasNew} IS NULL AND ${table.titleTriage} IS NULL)`,
+    ),
   ],
 )
 

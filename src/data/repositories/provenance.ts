@@ -1,9 +1,9 @@
-import { and, asc, countDistinct, desc, eq, isNotNull, isNull, or, type InferSelectModel } from 'drizzle-orm'
+import { and, asc, countDistinct, desc, eq, isNotNull, isNull, or, sql, type InferSelectModel } from 'drizzle-orm'
 
 import { ConflictError, NotFoundError } from '../../errors.ts'
 import type { Origin } from '../../entities/provenance.ts'
 import type { OriginInput, SearchRunInput } from '../../schemas/provenance.ts'
-import { isForeignKeyViolation } from '../driver-faults.ts'
+import { isForeignKeyViolation, isUniqueViolation } from '../driver-faults.ts'
 import { origin, postingFirstTouch, searchRun } from '../schema/provenance.ts'
 import { route } from '../schema/registries.ts'
 import type { Db } from './db.ts'
@@ -25,7 +25,7 @@ export type RouteCount = {
  * more than the type says (`id`, `recordedAt`) cannot write a column this list does not name.
  * `touchedOn` is required and is named where the row is built.
  */
-const ORIGIN_OPTIONAL_COLUMNS = ['postingId', 'routeId', 'note', 'searchRunId'] as const satisfies readonly (keyof OriginInput)[]
+const ORIGIN_OPTIONAL_COLUMNS = ['postingId', 'routeId', 'note', 'searchRunId', 'rank', 'wasNew', 'titleTriage'] as const satisfies readonly (keyof OriginInput)[]
 
 /**
  * The foreign keys of `origin` that name a row some other write owns, with what each one
@@ -58,6 +58,22 @@ function missingRow(
   return null
 }
 
+/** The partial unique index that lets a search run list one posting once. */
+const RUN_POSTING_INDEX = 'origin_search_run_posting_idx'
+
+/**
+ * The `ConflictError` for a search run that already has this posting, or null when the fault
+ * is another one. The run is read from the row being written, which is the only way the
+ * index can be broken.
+ */
+function repeatedHit(error: unknown, searchRunId: number | null | undefined, postingId: number | null | undefined): ConflictError | null {
+  if (searchRunId == null || postingId == null || !isUniqueViolation(error, RUN_POSTING_INDEX)) return null
+  return new ConflictError('origin', `${searchRunId}/${postingId}`, {
+    message: `search run ${searchRunId} already has posting ${postingId}: a run lists a posting once`,
+    cause: error,
+  })
+}
+
 /**
  * Logs one touch: a dated way a lead reached the user. It may name no posting, because a
  * conversation at a meetup is a first touch before any posting exists (`attachOrigin` ties it
@@ -76,7 +92,9 @@ export async function recordOrigin(db: Db, input: OriginInput): Promise<Origin> 
     if (!written) throw new Error('The origin insert returned no row.')
     return written
   } catch (error) {
-    throw missingRow(error, [[POSTING_KEY, input.postingId], [SEARCH_RUN_KEY, input.searchRunId]]) ?? error
+    throw missingRow(error, [[POSTING_KEY, input.postingId], [SEARCH_RUN_KEY, input.searchRunId]])
+      ?? repeatedHit(error, input.searchRunId, input.postingId)
+      ?? error
   }
 }
 
@@ -86,7 +104,8 @@ export async function recordOrigin(db: Db, input: OriginInput): Promise<Origin> 
  * backdated conversation makes it win without any other row being edited. An origin that is
  * already on this posting is returned as it is, so repeating the call is harmless. One on
  * another posting is a `ConflictError`, because moving a touch would rewrite how the lead
- * was reached; a missing origin or posting is `NotFoundError`. The guard is part of the
+ * was reached, and so is a touch from a search run that already has this posting; a missing
+ * origin or posting is `NotFoundError`. The guard is part of the
  * `UPDATE`, so two callers attaching one origin cannot both succeed.
  */
 export async function attachOrigin(db: Db, originId: number, postingId: number): Promise<Origin> {
@@ -98,7 +117,16 @@ export async function attachOrigin(db: Db, originId: number, postingId: number):
       .returning()
     if (attached) return attached
   } catch (error) {
-    throw missingRow(error, [[POSTING_KEY, postingId]]) ?? error
+    const named = missingRow(error, [[POSTING_KEY, postingId]])
+    if (named) throw named
+    // No read here: inside a transaction, the failed update has already aborted it.
+    if (isUniqueViolation(error, RUN_POSTING_INDEX)) {
+      throw new ConflictError('origin', String(originId), {
+        message: `origin ${originId} comes from a search run that already has posting ${postingId}: a run lists a posting once`,
+        cause: error,
+      })
+    }
+    throw error
   }
   const [existing] = await db.select({ id: origin.id }).from(origin).where(eq(origin.id, originId))
   if (!existing) throw new NotFoundError('origin', originId)
@@ -136,6 +164,21 @@ export async function getFirstTouch(db: Db, postingId: number): Promise<Origin |
     .innerJoin(origin, eq(origin.id, postingFirstTouch.originId))
     .where(eq(postingFirstTouch.postingId, postingId))
   return first?.origin ?? null
+}
+
+/**
+ * Every touch one search run found, in the order the run listed them: by `rank`, the unranked
+ * after the ranked, then by id, which is the order they were recorded. A run that found
+ * nothing is an empty list, and a run that does not exist is `NotFoundError`.
+ */
+export async function searchRunHits(db: Db, searchRunId: number): Promise<Origin[]> {
+  const [run] = await db.select({ id: searchRun.id }).from(searchRun).where(eq(searchRun.id, searchRunId))
+  if (!run) throw new NotFoundError('search run', searchRunId)
+  return db
+    .select()
+    .from(origin)
+    .where(eq(origin.searchRunId, searchRunId))
+    .orderBy(sql`${origin.rank} ASC NULLS LAST`, asc(origin.id))
 }
 
 /** Records one machine query: what was asked and where. The database stamps when it ran. */

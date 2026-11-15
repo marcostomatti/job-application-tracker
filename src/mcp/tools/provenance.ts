@@ -6,6 +6,7 @@ import {
   recordOrigin,
   recordSearchRun,
   routeCounts,
+  searchRunHits,
   wasReposted,
 } from '../../data/repositories/provenance.ts'
 import { summaryChanged } from '../../data/repositories/summaries.ts'
@@ -15,6 +16,7 @@ import {
   OriginAttachInputSchema,
   OriginBulkSchema,
   OriginInputSchema,
+  SearchRunHitsQuerySchema,
   SearchRunInputSchema,
 } from '../../schemas/provenance.ts'
 import { PostingChangedQuerySchema } from '../../schemas/summaries.ts'
@@ -34,6 +36,8 @@ export const provenanceTools: ToolDefinition[] = [
       'Logs ONE touch, a dated way a lead reached the user, and returns it as stored. A job board hit, a message and a conversation at a meetup all have this shape. ' +
       'touchedOn (YYYY-MM-DD) is required and may be backdated: it is when the person was reached, which is what decides the first touch, not when it was logged. ' +
       'postingId is optional because a conversation may come before any posting exists (tie it later with origin_attach); routeId is optional because the route list may be empty; searchRunId is for a touch a machine search found (see search_run_record). ' +
+      'A touch with a searchRunId is that run\'s hit, and may also carry rank (where the run listed it, from 1), wasNew (false when the run marked it as already seen) and titleTriage (score, or skip_title when the title alone ruled it out); all three are refused without a searchRunId. ' +
+      'A run lists a posting once: the same posting from the same run again is a conflict. ' +
       'An archived route is refused and an unknown posting, route or search run is a not-found error. Use origin_record_bulk for several.',
     input: OriginInputSchema,
     run: async (args, db) => recordOrigin(db, args),
@@ -94,9 +98,19 @@ export const provenanceTools: ToolDefinition[] = [
     description:
       'Records ONE machine search, what was asked (query) and where (source), and returns it with its id and the time it ran. ' +
       'params optionally keeps the search parameters as any JSON value (filters, keywords, a radius), so searches can be compared later by what they asked for; null or left out means none. ' +
-      'A run says nothing about postings by itself: pass its id as searchRunId to origin_record for each touch it found, so the query that found a lead can be traced.',
+      'A run says nothing about postings by itself: pass its id as searchRunId to origin_record_bulk for the touches it found, with each one\'s rank, wasNew and titleTriage, so the query that found a lead can be traced and searches compared.',
     input: SearchRunInputSchema,
     run: async (args, db) => recordSearchRun(db, args),
+  }),
+  defineTool({
+    name: 'search_run_hits',
+    title: 'List what a search run found',
+    description:
+      'Lists every touch ONE search run found, in the order the run listed them: by rank, the unranked last, then in the order they were recorded. ' +
+      'Each item is an origin with its postingId, rank, wasNew and titleTriage, so a run can be compared with another by what it found and what was new. ' +
+      'A run that found nothing returns an empty list, and an unknown run is a not-found error. Use origin_list for the touches of one posting instead.',
+    input: SearchRunHitsQuerySchema,
+    run: async (args, db) => searchRunHits(db, args.searchRunId),
   }),
   defineTool({
     name: 'check_already_applied',

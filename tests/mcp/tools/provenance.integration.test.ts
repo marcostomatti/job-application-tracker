@@ -34,6 +34,7 @@ describe('the origins group', () => {
       'origin_record',
       'origin_record_bulk',
       'route_counts',
+      'search_run_hits',
       'search_run_record',
     ])
   })
@@ -73,6 +74,38 @@ describe('the origins group', () => {
     const array = await client.call('origin_record', { items: [{ touchedOn: '2026-03-01' }] })
 
     expect([nul.failed, badDate.failed, array.failed]).toEqual([true, true, true])
+  })
+
+  test('a search run records its hits with rank and triage, and search_run_hits lists them by rank', async () => {
+    const client = await connectTools(provenanceTools, database())
+    const [kept, skipped] = [await newPostingId('Hit kept'), await newPostingId('Hit skipped')]
+    const run = await client.call('search_run_record', { query: 'backend engineer', source: 'a job board' })
+    const searchRunId = (run.body as { id: number }).id
+
+    await client.call('origin_record_bulk', {
+      items: [
+        { postingId: skipped, searchRunId, touchedOn: '2026-03-01', rank: 2, wasNew: true, titleTriage: 'skip_title' },
+        { postingId: kept, searchRunId, touchedOn: '2026-03-01', rank: 1, wasNew: false, titleTriage: 'score' },
+      ],
+    })
+    const repeated = await client.call('origin_record', { postingId: kept, searchRunId, touchedOn: '2026-03-02' })
+    const hits = await client.call('search_run_hits', { searchRunId })
+    const noRun = await client.call('search_run_hits', { searchRunId: 999_999 })
+
+    expect(hits.body).toEqual([
+      expect.objectContaining({ postingId: kept, rank: 1, wasNew: false, titleTriage: 'score' }),
+      expect.objectContaining({ postingId: skipped, rank: 2, wasNew: true, titleTriage: 'skip_title' }),
+    ])
+    expect(failureText(repeated)).toContain(`already has posting ${kept}`)
+    expect(failureText(noRun)).toContain('search run 999999 does not exist')
+  })
+
+  test('origin_record refuses a rank on a touch with no search run, before touching the database', async () => {
+    const client = await connectTools(provenanceTools, untouchableDb())
+
+    const outcome = await client.call('origin_record', { touchedOn: '2026-03-01', rank: 1 })
+
+    expect(failureText(outcome)).toContain('searchRunId')
   })
 
   test('origin_record_bulk logs several touches in the order given', async () => {

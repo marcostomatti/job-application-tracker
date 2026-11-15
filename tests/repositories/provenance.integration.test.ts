@@ -10,6 +10,7 @@ import {
   recordOrigin,
   recordSearchRun,
   routeCounts,
+  searchRunHits,
   wasReposted,
 } from '../../src/data/repositories/provenance.ts'
 import { addPostings, type Posting } from '../../src/data/repositories/postings.ts'
@@ -151,6 +152,116 @@ describe('recordOrigin', () => {
       // Assert
       expect(stored.postingId).toBe(target.id)
       expect(stored.searchRunId).toBe(run.id)
+    })
+  })
+})
+
+describe('a search hit: an origin from a search run', () => {
+  test('keeps the rank, whether the posting was new, and the title triage', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      // Arrange
+      const target = await addPosting(db)
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+
+      // Act
+      const stored = await recordOrigin(db, {
+        postingId: target.id, searchRunId: run.id, touchedOn: '2026-01-05', rank: 4, wasNew: false, titleTriage: 'score',
+      })
+
+      // Assert
+      expect(stored).toMatchObject({ rank: 4, wasNew: false, titleTriage: 'score' })
+    })
+  })
+
+  test('a touch that names none of them stores them as nulls', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const stored = await recordOrigin(db, { touchedOn: '2026-01-05' })
+      expect(stored).toMatchObject({ rank: null, wasNew: null, titleTriage: null })
+    })
+  })
+
+  test('the same posting twice in one run is a ConflictError that names no statement', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      // Arrange
+      const target = await addPosting(db)
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+      await recordOrigin(db, { postingId: target.id, searchRunId: run.id, touchedOn: '2026-01-05', rank: 1 })
+
+      // Act
+      const repeated = await thrownBy(() => recordOrigin(db, { postingId: target.id, searchRunId: run.id, touchedOn: '2026-01-06', rank: 2 }))
+      const otherRun = await recordSearchRun(db, { query: 'platform engineer', source: 'a job board' })
+      const inAnotherRun = await recordOrigin(db, { postingId: target.id, searchRunId: otherRun.id, touchedOn: '2026-01-06' })
+
+      // Assert
+      expect(repeated).toBeInstanceOf(ConflictError)
+      expect(statusFor(repeated)).toBe(409)
+      expect((repeated as Error).message).not.toMatch(/insert|violates/i)
+      expect(inAnotherRun.searchRunId).toBe(otherRun.id)
+    })
+  })
+
+  test('attaching a run touch to a posting that run already found is a ConflictError', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      // Arrange
+      const target = await addPosting(db)
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+      await recordOrigin(db, { postingId: target.id, searchRunId: run.id, touchedOn: '2026-01-05' })
+      const loose = await recordOrigin(db, { searchRunId: run.id, touchedOn: '2026-01-05' })
+
+      // Act
+      const attached = await thrownBy(() => attachOrigin(db, loose.id, target.id))
+
+      // Assert
+      expect(attached).toBeInstanceOf(ConflictError)
+      expect((attached as Error).message).not.toMatch(/update|violates/i)
+    })
+  })
+
+  test('the database refuses hit fields on a touch with no run, a rank below 1 and an unknown triage', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+      const rows = [
+        { touchedOn: '2026-01-05', rank: 1 },
+        { touchedOn: '2026-01-05', wasNew: true },
+        { touchedOn: '2026-01-05', titleTriage: 'score' },
+        { touchedOn: '2026-01-05', searchRunId: run.id, rank: 0 },
+        { touchedOn: '2026-01-05', searchRunId: run.id, titleTriage: 'maybe' },
+      ]
+      for (const row of rows) {
+        // The cast lets through the values the database, and not the type, has to refuse.
+        const unchecked = row as typeof origin.$inferInsert
+        expect(await thrownBy(() => db.transaction((tx) => tx.insert(origin).values(unchecked)))).toBeDefined()
+      }
+    })
+  })
+})
+
+describe('searchRunHits', () => {
+  test('lists the touches of one run by rank, unranked last, then by id', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      // Arrange
+      const [first, second, third] = [await addPosting(db, 'A'), await addPosting(db, 'B'), await addPosting(db, 'C')]
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+      const other = await recordSearchRun(db, { query: 'platform engineer', source: 'a job board' })
+      await recordOrigin(db, { postingId: third.id, searchRunId: run.id, touchedOn: '2026-01-05' })
+      await recordOrigin(db, { postingId: second.id, searchRunId: run.id, touchedOn: '2026-01-05', rank: 2 })
+      await recordOrigin(db, { postingId: first.id, searchRunId: run.id, touchedOn: '2026-01-05', rank: 1 })
+      await recordOrigin(db, { postingId: first.id, searchRunId: other.id, touchedOn: '2026-01-05', rank: 1 })
+
+      // Act
+      const hits = await searchRunHits(db, run.id)
+
+      // Assert
+      expect(hits.map((hit) => hit.postingId)).toEqual([first.id, second.id, third.id])
+      expect(hits.every((hit) => hit.searchRunId === run.id)).toBe(true)
+    })
+  })
+
+  test('is empty for a run that found nothing, and NotFoundError for a run that does not exist', async () => {
+    await withMigratedScratchDatabase(async (db) => {
+      const run = await recordSearchRun(db, { query: 'backend engineer', source: 'a job board' })
+      expect(await searchRunHits(db, run.id)).toEqual([])
+      expect(await thrownBy(() => searchRunHits(db, 9999))).toBeInstanceOf(NotFoundError)
     })
   })
 })
