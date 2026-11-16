@@ -70,6 +70,9 @@ export const requirement = pgTable(
     kind: text().notNull().default('soft'),
     weight: numeric({ mode: 'number' }),
     anchors: jsonb().notNull(),
+    // Rules that rate this requirement from a posting's own fields, without an agent
+    // (RequirementRulesSchema). Null means none; the user's terms live here, never in the code.
+    rules: jsonb(),
     sort: integer().notNull().default(0),
   },
   (table) => [

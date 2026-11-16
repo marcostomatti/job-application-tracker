@@ -33,7 +33,7 @@ export type ListCriteriaSetsOptions = { readonly includeArchived?: boolean }
  * these keys, so a wider object that carries `id`, `key` or `criteriaSetId` at runtime
  * cannot move a requirement to another set or rename its key.
  */
-const EDITABLE_COLUMNS = ['weight', 'kind', 'label', 'anchors'] as const satisfies readonly (keyof RequirementPatch)[]
+const EDITABLE_COLUMNS = ['weight', 'kind', 'label', 'anchors', 'rules'] as const satisfies readonly (keyof RequirementPatch)[]
 
 /** Newest first; sets created in one transaction share a timestamp, so the id breaks the tie. */
 export async function listCriteriaSets(db: Db, opts: ListCriteriaSetsOptions = {}): Promise<CriteriaSetRow[]> {
@@ -139,6 +139,7 @@ async function copyRequirements(db: Db, fromSetId: number, toSetId: number): Pro
         kind: row.kind,
         weight: row.weight,
         anchors: row.anchors,
+        rules: row.rules,
         sort: row.sort,
       })),
     )
@@ -245,6 +246,7 @@ export async function addRequirement(db: Db, input: RequirementAddInput): Promis
           kind: input.kind ?? 'soft',
           weight: input.weight ?? null,
           anchors: input.anchors,
+          rules: input.rules ?? null,
           sort: last?.sort === null || last?.sort === undefined ? 0 : last.sort + 1,
         })
         .returning({ id: requirement.id })
@@ -263,8 +265,8 @@ export async function addRequirement(db: Db, input: RequirementAddInput): Promis
 }
 
 /**
- * Changes the weight, kind, label or anchors of a requirement and returns it as stored, with
- * its layer label and detours. Only those four columns are written, whatever else the patch
+ * Changes the weight, kind, label, anchors or rules of a requirement and returns it as stored, with
+ * its layer label and detours. Only those five columns are written, whatever else the patch
  * object carries. An empty patch writes nothing and returns the row, because an empty
  * `SET` is a statement Postgres refuses and the caller asked for no change.
  */

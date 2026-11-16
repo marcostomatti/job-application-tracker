@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { ScaleSchema } from '../scoring/scale.ts'
 import { booleanOrText, hasNoNul, IdSchema, jsonHasNoNul, NO_NUL_MESSAGE } from './common.ts'
 import { REQUIREMENT_KINDS } from './discriminators.ts'
+import { RequirementRulesSchema } from './requirement-rules.ts'
 import { AnchorsSchema } from './scoring.ts'
 
 /** Trimmed, non-empty and storable: a blank label says nothing, and NUL is refused. */
@@ -18,7 +19,7 @@ export const RequirementAnchorsSchema = AnchorsSchema.refine(jsonHasNoNul, NO_NU
 export type Anchors = z.infer<typeof RequirementAnchorsSchema>
 
 /**
- * A change to one requirement: the four columns a user edits, and no others. A weight is
+ * A change to one requirement: the five columns a user edits, and no others. A weight is
  * finite and never negative (the database holds the same bound), `0` records a requirement
  * without scoring it, and `null` means no weight is set yet. An empty patch names nothing to
  * change, which is a mistake worth reporting.
@@ -29,6 +30,8 @@ export const RequirementPatchSchema = z
     kind: z.enum(REQUIREMENT_KINDS).optional(),
     label: requiredText.optional(),
     anchors: RequirementAnchorsSchema.optional(),
+    rules: RequirementRulesSchema.nullable().optional()
+      .describe('Rules the rules pass rates this requirement by, from the title and place alone; null removes them.'),
   })
   .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
     message: 'a patch must name at least one field to change',
@@ -85,6 +88,7 @@ export const RequirementAddInputSchema = z.strictObject({
   kind: z.enum(REQUIREMENT_KINDS).optional(),
   weight: z.number().min(0).nullable().optional(),
   anchors: RequirementAnchorsSchema,
+  rules: RequirementRulesSchema.nullable().optional(),
   layerId: IdSchema.nullable().optional(),
 })
 

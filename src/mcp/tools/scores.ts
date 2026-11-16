@@ -1,6 +1,7 @@
 import type { Db } from '../../data/repositories/db.ts'
 import { moveIfRecommended, type StageEvent } from '../../data/repositories/dispositions.ts'
 import { listPendingRescore, requestRescore } from '../../data/repositories/rescore.ts'
+import { runRulesPass } from '../../data/repositories/rules-pass.ts'
 import { getBestScores, getScoreHistory, scorePosting, setScoreVerdict, type ScoreRow } from '../../data/repositories/scores.ts'
 import {
   PendingRescoreQuerySchema,
@@ -12,6 +13,7 @@ import {
   type PostingScoresQuery,
   type ScorePostingInput,
 } from '../../schemas/scores.ts'
+import { RulesPassInputSchema } from '../../schemas/rules-pass.ts'
 import { scaleScore, type Scale } from '../../scoring/scale.ts'
 import { inOneTransaction } from '../bulk.ts'
 import { defineTool, type ToolDefinition } from '../register.ts'
@@ -106,6 +108,19 @@ export const scoreTools: ToolDefinition[] = [
       'An unknown set is a not-found error and an archived set is refused.',
     input: RescoreRequestInputSchema,
     run: async (args, db) => requestRescore(db, args),
+  }),
+  defineTool({
+    name: 'score_rules_pass',
+    title: 'Rate unscored postings by the rules',
+    description:
+      'Runs the rules pass: rates up to limit postings that have NO score under a criteria set (the default set when criteriaSetId is left out) from their title and place alone, with no agent and no posting text. ' +
+      'A requirement\'s rules (set with criteria_requirement_update) rate it 0 when the role title holds one of its titleBlocks terms, or when the posting\'s known country, city and work format match none of its allowed places; a field the posting lacks leaves the place open. ' +
+      'Returns { criteriaSetId, written, examined, blocked: [{ postingId, postingKey, roleTitle, findings }], left: [...], nextAfterPostingId }. ' +
+      'write is required: true stores, for each blocked posting, a score that rates only the requirements the rules rated 0, so a blocked gate makes its rules band skip; false only reports. ' +
+      'Postings in left stay unscored for an agent to score with score_posting_bulk. Pass nextAfterPostingId as afterPostingId to run the next batch; null means the end was reached. ' +
+      'An unknown or archived set is refused before anything is read.',
+    input: RulesPassInputSchema,
+    run: async (args, db) => runRulesPass(db, args),
   }),
   defineTool({
     name: 'rescore_pending',

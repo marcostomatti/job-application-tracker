@@ -1,0 +1,1 @@
+ALTER TABLE "requirement" ADD COLUMN "rules" jsonb;
