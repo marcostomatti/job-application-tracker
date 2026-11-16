@@ -26,7 +26,7 @@ Each family is a group of tools that work on one kind of record:
 | Checks | `check_already_applied`, `check_reposted`, `check_posting_changed` | Yes/no answers before acting |
 | Summaries | `summary_write`, `summary_write_bulk`, `summary_get` | The condensed posting |
 | Criteria | `criteria_sets`, `criteria_requirements`, `criteria_version_create`, `criteria_requirement_add`, `criteria_requirement_update`, `criteria_set_default`, `criteria_mode_get`, `criteria_mode_set` | The rubrics postings are scored against |
-| Scores | `score_posting`, `score_posting_bulk`, `score_verdict_set`, `score_history`, `score_best`, `rescore_request`, `rescore_pending` | Ratings, the overall value and the verdicts |
+| Scores | `score_posting`, `score_posting_bulk`, `score_rules_pass`, `score_verdict_set`, `score_history`, `score_best`, `rescore_request`, `rescore_pending` | Ratings, the overall value and the verdicts |
 | Questions | `posting_question_add`, `posting_question_add_bulk`, `posting_question_list`, `posting_question_answer` | Questions to ask the employer about one posting |
 | Stages | `stage_current`, `stage_append`, `stage_append_bulk`, `posting_set_aside`, `posting_reject`, `set_aside_list` | Where a posting stands, and why it was dropped |
 | Texts | `text_list`, `text_add`, `text_add_bulk`, `text_update`, `text_link`, `text_link_bulk` | Reusable wording, such as a cover letter |
@@ -52,7 +52,9 @@ A new posting goes through these steps. The prompts in `docs/prompts/` follow th
 3. **Summarise it.** `summary_write`. Before re-summarising a posting the tracker already has,
    `check_posting_changed` tells you whether the text changed.
 4. **Score it.** Read the set with `criteria_requirements`, then `score_posting` with your
-   ratings and your verdict (see below).
+   ratings and your verdict (see below). For a backlog, run `score_rules_pass` first: it rates
+   the requirements whose rules the title and place settle, with no agent, and scores the
+   postings they block, so you only read the ones it leaves.
 5. **List the questions.** `posting_question_add_bulk` for what the posting leaves unknown and
    the user should ask the employer.
 6. **Stages.** Move a posting only when the user tells you to (see the next section).

@@ -32,6 +32,7 @@ const requirement = (overrides: Partial<RequirementRow> & Pick<RequirementRow, '
   layerId: null,
   kind: 'soft',
   weight: null,
+  rules: null,
   anchors: ANCHORS,
   sort: 0,
   layerLabel: null,

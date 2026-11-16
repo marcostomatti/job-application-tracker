@@ -127,6 +127,13 @@
       "when": 1794697665124,
       "tag": "0017_origin_search_hits",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794865548716,
+      "tag": "0018_requirement_rules",
+      "breakpoints": true
     }
   ]
 }
