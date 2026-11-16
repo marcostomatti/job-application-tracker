@@ -95,7 +95,7 @@ export const criteriaTools: ToolDefinition[] = [
     title: 'Update a requirement',
     description:
       'Changes the weight, kind, label, anchors or rules of ONE requirement and returns it as stored; fields left out are kept. ' +
-      'rules lets score_rules_pass rate the requirement 0 without an agent: titleBlocks (terms the role title holds as a whole word) and place (the allowed { country, city, workFormat } entries); null removes them. Change rules only when the user asks. ' +
+      'rules lets score_rules_pass rate a GATE 0 without an agent (rules on a soft requirement rate nothing): titleBlocks (terms the role title holds as a whole word) and place (the allowed { country, city, workFormat } entries); null removes them. Change rules only when the user asks. ' +
       'A weight is zero or more, and null means no weight is set yet. An empty patch is refused and an unknown requirement is a not-found error. ' +
       'This edits the requirement in place, which changes what existing scores of its set mean; to keep history intact, make a copy with criteria_version_create first.',
     input: RequirementUpdateInputSchema,

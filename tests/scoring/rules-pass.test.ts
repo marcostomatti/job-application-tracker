@@ -5,7 +5,7 @@ import { RequirementRulesSchema } from '../../src/schemas/requirement-rules.ts'
 
 const POSTING: RulesPosting = { roleTitle: 'Senior Backend Engineer', country: 'XA', city: 'Example City', workFormat: 'Hybrid' }
 
-const gate = (rules: unknown) => [{ id: 7, key: 'example_gate', rules }]
+const gate = (rules: unknown) => [{ id: 7, key: 'example_gate', kind: 'gate', rules }]
 
 describe('titleHolds', () => {
   test('finds a term as a whole word, case aside', () => {
@@ -22,6 +22,12 @@ describe('titleHolds', () => {
     expect(titleHolds('Senior C# Developer', 'c#')).toBe(true)
     expect(titleHolds('Node.js Engineer', 'node.js')).toBe(true)
     expect(titleHolds('Student / Intern', 'intern')).toBe(true)
+  })
+
+  test('a letter outside the basic plane or an accent next to the term keeps it inside a word', () => {
+    expect(titleHolds('Engineer\u{1D4D0}', 'engineer')).toBe(false)
+    expect(titleHolds('Cafe\u0301 Manager', 'cafe')).toBe(false)
+    expect(titleHolds('Utvecklare inom data', 'data')).toBe(true)
   })
 
   test('an empty term matches nothing', () => {
@@ -60,11 +66,12 @@ describe('rulesFindings', () => {
     expect(found).toHaveLength(1)
   })
 
-  test('requirements without rules, or with rules that do not parse, rate nothing', () => {
+  test('requirements without rules, with rules that do not parse, or soft ones, rate nothing', () => {
     const requirements = [
-      { id: 1, key: 'none', rules: null },
-      { id: 2, key: 'broken', rules: { titleBlocks: 'not a list' } },
-      { id: 3, key: 'fires', rules: { titleBlocks: ['backend'] } },
+      { id: 1, key: 'none', kind: 'gate', rules: null },
+      { id: 2, key: 'broken', kind: 'gate', rules: { titleBlocks: 'not a list' } },
+      { id: 3, key: 'fires', kind: 'gate', rules: { titleBlocks: ['backend'] } },
+      { id: 4, key: 'soft', kind: 'soft', rules: { titleBlocks: ['backend'] } },
     ]
 
     expect(rulesFindings(POSTING, requirements).map((finding) => finding.requirementKey)).toEqual(['fires'])

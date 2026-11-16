@@ -100,7 +100,7 @@ export async function runRulesPass(db: Db, input: RulesPassInput): Promise<Rules
   const criteriaSetId = input.criteriaSetId ?? (await defaultSetId(db))
   await findUsableCriteriaSet(db, criteriaSetId)
   const requirements = await db
-    .select({ id: requirement.id, key: requirement.key, rules: requirement.rules })
+    .select({ id: requirement.id, key: requirement.key, kind: requirement.kind, rules: requirement.rules })
     .from(requirement)
     .where(eq(requirement.criteriaSetId, criteriaSetId))
     .orderBy(asc(requirement.sort), asc(requirement.id))

@@ -12,6 +12,7 @@ export type RulesPosting = {
 export type RulesRequirement = {
   readonly id: number
   readonly key: string
+  readonly kind: string
   readonly rules: unknown
 }
 
@@ -22,7 +23,16 @@ export type RuleFinding = {
   readonly evidence: string
 }
 
-const isWordCharacter = (character: string | undefined): boolean => character !== undefined && /[\p{L}\p{N}]/u.test(character)
+const isWordCharacter = (character: string | undefined): boolean => character !== undefined && /[\p{L}\p{M}\p{N}]/u.test(character)
+
+/** The whole character that ends just before `at`, a surrogate pair included. */
+const characterBefore = (text: string, at: number): string | undefined => Array.from(text.slice(Math.max(0, at - 2), at)).at(-1)
+
+/** The whole character that starts at `at`, a surrogate pair included. */
+function characterAt(text: string, at: number): string | undefined {
+  const point = text.codePointAt(at)
+  return point === undefined ? undefined : String.fromCodePoint(point)
+}
 
 /**
  * Whether `title` holds `term` as a whole word, case aside: the characters on each side of a
@@ -34,10 +44,10 @@ export function titleHolds(title: string, term: string): boolean {
   const needle = term.trim().toLocaleLowerCase()
   if (needle === '') return false
   for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + 1)) {
-    const before = haystack[at - 1]
-    const after = haystack[at + needle.length]
-    const startsInWord = isWordCharacter(needle[0]) && isWordCharacter(before)
-    const endsInWord = isWordCharacter(needle[needle.length - 1]) && isWordCharacter(after)
+    const before = characterBefore(haystack, at)
+    const after = characterAt(haystack, at + needle.length)
+    const startsInWord = isWordCharacter(characterAt(needle, 0)) && isWordCharacter(before)
+    const endsInWord = isWordCharacter(characterBefore(needle, needle.length)) && isWordCharacter(after)
     if (!startsInWord && !endsInWord) return true
   }
   return false
@@ -72,6 +82,9 @@ function describePlace(posting: RulesPosting): string {
 
 /** The finding of one requirement's rules, or null when they rate nothing. */
 function findingFor(posting: RulesPosting, requirement: RulesRequirement): RuleFinding | null {
+  // Only a gate is rated by rules: a gate at 0 blocks the posting whatever else is rated, while a
+  // soft requirement at 0 beside nothing else rated would give a band that means nothing.
+  if (requirement.kind !== 'gate') return null
   const parsed = RequirementRulesSchema.safeParse(requirement.rules)
   if (!parsed.success) return null
   const { titleBlocks, place } = parsed.data
@@ -87,8 +100,8 @@ function findingFor(posting: RulesPosting, requirement: RulesRequirement): RuleF
 }
 
 /**
- * Every requirement the rules rate 0 for one posting, in the order the requirements come.
- * Rules that are absent, or that no longer parse, rate nothing, and so does a place the
+ * Every gate the rules rate 0 for one posting, in the order the requirements come. Rules on
+ * a soft requirement are kept but rate nothing. Rules that are absent, or that no longer parse, rate nothing, and so does a place the
  * posting's missing fields leave open: the pass only rates what the fields settle, and
  * leaves the rest to whoever reads the posting.
  */

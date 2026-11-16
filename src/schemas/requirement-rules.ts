@@ -28,10 +28,10 @@ export const RulePlaceSchema = z
 export type RulePlace = z.infer<typeof RulePlaceSchema>
 
 /**
- * The rules that let the server rate one requirement from a posting's own fields, with no
- * agent. `titleBlocks` rates the requirement 0 when the role title holds one of its terms as
- * a whole word. `place` lists the places allowed: a posting that, by the fields it has, can
- * match none of them is rated 0. A posting the rules cannot decide is left unrated. The rules
+ * The rules that let the server rate one gate from a posting's own fields, with no agent; on
+ * a soft requirement they are kept and rate nothing. `titleBlocks` rates the gate 0 when the
+ * role title holds one of its terms as a whole word. `place` lists the places allowed: a
+ * posting that, by the fields it has, can match none of them is rated 0. A posting the rules cannot decide is left unrated. The rules
  * are the user's own and live with the criteria set, so the repository holds none.
  */
 export const RequirementRulesSchema = z
