@@ -70,6 +70,20 @@ describe('MoveDialog', () => {
     expect(html).not.toContain('>Shortlisted</option>')
     expect(html).toContain('>Cancel</button>')
   })
+
+  test('Cancel and Record share the footer, Cancel on the left and Record on the right', () => {
+    const html = renderToStaticMarkup(<MoveDialog row={ROWS[0]!} phase={PHASES[0]!} stages={stages} onCancel={noop} onRecord={async () => {}} />)
+    const footer = html.slice(html.indexOf('class="move-actions"'))
+
+    expect(footer.indexOf('>Cancel</button>')).toBeGreaterThan(-1)
+    expect(footer.indexOf('>Record</button>')).toBeGreaterThan(footer.indexOf('>Cancel</button>'))
+  })
+
+  test('a phase with no stages still offers Cancel', () => {
+    const html = renderToStaticMarkup(<MoveDialog row={ROWS[0]!} phase={PHASES[0]!} stages={[]} onCancel={noop} onRecord={async () => {}} />)
+
+    expect(html).toContain('>Cancel</button>')
+  })
 })
 
 describe('FilterBar on the board', () => {
@@ -79,6 +93,7 @@ describe('FilterBar on the board', () => {
     expect(html).not.toContain('All phases')
     expect(html).not.toContain('All bands')
     expect(html).toContain('Show skip')
+    expect(html).toContain('Show unscored')
     expect(html).toContain('Search')
   })
 
@@ -86,6 +101,7 @@ describe('FilterBar on the board', () => {
     const html = renderToStaticMarkup(<FilterBar filters={EMPTY_FILTERS} phases={PHASES} criteriaSets={[]} shown={2} total={3} onChange={noop} />)
 
     expect(html).not.toContain('Show skip')
+    expect(html).not.toContain('Show unscored')
     expect(html).toContain('All phases')
   })
 })

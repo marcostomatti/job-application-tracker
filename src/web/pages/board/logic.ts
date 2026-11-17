@@ -106,10 +106,10 @@ export function placeInColumn(fullIds: readonly number[], visibleIds: readonly n
   return fullIds.map((id) => (visible.has(id) ? (placed[next++] as number) : id))
 }
 
-/** The board's rows: the shared filters, then skip postings left off unless asked for. */
+/** The board's rows: the shared filters, then skip and unscored postings left off unless asked for. */
 export function boardRows(rows: readonly PostingListRow[], filters: PostingFilters, display: RecommendationDisplay): PostingListRow[] {
-  const filtered = applyFilters(rows, filters, display)
-  return filters.showSkip ? filtered : filtered.filter((row) => bandOf(row, display) !== 'skip')
+  const hidden = new Set([...(filters.showSkip ? [] : ['skip']), ...(filters.showUnscored ? [] : ['unscored'])])
+  return applyFilters(rows, filters, display).filter((row) => !hidden.has(bandOf(row, display)))
 }
 
 export const isFadedPhase = (phase: PhaseRegistryRow | null): boolean => phase?.key === FADED_PHASE_KEY

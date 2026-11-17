@@ -22,9 +22,11 @@ export interface PostingFilters {
   readonly criteriaSetId: number | null
   /** Board only: skip postings are left off the board unless this is on. The postings table ignores it. */
   readonly showSkip: boolean
+  /** Board only: unscored postings are left off the board unless this is on. The postings table ignores it. */
+  readonly showUnscored: boolean
 }
 
-export const EMPTY_FILTERS: PostingFilters = { search: '', phase: null, band: null, includeSetAside: false, criteriaSetId: null, showSkip: false }
+export const EMPTY_FILTERS: PostingFilters = { search: '', phase: null, band: null, includeSetAside: false, criteriaSetId: null, showSkip: false, showUnscored: false }
 
 export type SortKey = 'company' | 'role' | 'phase' | 'score' | 'recommendation' | 'seen' | 'updated'
 export const SORT_KEYS: readonly SortKey[] = ['company', 'role', 'phase', 'score', 'recommendation', 'seen', 'updated']
@@ -87,6 +89,7 @@ export function decodeUrlState(search: string): PostingsUrlState {
       includeSetAside: params.get('aside') === '1',
       criteriaSetId: positiveInt(params.get('set')),
       showSkip: params.get('skip') === '1',
+      showUnscored: params.get('unscored') === '1',
     },
   }
 }
@@ -101,6 +104,7 @@ export function encodeUrlState(state: PostingsUrlState): string {
   if (filters.includeSetAside) params.set('aside', '1')
   if (filters.criteriaSetId !== null) params.set('set', String(filters.criteriaSetId))
   if (filters.showSkip) params.set('skip', '1')
+  if (filters.showUnscored) params.set('unscored', '1')
   if (sort.key !== DEFAULT_SORT.key || sort.desc !== DEFAULT_SORT.desc) params.set('sort', `${sort.key}:${sort.desc ? 'desc' : 'asc'}`)
   if (state.posting !== null) params.set('posting', String(state.posting))
   const query = params.toString()

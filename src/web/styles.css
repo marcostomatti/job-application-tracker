@@ -257,8 +257,19 @@ code {
   letter-spacing: -0.02em;
 }
 
+/* The title and its description share one row, so a page header takes a single line; on a
+   narrow screen the description wraps under the title. */
+.page-head:has(> h1),
+.page-head > div:has(> h1) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 2px;
+}
+
 .page-head p {
-  margin: 4px 0 0;
+  margin: 0;
 }
 
 .card {
