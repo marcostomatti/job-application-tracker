@@ -124,6 +124,7 @@
 
 .move-actions {
   display: flex;
-  justify-content: flex-end;
+  flex-basis: 100%;
+  justify-content: space-between;
   margin-top: 12px;
 }

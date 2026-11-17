@@ -51,13 +51,33 @@ export function StageTimeline({ history }: { history: readonly StageHistoryRow[]
  * The form that appends one stage event: a stage (required), a date (empty is today, stamped by
  * the server) and a note. It only reports the draft; the panel does the write.
  */
-export function StageForm({ stages, onRecord }: { stages: readonly StageRegistryRow[]; onRecord: (draft: StageEventDraft) => Promise<void> }) {
+export interface StageFormProps {
+  readonly stages: readonly StageRegistryRow[]
+  readonly onRecord: (draft: StageEventDraft) => Promise<void>
+  /** In a dialog: Cancel goes bottom left and Record bottom right, where a dialog's accept button sits. */
+  readonly onCancel?: () => void
+}
+
+export function StageForm({ stages, onRecord, onCancel }: StageFormProps) {
   const [stageId, setStageId] = useState('')
   const [day, setDay] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
-  if (stages.length === 0) return <p className="muted">The stage registry is empty, so there is no stage to record yet.</p>
+  if (stages.length === 0) {
+    return (
+      <>
+        <p className="muted">The stage registry is empty, so there is no stage to record yet.</p>
+        {onCancel !== undefined && (
+          <div className="move-actions">
+            <button type="button" className="button ghost" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </>
+    )
+  }
   const ordered = [...stages].sort((a, b) => a.sort - b.sort || a.id - b.id)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -78,6 +98,12 @@ export function StageForm({ stages, onRecord }: { stages: readonly StageRegistry
       setBusy(false)
     }
   }
+
+  const recordButton = (
+    <button type="submit" className="button primary" disabled={busy || stageId === ''}>
+      Record
+    </button>
+  )
 
   return (
     <form className="pd-form" onSubmit={submit} aria-label="Record a stage">
@@ -100,9 +126,16 @@ export function StageForm({ stages, onRecord }: { stages: readonly StageRegistry
         Note
         <input type="text" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional" />
       </label>
-      <button type="submit" className="button primary" disabled={busy || stageId === ''}>
-        Record
-      </button>
+      {onCancel === undefined ? (
+        recordButton
+      ) : (
+        <div className="move-actions">
+          <button type="button" className="button ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          {recordButton}
+        </div>
+      )}
     </form>
   )
 }

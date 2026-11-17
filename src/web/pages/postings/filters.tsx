@@ -29,7 +29,8 @@ const isDefault = (filters: PostingFilters): boolean =>
   filters.band === EMPTY_FILTERS.band &&
   filters.includeSetAside === EMPTY_FILTERS.includeSetAside &&
   filters.criteriaSetId === EMPTY_FILTERS.criteriaSetId &&
-  filters.showSkip === EMPTY_FILTERS.showSkip
+  filters.showSkip === EMPTY_FILTERS.showSkip &&
+  filters.showUnscored === EMPTY_FILTERS.showUnscored
 
 /** The filter bar the board and the table share: search, phase, band, the criteria set and set-aside postings. */
 export function FilterBar({ filters, phases, criteriaSets, shown, total, onChange, variant = 'table' }: FilterBarProps) {
@@ -92,6 +93,12 @@ export function FilterBar({ filters, phases, criteriaSets, shown, total, onChang
         <label className="postings-toggle">
           <input type="checkbox" checked={filters.showSkip} onChange={(event) => set({ showSkip: event.target.checked })} />
           <span>Show skip</span>
+        </label>
+      )}
+      {!onTable && (
+        <label className="postings-toggle">
+          <input type="checkbox" checked={filters.showUnscored} onChange={(event) => set({ showUnscored: event.target.checked })} />
+          <span>Show unscored</span>
         </label>
       )}
       <div className="postings-count">

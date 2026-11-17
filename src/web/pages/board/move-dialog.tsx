@@ -43,12 +43,7 @@ export function MoveDialog({ row, phase, stages, onCancel, onRecord }: MoveDialo
           Move <strong>{row.posting.roleTitle}</strong> at {row.company.name} to {phase.label}
         </h2>
         <p className="muted">Pick the stage it reached. The date is today unless you set one.</p>
-        <StageForm stages={stagesForPhase(stages, phase.id)} onRecord={onRecord} />
-        <div className="move-actions">
-          <button type="button" className="button ghost" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
+        <StageForm stages={stagesForPhase(stages, phase.id)} onRecord={onRecord} onCancel={onCancel} />
       </div>
     </div>
   )

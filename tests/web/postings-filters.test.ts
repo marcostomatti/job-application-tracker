@@ -31,7 +31,7 @@ describe('the URL state', () => {
     const state = {
       posting: 42,
       sort: { key: 'score' as const, desc: false },
-      filters: { search: 'data eng', phase: 'none' as const, band: 'ask' as const, includeSetAside: true, criteriaSetId: 7, showSkip: true },
+      filters: { search: 'data eng', phase: 'none' as const, band: 'ask' as const, includeSetAside: true, criteriaSetId: 7, showSkip: true, showUnscored: true },
     }
 
     expect(decodeUrlState(encodeUrlState(state))).toEqual(state)

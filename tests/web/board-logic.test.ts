@@ -96,9 +96,16 @@ describe('boardRows', () => {
     row({ id: 4, phaseId: 1, scored: false }),
   ]
 
-  test('a skip posting is left off the board by default, and shown when asked for', () => {
-    expect(boardRows(banded, EMPTY_FILTERS, 'rules').map((entry) => entry.posting.id)).toEqual([1, 2, 4])
-    expect(boardRows(banded, { ...EMPTY_FILTERS, showSkip: true }, 'rules').map((entry) => entry.posting.id)).toEqual([1, 2, 3, 4])
+  const ids = (filters: typeof EMPTY_FILTERS): number[] => boardRows(banded, filters, 'rules').map((entry) => entry.posting.id)
+
+  test('skip and unscored postings are left off the board by default', () => {
+    expect(ids(EMPTY_FILTERS)).toEqual([1, 2])
+  })
+
+  test('each is shown when asked for, on its own or together', () => {
+    expect(ids({ ...EMPTY_FILTERS, showSkip: true })).toEqual([1, 2, 3])
+    expect(ids({ ...EMPTY_FILTERS, showUnscored: true })).toEqual([1, 2, 4])
+    expect(ids({ ...EMPTY_FILTERS, showSkip: true, showUnscored: true })).toEqual([1, 2, 3, 4])
   })
 
   test('the band read is the display choice: an agent apply keeps a rules skip on the board', () => {
